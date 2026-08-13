@@ -5,15 +5,6 @@
   "noClearance": true,
   "reviewedBaselineCommit": "3551001dae9ea5ec3b6b878416f3bc5c4667ef8c",
   "pathSetSha256": "e6ee1f2f02c9ce0bbfc4c84cf602039b9cd82353b539da05ff6717f7e71c33b0",
-  "candidateContentSha256": "dd3d64a1e9007c90e1981977ac48d63972da73b606c867094f0315e93f6e99cc",
-  "signingSurface": "candidate-only",
-  "signingNote": "私仓这份是模板,签字栏必须常驻 PENDING。签字只发生在候选侧:裁剪 → 孤儿提交 → 算内容哈希 → 所有者把哈希与签字写进候选那份策略 → 重做提交 → 校验。理由:私仓这份可以被无限次重新裁剪,一旦它带着 APPROVED,任何人跑一次「裁剪 + 钉哈希」就能拿到署名 PASS,内容随便——签字变成一张空白支票。签字要落在不可再生的成品上,不是可再生的模板上。tests/unit/open-source-candidate.test.ts 有一条断言钉住这件事。",
-  "candidate": {
-    "commit": "SELF",
-    "owner": "yuanlang",
-    "approver": "yuanlang",
-    "status": "APPROVED"
-  },
   "rules": [
     {
       "id": "reviewed-baseline-default",
@@ -21,13 +12,7 @@
       "action": "conditional-keep",
       "patterns": [
         "**"
-      ],
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      ]
     },
     {
       "id": "exclude-renamed-private-material",
@@ -40,13 +25,7 @@
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "OpenPipal 改名把已分类文件搬到了新路径。baseline 域的规则按定义只认 baseline 里存在的路径，所以改名后的它们全部落成未分类——这是规则该有的严格性，不是缺陷。这里按原类别重新登记：内容此前分过类，但改名前没有任何一项通过过评审，所以是当作新条目重新签的。",
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      "note": "OpenPipal 改名把已分类文件搬到了新路径。baseline 域的规则按定义只认 baseline 里存在的路径，所以改名后的它们全部落成未分类——这是规则该有的严格性，不是缺陷。这里按原类别重新登记：内容此前分过类，但改名前没有任何一项通过过评审，所以是当作新条目重新签的。"
     },
     {
       "id": "review-renamed-brand-assets",
@@ -59,13 +38,7 @@
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "OpenPipal 改名把已分类文件搬到了新路径。baseline 域的规则按定义只认 baseline 里存在的路径，所以改名后的它们全部落成未分类——这是规则该有的严格性，不是缺陷。这里按原类别重新登记：内容此前分过类，但改名前没有任何一项通过过评审，所以是当作新条目重新签的。",
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      "note": "OpenPipal 改名把已分类文件搬到了新路径。baseline 域的规则按定义只认 baseline 里存在的路径，所以改名后的它们全部落成未分类——这是规则该有的严格性，不是缺陷。这里按原类别重新登记：内容此前分过类，但改名前没有任何一项通过过评审，所以是当作新条目重新签的。"
     },
     {
       "id": "review-renamed-product-paths",
@@ -87,13 +60,7 @@
         "reviewed-baseline-default",
         "review-renamed-brand-assets"
       ],
-      "note": "OpenPipal 改名把已分类文件搬到了新路径。baseline 域的规则按定义只认 baseline 里存在的路径，所以改名后的它们全部落成未分类——这是规则该有的严格性，不是缺陷。这里按原类别重新登记：内容此前分过类，但改名前没有任何一项通过过评审，所以是当作新条目重新签的。",
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      "note": "OpenPipal 改名把已分类文件搬到了新路径。baseline 域的规则按定义只认 baseline 里存在的路径，所以改名后的它们全部落成未分类——这是规则该有的严格性，不是缺陷。这里按原类别重新登记：内容此前分过类，但改名前没有任何一项通过过评审，所以是当作新条目重新签的。"
     },
     {
       "id": "exclude-release-cut-internals",
@@ -104,13 +71,7 @@
       ],
       "overrides": [
         "reviewed-baseline-default"
-      ],
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      ]
     },
     {
       "id": "exclude-non-default-agents",
@@ -134,13 +95,7 @@
       ],
       "overrides": [
         "reviewed-baseline-default"
-      ],
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      ]
     },
     {
       "id": "remove-private-history-and-qa",
@@ -156,13 +111,7 @@
       ],
       "overrides": [
         "reviewed-baseline-default"
-      ],
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      ]
     },
     {
       "id": "replace-design-runtime-material",
@@ -187,13 +136,7 @@
       "overrides": [
         "reviewed-baseline-default",
         "remove-private-history-and-qa"
-      ],
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      ]
     },
     {
       "id": "replace-design-instruction-material",
@@ -224,13 +167,7 @@
         "reviewed-baseline-default",
         "exclude-non-default-agents"
       ],
-      "note": "设计类 skills 整组不随本次发行:机制层(design-tokens 等)尚未完成自研替换,未替换=不带。frontend-design/SKILL.md 是所有者自己写的判断层技能,不涉及确权,但正文 7 处指向 design-tokens——单独发行会在公开树里留一条断掉的引用。判断层与机制层本是配套的一对,一起走比拆开发更诚实,所以归进同一条规则(所有者 2026-08-13 确认)。已核查其余 6 个存活 skill(doc / pdf / skill-creator / slides / spreadsheet / tool-installer)对被裁 skill 的引用数为 0,无其他断链。",
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      "note": "设计类 skills 整组不随本次发行:机制层(design-tokens 等)尚未完成自研替换,未替换=不带。frontend-design/SKILL.md 是所有者自己写的判断层技能,不涉及确权,但正文 7 处指向 design-tokens——单独发行会在公开树里留一条断掉的引用。判断层与机制层本是配套的一对,一起走比拆开发更诚实,所以归进同一条规则(所有者 2026-08-13 确认)。已核查其余 6 个存活 skill(doc / pdf / skill-creator / slides / spreadsheet / tool-installer)对被裁 skill 的引用数为 0,无其他断链。"
     },
     {
       "id": "replace-unreviewed-brand-assets",
@@ -248,13 +185,7 @@
       ],
       "overrides": [
         "reviewed-baseline-default"
-      ],
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      ]
     },
     {
       "id": "review-release-preparation-infrastructure",
@@ -283,13 +214,7 @@
       ],
       "overrides": [
         "reviewed-baseline-default"
-      ],
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      ]
     },
     {
       "id": "review-runtime-v2-i18n-candidate-delta",
@@ -325,13 +250,7 @@
       ],
       "overrides": [
         "reviewed-baseline-default"
-      ],
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      ]
     },
     {
       "id": "review-hardening-canvas-and-license-delta",
@@ -364,13 +283,7 @@
       ],
       "overrides": [
         "reviewed-baseline-default"
-      ],
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      ]
     },
     {
       "id": "exclude-project-website",
@@ -383,13 +296,7 @@
         "reviewed-baseline-default",
         "review-hardening-canvas-and-license-delta"
       ],
-      "note": "website/ 是项目官网,不属于开源计划(所有者 2026-08-12 明确)。原先它被 review-hardening-canvas-and-license-delta 归成 conditional-keep,签字即等于授权公开 23 个官网文件——与所有者意图相反。这里摘出来单独 exclude,让「不公开」成为一条要独立签字的显式决定,而不是藏在增量规则的 patterns 里。",
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      "note": "website/ 是项目官网,不属于开源计划(所有者 2026-08-12 明确)。原先它被 review-hardening-canvas-and-license-delta 归成 conditional-keep,签字即等于授权公开 23 个官网文件——与所有者意图相反。这里摘出来单独 exclude,让「不公开」成为一条要独立签字的显式决定,而不是藏在增量规则的 patterns 里。"
     },
     {
       "id": "review-daylight-glass-candidate-delta",
@@ -405,13 +312,7 @@
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "daylight glass 外观重做与上下文范围收紧引入的新文件,全部晚于评审基线,因此 baseline 域规则按定义够不着。内容是普通应用源码与测试:玻璃样式表、外壳结构 E2E、以及三条把 ClassIn UID 注入 / 前台应用信息 / 暗色 surface 阶钉住的回归测试。不含品牌资产、私有提示词或凭据。",
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      "note": "daylight glass 外观重做与上下文范围收紧引入的新文件,全部晚于评审基线,因此 baseline 域规则按定义够不着。内容是普通应用源码与测试:玻璃样式表、外壳结构 E2E、以及三条把 ClassIn UID 注入 / 前台应用信息 / 暗色 surface 阶钉住的回归测试。不含品牌资产、私有提示词或凭据。"
     },
     {
       "id": "review-trust-boundary-hardening-delta",
@@ -440,13 +341,7 @@
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "提交 4b4cf7a(工具与渲染层信任边界加固)引入的新文件,晚于评审基线。全部是应用源码与单测:代码执行语种判定、凭据文件位置的单一事实源、外部导航策略、MCP app 工具调用边界、SVG 净化,以及钉住这些边界的回归测试。已核查不含密钥、内置端点、私有提示词或品牌资产;credential-paths.ts 只给出凭据文件的路径,不含凭据本身。 后补:discovery-tool-context.ts 属于同一条边界的收尾——4b4cf7a 为了让发现类工具执行凭据跳过,在 legacy 回滚门面里静态引入了 pi-core 的 Node 执行后端,破掉了 agent-runtime-boundary 钉住的隔离;该文件把上下文收窄到只解析路径并改为按需加载,同时修好那条一直红着的断言。仍是普通产品源码,不含密钥、端点、私有提示词或品牌资产。",
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      "note": "提交 4b4cf7a(工具与渲染层信任边界加固)引入的新文件,晚于评审基线。全部是应用源码与单测:代码执行语种判定、凭据文件位置的单一事实源、外部导航策略、MCP app 工具调用边界、SVG 净化,以及钉住这些边界的回归测试。已核查不含密钥、内置端点、私有提示词或品牌资产;credential-paths.ts 只给出凭据文件的路径,不含凭据本身。 后补:discovery-tool-context.ts 属于同一条边界的收尾——4b4cf7a 为了让发现类工具执行凭据跳过,在 legacy 回滚门面里静态引入了 pi-core 的 Node 执行后端,破掉了 agent-runtime-boundary 钉住的隔离;该文件把上下文收窄到只解析路径并改为按需加载,同时修好那条一直红着的断言。仍是普通产品源码,不含密钥、端点、私有提示词或品牌资产。"
     },
     {
       "id": "keep-release-cut-seams",
@@ -461,13 +356,9 @@
         "reviewed-baseline-default",
         "exclude-release-cut-internals"
       ],
-      "note": "裁剪脚本在这个路径上留了一道接缝:私仓版本(五个非默认内置角色)由 exclude-release-cut-internals 裁掉,脚本随即写入一个返回空对象的替身,好让 role-manager 一行不用改就能编译。策略里必须把这两件事分开记:『私仓那份不发行』是 exclude 那条,『发行树里这份替身可公开』是本条。规则按顺序求值、最后命中者决定去留,所以本条排在 exclude 之后。少了它,校验器会正确地把接缝替身报成 EXCLUDED_PATH_PRESENT —— 那不是误报,是策略当时确实没描述这道接缝。 同理还有两个只存在于发行树、私仓里根本没有的产物:OPEN-SOURCE-CUT.json(裁剪清单,记录从哪个私仓提交裁出、按哪条规则丢了什么)与 README.zh-CN.md(由 docs/open-source/README.public.zh-CN.md 改名而来)。它们同样是接缝,同样必须被显式分类,否则校验器报未分类——报得对。",
-      "review": {
-        "owner": "yuanlang",
-        "approver": "yuanlang",
-        "candidate": "SELF",
-        "status": "APPROVED"
-      }
+      "note": "裁剪脚本在这个路径上留了一道接缝:私仓版本(五个非默认内置角色)由 exclude-release-cut-internals 裁掉,脚本随即写入一个返回空对象的替身,好让 role-manager 一行不用改就能编译。策略里必须把这两件事分开记:『私仓那份不发行』是 exclude 那条,『发行树里这份替身可公开』是本条。规则按顺序求值、最后命中者决定去留,所以本条排在 exclude 之后。少了它,校验器会正确地把接缝替身报成 EXCLUDED_PATH_PRESENT —— 那不是误报,是策略当时确实没描述这道接缝。 同理还有两个只存在于发行树、私仓里根本没有的产物:OPEN-SOURCE-CUT.json(裁剪清单,记录从哪个私仓提交裁出、按哪条规则丢了什么)与 README.zh-CN.md(由 docs/open-source/README.public.zh-CN.md 改名而来)。它们同样是接缝,同样必须被显式分类,否则校验器报未分类——报得对。"
     }
-  ]
+  ],
+  "classificationOnly": true,
+  "classificationNote": "本策略只描述「哪些路径可以进入发行树」，不承载任何人的批准。校验器相应只检查分类的完整性与一致性：每条路径都被规则覆盖、exclude 与 blocked-replacement 的材料没漏进去、规则重叠已显式声明、策略确实是对着它声称的基线写的。是否发布由人在发行前对着清单确认，不写进这个文件——原因见 docs/claude/mechanism-registry.md。"
 }

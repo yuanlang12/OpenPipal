@@ -4,6 +4,13 @@
 /**
  * Verify an immutable public-candidate commit against a machine-readable policy.
  *
+ * This checks **classification completeness and consistency**, not approval:
+ * every published path is covered by a rule, nothing excluded or blocked leaked
+ * through, rule overlaps are declared, and the policy was authored against the
+ * baseline it claims. Who decided to publish is a human question answered
+ * out-of-band by reviewing the release checklist — see
+ * docs/claude/mechanism-registry.md for why the signature fields were removed.
+ *
  * Candidate path and content facts come only from:
  *   git ls-tree -r -l <commit>
  *   git show <commit>:<path>
@@ -33,15 +40,6 @@ function sha256(value) {
 
 export function hashPathSet(paths) {
   const canonical = [...new Set(paths)].sort().map(candidatePath => `${candidatePath}\n`).join('')
-  return sha256(canonical)
-}
-
-export function hashCandidateContent(entries) {
-  const canonical = entries
-    .filter(entry => entry.path !== POLICY_PATH)
-    .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
-    .map(entry => `${entry.mode} ${entry.objectId} ${entry.size}\t${entry.path}\n`)
-    .join('')
   return sha256(canonical)
 }
 
@@ -128,12 +126,6 @@ function globToRegExp(pattern) {
   return new RegExp(`${source}$`)
 }
 
-function isPending(value) {
-  if (typeof value !== 'string') return true
-  const normalized = value.trim()
-  return normalized === '' || normalized === 'PENDING'
-}
-
 function addGroupedError(groups, code, options = {}) {
   const ruleId = options.ruleId || ''
   const detail = options.detail || ''
@@ -176,9 +168,6 @@ function validatePolicy(policy, errors) {
     addGroupedError(errors, 'INVALID_BASELINE_COMMIT')
   }
   if (!SHA256.test(policy.pathSetSha256 || '')) addGroupedError(errors, 'INVALID_PATH_SET_HASH')
-  if (policy.candidateContentSha256 !== 'PENDING' && !SHA256.test(policy.candidateContentSha256 || '')) {
-    addGroupedError(errors, 'INVALID_CANDIDATE_CONTENT_HASH')
-  }
   if (!Array.isArray(policy.rules) || policy.rules.length === 0) {
     addGroupedError(errors, 'RULES_REQUIRED')
     return []
@@ -212,7 +201,6 @@ function validatePolicy(policy, errors) {
       patterns,
       matchers: patterns.map(globToRegExp),
       overrides,
-      review: rule?.review,
       evidence: Array.isArray(rule?.evidence) ? rule.evidence : []
     })
   }
@@ -222,15 +210,6 @@ function validatePolicy(policy, errors) {
 function matchesRule(rule, candidatePath, baselineSet) {
   if (rule.scope === 'reviewed-baseline' && !baselineSet.has(candidatePath)) return false
   return rule.matchers.some(matcher => matcher.test(candidatePath))
-}
-
-function reviewResolved(review, commit, candidateContentMatches) {
-  return review
-    && candidateContentMatches
-    && !isPending(review.owner)
-    && !isPending(review.approver)
-    && (review.candidate === commit || review.candidate === 'SELF')
-    && review.status === 'APPROVED'
 }
 
 export function verifyOpenSourceCandidate({ repo = '.', commit }) {
@@ -297,33 +276,8 @@ export function verifyOpenSourceCandidate({ repo = '.', commit }) {
   const baselineSet = new Set(baselinePaths)
   const candidateSet = new Set(candidatePaths)
   const actualPathSetSha256 = hashPathSet(baselinePaths)
-  const expectedCandidateContentSha256 = typeof policy?.candidateContentSha256 === 'string'
-    ? policy.candidateContentSha256
-    : null
-  const actualCandidateContentSha256 = candidateRead ? hashCandidateContent(candidateEntries) : null
-  const candidateContentMatches = SHA256.test(expectedCandidateContentSha256 || '')
-    && actualCandidateContentSha256 === expectedCandidateContentSha256
-
   if (baselineCommit && actualPathSetSha256 !== policy.pathSetSha256) {
     addGroupedError(groupedErrors, 'PATH_SET_HASH_MISMATCH')
-  }
-
-  if (policyLoaded) {
-    if (isPending(expectedCandidateContentSha256)) {
-      addGroupedError(groupedErrors, 'CANDIDATE_CONTENT_BINDING_PENDING')
-    } else if (SHA256.test(expectedCandidateContentSha256 || '') && !candidateContentMatches) {
-      addGroupedError(groupedErrors, 'CANDIDATE_CONTENT_HASH_MISMATCH')
-    }
-  }
-
-  if (policyLoaded) {
-    const candidate = policy?.candidate || {}
-    if (candidate.commit !== immutableCommit && candidate.commit !== 'SELF') {
-      addGroupedError(groupedErrors, 'CANDIDATE_COMMIT_MISMATCH')
-    }
-    if (isPending(candidate.owner)) addGroupedError(groupedErrors, 'CANDIDATE_OWNER_PENDING')
-    if (isPending(candidate.approver)) addGroupedError(groupedErrors, 'CANDIDATE_APPROVER_PENDING')
-    if (candidate.status !== 'APPROVED') addGroupedError(groupedErrors, 'CANDIDATE_STATUS_NOT_APPROVED')
   }
 
   const matchedBaselineCounts = new Map(rules.map(rule => [rule.id, 0]))
@@ -371,9 +325,6 @@ export function verifyOpenSourceCandidate({ repo = '.', commit }) {
 
   for (const rule of rules) {
     const applies = matchedBaselineCounts.get(rule.id) > 0 || matchedCandidateCounts.get(rule.id) > 0
-    if (applies && !reviewResolved(rule.review, immutableCommit, candidateContentMatches)) {
-      addGroupedError(groupedErrors, 'RULE_REVIEW_PENDING', { ruleId: rule.id })
-    }
     if (rule.action !== 'conditional-keep' || matchedCandidateCounts.get(rule.id) === 0) continue
     for (const evidence of rule.evidence) {
       if (!evidence || typeof evidence.path !== 'string' || !SHA256.test(evidence.sha256 || '')) {
@@ -408,12 +359,6 @@ export function verifyOpenSourceCandidate({ repo = '.', commit }) {
       path: POLICY_PATH,
       sha256: policySha256
     },
-    candidateContentBinding: {
-      excludes: [POLICY_PATH],
-      expected: expectedCandidateContentSha256,
-      actual: actualCandidateContentSha256,
-      matches: candidateContentMatches
-    },
     pathSetBinding: {
       expected: typeof policy?.pathSetSha256 === 'string' ? policy.pathSetSha256 : null,
       actual: baselineCommit ? actualPathSetSha256 : null,
@@ -430,11 +375,7 @@ export function verifyOpenSourceCandidate({ repo = '.', commit }) {
       action: rule.action,
       scope: rule.scope,
       matchedReviewedBaselinePaths: matchedBaselineCounts.get(rule.id),
-      matchedCandidatePaths: matchedCandidateCounts.get(rule.id),
-      owner: typeof rule.review?.owner === 'string' ? rule.review.owner : null,
-      approver: typeof rule.review?.approver === 'string' ? rule.review.approver : null,
-      candidate: typeof rule.review?.candidate === 'string' ? rule.review.candidate : null,
-      status: typeof rule.review?.status === 'string' ? rule.review.status : null
+      matchedCandidatePaths: matchedCandidateCounts.get(rule.id)
     })),
     errors
   }
@@ -468,7 +409,6 @@ function failureReport(code) {
     reviewedBaselineCommit: null,
     candidateCommit: null,
     policyBinding: { path: POLICY_PATH, sha256: null },
-    candidateContentBinding: { excludes: [POLICY_PATH], expected: null, actual: null, matches: false },
     pathSetBinding: { expected: null, actual: null, matches: false },
     counts: { reviewedBaselinePaths: 0, candidatePaths: 0, rules: 0, errors: 1 },
     rules: [],
