@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Claude Code Subagent 能力调研 — OpenPipal 对照</title>
+<style>
+  :root {
+    --teal: #0d9488;
+    --teal-50: #f0fdfa;
+    --teal-200: #99f6e4;
+    --gray-50: #fafaf9;
+    --gray-100: #f5f5f4;
+    --gray-200: #e7e5e4;
+    --gray-400: #a8a29e;
+    --gray-600: #57534e;
+    --gray-800: #292524;
+    --amber-50: #fffbeb;
+    --amber-200: #fde68a;
+    --amber-600: #d97706;
+    --red-50: #fef2f2;
+    --red-600: #dc2626;
+    --green-50: #f0fdf4;
+    --green-600: #16a34a;
+  }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 48px 32px 96px;
+    color: var(--gray-800);
+    line-height: 1.7;
+    font-size: 15px;
+    background: #fff;
+  }
+  h1 {
+    font-size: 26px;
+    border-bottom: 2px solid var(--teal);
+    padding-bottom: 12px;
+    margin-bottom: 8px;
+  }
+  h2 {
+    font-size: 19px;
+    margin-top: 48px;
+    color: var(--teal);
+    border-bottom: 1px solid var(--gray-200);
+    padding-bottom: 6px;
+  }
+  h3 {
+    font-size: 16px;
+    margin-top: 28px;
+    color: var(--gray-800);
+  }
+  .meta {
+    color: var(--gray-400);
+    font-size: 13px;
+    margin-bottom: 36px;
+  }
+  .meta strong { color: var(--gray-600); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--gray-200);
+    vertical-align: top;
+  }
+  th {
+    background: var(--gray-50);
+    font-weight: 600;
+    color: var(--gray-600);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  tr:hover { background: var(--gray-50); }
+  code {
+    background: var(--gray-100);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 13px;
+    color: var(--teal);
+  }
+  pre {
+    background: var(--gray-50);
+    border: 1px solid var(--gray-200);
+    padding: 14px 18px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  pre code { background: transparent; padding: 0; color: var(--gray-800); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .badge-high { background: var(--green-50); color: var(--green-600); border: 1px solid #bbf7d0; }
+  .badge-mid  { background: var(--amber-50); color: var(--amber-600); border: 1px solid var(--amber-200); }
+  .badge-skip { background: var(--red-50); color: var(--red-600); border: 1px solid #fecaca; }
+  .badge-done { background: var(--teal-50); color: var(--teal); border: 1px solid var(--teal-200); }
+  .callout {
+    background: var(--teal-50);
+    border-left: 3px solid var(--teal);
+    padding: 14px 18px;
+    margin: 20px 0;
+    border-radius: 4px;
+  }
+  .callout strong { color: var(--teal); }
+  ul li, ol li { margin: 4px 0; }
+  .small { font-size: 13px; color: var(--gray-600); }
+  .yes { color: var(--green-600); font-weight: 600; }
+  .no  { color: var(--red-600); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>Claude Code Subagent 能力调研</h1>
+<div class="meta">
+  <strong>调研日期</strong>: 2026-05-19 ·
+  <strong>背景</strong>: OpenPipal subagent 接入完整收尾（P1–P6, 5 commits）后的 cc 能力对照 ·
+  <strong>结论</strong>: 3 项有价值差距值得后续做（maxTurns / parallel / memory），其余 cc 能力多数对 OpenPipal 不适用
+</div>
+
+<div class="callout">
+  <strong>这份文档的价值</strong>：不是"cc 能力清单"或"差距列表"——是"按 OpenPipal 产品形态筛过的、未来真触发某些场景时知道改什么"的决策路径。
+  cc 是 coding agent，OpenPipal 是 docked 桌面伴侣，产品形态不同导致很多 cc 能力（如 worktree 隔离、Fork 模式、CLAUDE.md 自动注入）<strong>对我们就是不适用</strong>。
+</div>
+
+<h2>1. OpenPipal 当前已带能力 (P1–P6)</h2>
+
+<table>
+  <thead><tr><th width="30%">能力</th><th width="40%">实现位置</th><th width="30%">备注</th></tr></thead>
+  <tbody>
+    <tr><td>文件式定义 (md + frontmatter)</td><td><code>~/.openpipal/subagents/*.md</code></td><td>name / description / tools / model 四字段</td></tr>
+    <tr><td>同进程 child Agent</td><td><code>src/main/subagent-runner.ts</code></td><td>复用 pi-agent-core <code>new Agent()</code></td></tr>
+    <tr><td>工具白名单 + 黑名单</td><td><code>subagent-runner.ts filterTools()</code></td><td>profile.tools 白 + 防套娃 / 用户面工具黑</td></tr>
+    <tr><td>模型 override</td><td><code>RunChildAgentOptions.modelOverride</code></td><td>严格匹配 modelPresets，找不到 fallback 主 agent</td></tr>
+    <tr><td>Inline 折叠 UI</td><td><code>SubagentCard.tsx</code></td><td>默认折叠，对齐 thinking 模块交互</td></tr>
+    <tr><td>嵌套对话流渲染</td><td><code>piMessagesToChatMessages</code> + MessageBubble</td><td>复用主对话样式，自动同步未来升级</td></tr>
+    <tr><td>4 个默认 profile</td><td><code>resources/subagents/*.md</code></td><td>explorer / researcher / thinker / executor</td></tr>
+    <tr><td>首启 seed 机制</td><td><code>subagent-manager.ts seedDefaultsIfNeeded()</code></td><td>sentinel 文件保证用户删除不被复活</td></tr>
+  </tbody>
+</table>
+
+<h2>2. Claude Code 完整能力清单（按维度）</h2>
+
+<h3>2.1 Frontmatter 字段</h3>
+<table>
+  <thead><tr><th>字段</th><th>说明</th><th>OpenPipal 有？</th></tr></thead>
+  <tbody>
+    <tr><td><code>name</code> / <code>description</code></td><td>必填，name 唯一标识，description 决定何时被调用</td><td><span class="yes">✓</span></td></tr>
+    <tr><td><code>tools</code></td><td>白名单（数组或逗号分隔）</td><td><span class="yes">✓</span></td></tr>
+    <tr><td><code>disallowedTools</code></td><td>黑名单（继承所有但禁 X）</td><td><span class="no">✗</span></td></tr>
+    <tr><td><code>model</code></td><td><code>sonnet</code>/<code>opus</code>/<code>haiku</code>/<code>inherit</code> 或完整 ID</td><td><span class="yes">✓</span></td></tr>
+    <tr><td><code>permissionMode</code></td><td><code>default</code>/<code>acceptEdits</code>/<code>auto</code>/<code>dontAsk</code>/<code>bypassPermissions</code>/<code>plan</code></td><td><span class="no">✗</span></td></tr>
+    <tr><td><code>mcpServers</code></td><td>内联或引用 MCP 服务器</td><td>部分（继承主 MCP）</td></tr>
+    <tr><td><code>hooks</code></td><td>PreToolUse / PostToolUse / Stop 事件钩子</td><td><span class="no">✗</span></td></tr>
+    <tr><td><code>maxTurns</code></td><td>agent loop 最大轮数</td><td><span class="no">✗</span></td></tr>
+    <tr><td><code>skills</code></td><td>启动时预加载的 skill 内容（全量注入）</td><td><span class="no">✗</span></td></tr>
+    <tr><td><code>memory</code></td><td>跨 session 学习目录: <code>user</code> / <code>project</code> / <code>local</code></td><td><span class="no">✗</span></td></tr>
+    <tr><td><code>background</code></td><td>默认后台运行</td><td>不适用（OpenPipal child 本来就不阻塞主对话）</td></tr>
+    <tr><td><code>isolation: worktree</code></td><td>临时 git worktree 隔离</td><td>不适用（OpenPipal 不是 coding agent）</td></tr>
+    <tr><td><code>color</code></td><td>显示颜色（区分 UI 上不同 agent）</td><td><span class="no">✗</span></td></tr>
+    <tr><td><code>effort</code></td><td>推理等级 <code>low</code>/<code>medium</code>/<code>high</code>/<code>xhigh</code>/<code>max</code></td><td><span class="no">✗</span>（默认 off）</td></tr>
+    <tr><td><code>initialPrompt</code></td><td>首轮自动 prompt（作为 --agent 主线时）</td><td>不适用</td></tr>
+  </tbody>
+</table>
+
+<h3>2.2 调用与隔离</h3>
+<ul>
+  <li><strong>Agent Tool 参数</strong>: <code>subagent_type</code> (string, 必填) + <code>prompt</code> (string, 必填)</li>
+  <li><strong>自动委托</strong>: Claude 根据任务描述与 description field 语义匹配（OpenPipal 主 agent 也是这种模式）</li>
+  <li><strong>@-mention</strong>: <code>@agent-code-reviewer</code> 强制选定（OpenPipal 没有，用户在 prompt 里说 "用 subagent profile='xxx'" 就行）</li>
+  <li><strong>上下文隔离</strong>: 独立上下文窗口，tool calls 不污染主对话——跟 OpenPipal 设计一致</li>
+  <li><strong>返回数据</strong>: 仅 final message 文本——跟 OpenPipal 一致（finalText 不展示给用户）</li>
+</ul>
+
+<h3>2.3 并行 / 链式 / 嵌套</h3>
+<table>
+  <thead><tr><th>能力</th><th>cc</th><th>OpenPipal</th></tr></thead>
+  <tbody>
+    <tr><td>并行（一次发起多个）</td><td><span class="yes">✓</span> 多个 Agent tool calls</td><td><span class="no">✗</span> 首版只 single（deferred）</td></tr>
+    <tr><td>链式（A 输出当 B 输入）</td><td><span class="yes">✓</span> 主 agent 手动串</td><td>主 agent 多次单独调用即等价</td></tr>
+    <tr><td>嵌套（child 再开 child）</td><td><span class="no">✗</span> 官方明确禁止</td><td><span class="no">✗</span> 黑名单 'subagent' 防套娃，跟 cc 一致</td></tr>
+  </tbody>
+</table>
+
+<h3>2.4 Memory 跨 session 学习（最有意思的能力）</h3>
+<pre><code>memory: user     # ~/.claude/agent-memory/&lt;agent-name&gt;/
+memory: project  # .claude/agent-memory/&lt;agent-name&gt;/
+memory: local    # .claude/agent-memory-local/&lt;agent-name&gt;/</code></pre>
+<ul>
+  <li>Subagent system prompt 自动注入: Read/Write/Edit 权限 + MEMORY.md 首 200 行</li>
+  <li>Subagent 可主动 update MEMORY.md（记录 codebase patterns / 经验）</li>
+  <li>下次启动自动加载，形成累积知识库</li>
+  <li>OpenPipal 已有 <code>~/.openpipal/memory/&lt;role&gt;/</code> 主 agent 记忆，但 subagent 没单独空间</li>
+</ul>
+
+<h3>2.5 流式 / 进度 / 中断</h3>
+<ul>
+  <li>cc <code>/agents</code> 命令打开管理面板，Running 标签显示活跃 subagent</li>
+  <li>后台 subagent 在下方面板展示状态条 + 进度</li>
+  <li>前台 Ctrl+C 中断同主会话</li>
+  <li>后台 <code>/agents</code> 选中 + x 中断</li>
+  <li><strong>OpenPipal 现状</strong>: 流式中间状态没做（P5 deferred），调用时卡 5–15 秒</li>
+</ul>
+
+<h2>3. 价值差距矩阵（按优先级）</h2>
+
+<table>
+  <thead><tr><th>差距</th><th width="13%">价值</th><th width="13%">成本</th><th>加入理由</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>maxTurns</code> 字段</td>
+      <td><span class="badge badge-high">High</span></td>
+      <td>30 min</td>
+      <td>防 runaway——child 卡 50 轮还没完会烧 token + cost 双重失控。安全网</td>
+    </tr>
+    <tr>
+      <td><code>memory:</code> field 跨 session 学习</td>
+      <td><span class="badge badge-high">High</span></td>
+      <td>半天</td>
+      <td>让 researcher / executor 等档位<strong>跨调用积累领域经验</strong>，long-term 价值大；OpenPipal memory 体系已有，扩展到 subagent 级别是对称设计</td>
+    </tr>
+    <tr>
+      <td>parallel 调用（多 subagent 并发）</td>
+      <td><span class="badge badge-high">High</span></td>
+      <td>半天</td>
+      <td>用户委派"同时调研 A/B/C"时省 3 倍时间。pi-tools subagent 工具 schema 扩展 + runner 并发管理</td>
+    </tr>
+    <tr>
+      <td><code>disallowedTools</code> 黑名单字段</td>
+      <td><span class="badge badge-mid">Medium</span></td>
+      <td>1 小时</td>
+      <td>比白名单灵活——"几乎全工具但禁 web_search"这种 case 更易表达</td>
+    </tr>
+    <tr>
+      <td><code>color</code> 区分 UI</td>
+      <td><span class="badge badge-mid">Medium</span></td>
+      <td>1 小时</td>
+      <td>主对话出现多个 SubagentCard 时一眼分辨</td>
+    </tr>
+    <tr>
+      <td><code>effort</code> 字段（thinkingLevel per profile）</td>
+      <td><span class="badge badge-mid">Medium</span></td>
+      <td>2 小时</td>
+      <td>thinker 高 thinking、explorer minimal——按 profile 优化成本/质量；但 OpenPipal 模型层可能挂 model 字段更对齐</td>
+    </tr>
+    <tr>
+      <td><code>/agents</code> 管理界面（GUI 化）</td>
+      <td><span class="badge badge-mid">Medium</span></td>
+      <td>一天+</td>
+      <td>OpenPipal 是 GUI 应该走 Settings 而不是命令；UI 工作量大；当前 vim md 文件够用</td>
+    </tr>
+    <tr>
+      <td>流式中间状态</td>
+      <td><span class="badge badge-mid">Medium</span></td>
+      <td>一天</td>
+      <td>实时看到 child 在调什么工具；adapter 加 tool_execution_update case + chatStore 流式累积 + SubagentCard 进度条</td>
+    </tr>
+    <tr>
+      <td>Worktree 隔离 / Fork 模式</td>
+      <td><span class="badge badge-skip">Skip</span></td>
+      <td>—</td>
+      <td>cc 是 coding agent 才需要——OpenPipal 不 commit 代码 / Fork 跟"上下文隔离"哲学冲突</td>
+    </tr>
+    <tr>
+      <td>CLAUDE.md 自动注入</td>
+      <td><span class="badge badge-skip">Skip</span></td>
+      <td>—</td>
+      <td>OpenPipal 不是 IDE，没"项目级 CLAUDE.md"概念</td>
+    </tr>
+    <tr>
+      <td>SendMessage / Agent Teams</td>
+      <td><span class="badge badge-skip">Skip</span></td>
+      <td>—</td>
+      <td>cc 自己标 experimental；OpenPipal 现阶段过早</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>4. 用户拍板的 3 项 (2026-05-19)</h2>
+
+<div class="callout">
+  <strong>选定加入候选</strong>（按"具体触发再做"原则，不立即动手）：
+  <ol>
+    <li><strong>maxTurns</strong> — 防 runaway 安全网（30 min 工作量，性价比最高）</li>
+    <li><strong>parallel</strong> — 多 subagent 并发（半天工作量，等用户真实使用反馈有"同时派几个"的需求再做）</li>
+    <li><strong>memory</strong> — 跨 session 学习（半天工作量，<strong>产品理念决策</strong>——让 subagent 从"throw-away 工具"变成"会成长的专家"）</li>
+  </ol>
+  其它差距不考虑。
+</div>
+
+<h2>5. 触发场景 → 加什么 决策路径</h2>
+
+<table>
+  <thead><tr><th width="50%">触发场景</th><th>加什么</th></tr></thead>
+  <tbody>
+    <tr><td>看到 child 跑 30 轮还没完</td><td><code>maxTurns</code> field</td></tr>
+    <tr><td>看到 profile.tools 写一大堆排除项</td><td><code>disallowedTools</code> field</td></tr>
+    <tr><td>用户说"同时让 2-3 个 subagent 做调研"</td><td>parallel 调用 schema + runner</td></tr>
+    <tr><td>多个 SubagentCard 在主对话视觉混淆</td><td><code>color</code> field + SubagentCard 头部应用</td></tr>
+    <tr><td>用户说"希望 researcher 记得上次调研过什么"</td><td><code>memory:</code> field + ~/.openpipal/memory/subagents/&lt;profile&gt;/</td></tr>
+    <tr><td>用户说"想看 child 实时在干什么"（vs 卡几秒一次性出）</td><td>流式：adapter <code>tool_execution_update</code> case + chatStore 流式累积</td></tr>
+    <tr><td>用户说"想用 GUI 配 subagent 不想改 md 文件"</td><td>Settings 里的 SubagentManager UI（仿 SkillsHub 风格）</td></tr>
+  </tbody>
+</table>
+
+<h2>6. 参考来源</h2>
+<ul>
+  <li><a href="https://code.claude.com/docs/en/sub-agents.md">Create custom subagents — Claude Code Docs</a></li>
+  <li><a href="https://code.claude.com/docs/en/agent-sdk/subagents.md">Subagents in the SDK — Claude Code Docs</a></li>
+  <li><a href="https://docs.anthropic.com/en/docs/claude-code/">Claude Code 主文档</a></li>
+</ul>
+
+<h2>7. 这次接入工作的 commit 历史</h2>
+<table>
+  <thead><tr><th>Commit</th><th>阶段</th><th>关键内容</th></tr></thead>
+  <tbody>
+    <tr><td><code>21fc1a2</code></td><td>P1</td><td>profile loader + 4 个默认档位骨架</td></tr>
+    <tr><td><code>cff01e5</code></td><td>P2</td><td>同进程 child Agent runner</td></tr>
+    <tr><td><code>4186cc9</code></td><td>P3</td><td>pi-tool 注册 + 三处登记，首次端到端跑通</td></tr>
+    <tr><td><code>28a46f6</code></td><td>P4</td><td>SubagentCard + Workspace 侧栏 artifact（<strong>错路</strong>，留作教训）</td></tr>
+    <tr><td><code>3248b31</code></td><td>P6</td><td>UI 调整 inline 折叠 + 复用 MessageBubble（<strong>正确终点</strong>）</td></tr>
+  </tbody>
+</table>
+
+<p class="small" style="margin-top: 48px; text-align: center; color: var(--gray-400);">
+  OpenPipal subagent 接入研究存档 · 2026-05-19
+</p>
+
+</body>
+</html>

@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Schibsted+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<meta name="design_doc_mode" content="canvas">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+</style>
+</helmet>
+
+<!-- ================= FRAME B : WARM EDITORIAL ================= -->
+<div style="position:absolute; left:1420px; top:0; width:1320px;">
+  <div data-drags-parent="1" style="display:flex; align-items:center; gap:10px; padding:0 4px 14px; font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:#a59c8c; cursor:grab;">
+    <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#b5532f;"></span>方向 B · Warm Editorial
+  </div>
+  <div data-screen-label="Direction B — Map" style="width:1320px; height:824px; background:#f8f5ef; border:1px solid #e6dfd2; border-radius:6px; box-shadow:0 1px 3px rgba(60,40,20,.1); overflow:hidden; font-family:'Hanken Grotesk',sans-serif; color:#2a2620; display:flex; flex-direction:column;">
+
+    <!-- top bar -->
+    <div style="height:62px; flex:none; border-bottom:1px solid #e6dfd2; display:flex; align-items:center; padding:0 20px; gap:18px; background:#fbf9f4;">
+      <div style="display:flex; align-items:baseline; gap:10px;">
+        <span style="font-family:'Newsreader',serif; font-weight:600; font-size:24px; letter-spacing:-.01em; color:#1f1b16;">Clio</span>
+        <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#a59c8c; letter-spacing:.04em;">AGENT INSIGHTS</span>
+      </div>
+      <div style="width:1px; height:24px; background:#e6dfd2;"></div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#8a8276;">1,238,904 conversations · last 30d</div>
+      <div style="flex:1;"></div>
+      <div style="display:flex; align-items:center; gap:8px; height:36px; padding:0 14px; border:1px solid #ddd3c2; border-radius:4px; font-size:13px; color:#8a8276; background:#fff;">Facet <b style="color:#2a2620; font-weight:600; font-family:'Newsreader',serif; font-size:15px;">Task performed</b> <span style="color:#bcb09c;">▾</span></div>
+      <div style="display:flex; align-items:center; gap:8px; height:36px; padding:0 14px; border:1px solid #ddd3c2; border-radius:4px; font-size:13px; color:#8a8276; background:#fff;">Color <b style="color:#b5532f; font-weight:600;">Growth</b> <span style="color:#bcb09c;">▾</span></div>
+      <div style="display:flex; height:36px; border:1px solid #ddd3c2; border-radius:4px; overflow:hidden; font-size:13px; background:#fff;">
+        <div style="display:flex; align-items:center; padding:0 14px; background:#2a2620; color:#f8f5ef; font-weight:600;">Themes</div>
+        <div style="display:flex; align-items:center; padding:0 14px; color:#8a8276;">Scatter</div>
+      </div>
+    </div>
+
+    <!-- body -->
+    <div style="flex:1; display:flex; min-height:0;">
+      <!-- sidebar -->
+      <div style="width:268px; flex:none; border-right:1px solid #e6dfd2; display:flex; flex-direction:column;">
+        <div style="padding:18px 20px 12px;">
+          <div style="font-family:'Newsreader',serif; font-size:18px; font-weight:600; color:#1f1b16;">Hierarchy of use</div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#a59c8c; margin-top:3px;">10 themes → 142 → 1,038 leaves</div>
+        </div>
+        <div style="flex:1; overflow:hidden; padding:0 12px;">
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 8px; border-bottom:1px solid #efe9dd; font-size:14px; font-weight:600; color:#1f1b16;">
+            <span style="font-family:'IBM Plex Mono',monospace; color:#c2603f; font-size:12px;">01</span>Software development<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#c2603f;">+18%</span>
+          </div>
+          <div style="padding:4px 0 4px 22px;">
+            <div style="display:flex; align-items:center; gap:9px; padding:6px 8px; font-size:13px; color:#5b554a;"><span style="width:6px;height:6px;border-radius:50%;background:#c2603f;opacity:.5;"></span>Debug &amp; fix code<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#a59c8c;">+9%</span></div>
+            <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; font-size:13.5px; background:#f1ebdf; border-radius:4px; color:#1f1b16; font-weight:600;"><span style="width:6px;height:6px;border-radius:50%;background:#c2603f;"></span>Build web &amp; mobile apps<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#c2603f;">+24%</span></div>
+            <div style="display:flex; align-items:center; gap:9px; padding:6px 8px; font-size:13px; color:#5b554a;"><span style="width:6px;height:6px;border-radius:50%;background:#c2603f;opacity:.3;"></span>Write SQL &amp; queries<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#a59c8c;">+4%</span></div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 8px; border-bottom:1px solid #efe9dd; font-size:14px; color:#2a2620;"><span style="font-family:'IBM Plex Mono',monospace; color:#7d8b4a; font-size:12px;">02</span>Writing &amp; content<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#7d8b4a;">+11%</span></div>
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 8px; border-bottom:1px solid #efe9dd; font-size:14px; color:#2a2620;"><span style="font-family:'IBM Plex Mono',monospace; color:#cf9a3c; font-size:12px;">03</span>Research &amp; analysis<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#cf9a3c;">+6%</span></div>
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 8px; border-bottom:1px solid #efe9dd; font-size:14px; color:#2a2620;"><span style="font-family:'IBM Plex Mono',monospace; color:#5b7b8a; font-size:12px;">04</span>Customer support<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#5b7b8a;">+31%</span></div>
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 8px; border-bottom:1px solid #efe9dd; font-size:14px; color:#2a2620;"><span style="font-family:'IBM Plex Mono',monospace; color:#8a5a6e; font-size:12px;">05</span>Education &amp; tutoring<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#8a5a6e;">+7%</span></div>
+        </div>
+      </div>
+
+      <!-- map -->
+      <div style="flex:1; position:relative; background:#f3eee3; overflow:hidden;">
+        <div style="position:absolute; left:34%; top:44%; width:180px; height:180px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(194,96,63,.2); border:1px solid rgba(194,96,63,.6); display:flex; align-items:center; justify-content:center; text-align:center;">
+          <div><div style="font-family:'Newsreader',serif; font-weight:600; font-size:16px; color:#7a3318;">Build web &amp; mobile apps</div><div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#b5532f; margin-top:3px;">128,420 · +24%</div></div>
+        </div>
+        <div style="position:absolute; left:61%; top:31%; width:132px; height:132px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(125,139,74,.18); border:1px solid rgba(125,139,74,.55); display:flex; align-items:center; justify-content:center;">
+          <div style="font-family:'Newsreader',serif; font-weight:600; font-size:14px; color:#4f5a2c;">Content writing</div>
+        </div>
+        <div style="position:absolute; left:74%; top:56%; width:106px; height:106px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(207,154,60,.2); border:1px solid rgba(207,154,60,.6); display:flex; align-items:center; justify-content:center; text-align:center;">
+          <div style="font-family:'Newsreader',serif; font-weight:600; font-size:13px; color:#8a6418;">Research</div>
+        </div>
+        <div style="position:absolute; left:47%; top:69%; width:92px; height:92px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(91,123,138,.18); border:1px solid rgba(91,123,138,.55); display:flex; align-items:center; justify-content:center;">
+          <div style="font-family:'Newsreader',serif; font-weight:600; font-size:12px; color:#3a5560;">Support</div>
+        </div>
+        <div style="position:absolute; left:22%; top:67%; width:76px; height:76px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(138,90,110,.18); border:1px solid rgba(138,90,110,.55);"></div>
+        <div style="position:absolute; left:82%; top:34%; width:60px; height:60px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(154,168,134,.22); border:1px solid rgba(154,168,134,.6);"></div>
+        <div style="position:absolute; left:62%; top:80%; width:66px; height:66px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(125,139,74,.16); border:1px solid rgba(125,139,74,.5);"></div>
+        <div style="position:absolute; left:16%; top:34%; width:52px; height:52px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(194,96,63,.16); border:1px solid rgba(194,96,63,.5);"></div>
+
+        <div style="position:absolute; left:20px; top:18px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:#a59c8c;">— mid-level themes · colored by 30-day growth —</div>
+        <!-- growth legend -->
+        <div style="position:absolute; left:20px; bottom:18px; display:flex; align-items:center; gap:0; font-family:'IBM Plex Mono',monospace; font-size:11px; color:#8a8276;">
+          <span style="margin-right:8px;">−10%</span>
+          <span style="width:120px; height:8px; border-radius:4px; background:linear-gradient(90deg,#9aa886,#cf9a3c,#c2603f);"></span>
+          <span style="margin-left:8px;">+35%</span>
+        </div>
+        <div style="position:absolute; right:18px; bottom:18px; display:flex; flex-direction:column; border:1px solid #ddd3c2; border-radius:4px; overflow:hidden; background:#fbf9f4;">
+          <div style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#8a8276; border-bottom:1px solid #e6dfd2;">+</div>
+          <div style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#8a8276;">−</div>
+        </div>
+      </div>
+
+      <!-- inspector -->
+      <div style="width:320px; flex:none; border-left:1px solid #e6dfd2; display:flex; flex-direction:column; background:#fbf9f4;">
+        <div style="padding:20px 22px 16px; border-bottom:1px solid #e6dfd2;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:#b5532f; margin-bottom:10px;">Selected theme</div>
+          <div style="font-family:'Newsreader',serif; font-size:23px; font-weight:600; line-height:1.2; color:#1f1b16;">Build web &amp; mobile applications</div>
+          <div style="font-size:13.5px; color:#6b6457; margin-top:10px; line-height:1.55;">Users ask the agent to scaffold, implement and refactor full-stack apps across React, Next.js and Flutter.</div>
+        </div>
+        <div style="padding:18px 22px; border-bottom:1px solid #e6dfd2; display:flex; gap:24px;">
+          <div><div style="font-family:'IBM Plex Mono',monospace; font-size:22px; color:#1f1b16;">128.4K</div><div style="font-size:11px; color:#a59c8c; margin-top:3px;">conversations</div></div>
+          <div><div style="font-family:'IBM Plex Mono',monospace; font-size:22px; color:#b5532f;">+24%</div><div style="font-size:11px; color:#a59c8c; margin-top:3px;">growth</div></div>
+          <div><div style="font-family:'IBM Plex Mono',monospace; font-size:22px; color:#1f1b16;">4.2</div><div style="font-size:11px; color:#a59c8c; margin-top:3px;">avg turns</div></div>
+        </div>
+        <div style="padding:18px 22px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#a59c8c; margin-bottom:12px;">Representative summary</div>
+          <div style="font-size:13.5px; line-height:1.6; color:#3a352d; border-left:2px solid #c2603f; padding-left:12px;">"Help me set up a Next.js project with authentication and a Postgres database, then build the dashboard route."</div>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="padding:16px 22px; border-top:1px solid #e6dfd2; display:flex; gap:10px;">
+          <div style="flex:1; height:40px; border-radius:4px; background:#2a2620; color:#f8f5ef; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">Explore children →</div>
+          <div style="width:40px; height:40px; border-radius:4px; border:1px solid #ddd3c2; display:flex; align-items:center; justify-content:center; color:#8a8276; background:#fff;">⚑</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= FRAME A : CLEAN LIGHT / INDIGO ================= -->
+<div style="position:absolute; left:0; top:0; width:1320px;">
+  <div data-drags-parent="1" style="display:flex; align-items:center; gap:10px; padding:0 4px 14px; font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:#8a8f99; cursor:grab;">
+    <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#4f46e5;"></span>方向 A · Clean Light / Indigo
+  </div>
+  <div data-screen-label="Direction A — Map" style="width:1320px; height:824px; background:#ffffff; border:1px solid #e6e8ec; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden; font-family:'Hanken Grotesk',sans-serif; color:#181b22; display:flex; flex-direction:column;">
+
+    <!-- top bar -->
+    <div style="height:58px; flex:none; border-bottom:1px solid #eceef1; display:flex; align-items:center; padding:0 16px; gap:16px;">
+      <div style="display:flex; align-items:center; gap:9px; font-weight:800; font-size:17px; letter-spacing:-.01em;">
+        <span style="display:inline-flex; width:26px; height:26px; border-radius:7px; background:#4f46e5; color:#fff; align-items:center; justify-content:center; font-size:14px;">◑</span>
+        Clio
+      </div>
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#9aa0aa;">/ agent-usage · 1.2M conversations</div>
+      <div style="flex:1;"></div>
+      <div style="display:flex; align-items:center; gap:8px; height:34px; padding:0 12px; border:1px solid #e6e8ec; border-radius:8px; font-size:13px; color:#717784;">Facet: <b style="color:#181b22; font-weight:600;">What task is the agent asked to perform?</b> <span style="color:#b6bbc4;">▾</span></div>
+      <div style="display:flex; align-items:center; gap:8px; height:34px; padding:0 12px; border:1px solid #e6e8ec; border-radius:8px; font-size:13px; color:#717784;">Color by: <b style="color:#4f46e5; font-weight:600;">Size</b> <span style="color:#b6bbc4;">▾</span></div>
+      <div style="display:flex; height:34px; border:1px solid #e6e8ec; border-radius:8px; overflow:hidden; font-size:13px;">
+        <div style="display:flex; align-items:center; padding:0 13px; background:#4f46e5; color:#fff; font-weight:600;">Clusters</div>
+        <div style="display:flex; align-items:center; padding:0 13px; color:#717784;">Scatter</div>
+      </div>
+      <div style="width:34px; height:34px; border-radius:50%; background:linear-gradient(135deg,#6366f1,#a855f7);"></div>
+    </div>
+
+    <!-- body -->
+    <div style="flex:1; display:flex; min-height:0;">
+      <!-- sidebar -->
+      <div style="width:256px; flex:none; border-right:1px solid #eceef1; display:flex; flex-direction:column; background:#fbfbfc;">
+        <div style="padding:14px 16px 10px; display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#9aa0aa;">Hierarchy</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#b6bbc4;">10 · 142 · 1,038</span>
+        </div>
+        <div style="margin:0 12px 10px; height:32px; border:1px solid #e6e8ec; border-radius:8px; display:flex; align-items:center; padding:0 10px; gap:8px; color:#aab0ba; font-size:13px;">⌕ Search clusters</div>
+        <div style="flex:1; overflow:hidden; padding:2px 8px;">
+          <!-- L1 rows -->
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; border-radius:7px; background:#eef0ff; font-size:13.5px; font-weight:600;">
+            <span style="color:#9aa0aa; font-size:10px;">▾</span><span style="width:9px; height:9px; border-radius:3px; background:#6366f1;"></span>Software development<span style="flex:1;"></span><span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#717784;">21.4%</span>
+          </div>
+          <div style="padding-left:18px;">
+            <div style="display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:7px; font-size:13px; color:#4a4f59;">
+              <span style="width:7px;height:7px;border-radius:2px;background:#818cf8;"></span>Debug & fix code errors<span style="flex:1;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9aa0aa;">6.1%</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:7px; font-size:13px; background:#fff; border:1px solid #e6e8ec; box-shadow:0 1px 2px rgba(0,0,0,.04); color:#181b22; font-weight:600;">
+              <span style="width:7px;height:7px;border-radius:2px;background:#6366f1;"></span>Build web & mobile apps<span style="flex:1;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#717784;">10.3%</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:7px; font-size:13px; color:#4a4f59;">
+              <span style="width:7px;height:7px;border-radius:2px;background:#a5b4fc;"></span>Write SQL & data queries<span style="flex:1;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9aa0aa;">3.0%</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; font-size:13.5px;">
+            <span style="color:#9aa0aa; font-size:10px;">▸</span><span style="width:9px; height:9px; border-radius:3px; background:#14b8a6;"></span>Writing & content<span style="flex:1;"></span><span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa0aa;">14.8%</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; font-size:13.5px;">
+            <span style="color:#9aa0aa; font-size:10px;">▸</span><span style="width:9px; height:9px; border-radius:3px; background:#f59e0b;"></span>Research & analysis<span style="flex:1;"></span><span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa0aa;">9.2%</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; font-size:13.5px;">
+            <span style="color:#9aa0aa; font-size:10px;">▸</span><span style="width:9px; height:9px; border-radius:3px; background:#f43f5e;"></span>Customer support<span style="flex:1;"></span><span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa0aa;">7.5%</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; font-size:13.5px;">
+            <span style="color:#9aa0aa; font-size:10px;">▸</span><span style="width:9px; height:9px; border-radius:3px; background:#8b5cf6;"></span>Education & tutoring<span style="flex:1;"></span><span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa0aa;">6.0%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- map -->
+      <div style="flex:1; position:relative; background:#fcfcfd; background-image:radial-gradient(circle, #e2e5ea 1px, transparent 1px); background-size:24px 24px; overflow:hidden;">
+        <!-- bubbles -->
+        <div style="position:absolute; left:34%; top:42%; width:172px; height:172px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(99,102,241,.16); border:1.5px solid rgba(99,102,241,.55); box-shadow:0 0 0 4px rgba(99,102,241,.14); display:flex; align-items:center; justify-content:center; text-align:center;">
+          <div><div style="font-weight:700; font-size:14px; color:#312e81;">Build web &amp; mobile apps</div><div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#6366f1; margin-top:2px;">128,420 · 10.3%</div></div>
+        </div>
+        <div style="position:absolute; left:60%; top:30%; width:128px; height:128px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(20,184,166,.14); border:1.5px solid rgba(20,184,166,.5); display:flex; align-items:center; justify-content:center; text-align:center;">
+          <div style="font-weight:600; font-size:12.5px; color:#0f766e;">Content writing</div>
+        </div>
+        <div style="position:absolute; left:73%; top:55%; width:104px; height:104px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(245,158,11,.14); border:1.5px solid rgba(245,158,11,.5); display:flex; align-items:center; justify-content:center; text-align:center;">
+          <div style="font-weight:600; font-size:12px; color:#b45309;">Research</div>
+        </div>
+        <div style="position:absolute; left:47%; top:68%; width:88px; height:88px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(244,63,94,.13); border:1.5px solid rgba(244,63,94,.5); display:flex; align-items:center; justify-content:center; text-align:center;">
+          <div style="font-weight:600; font-size:11px; color:#be123c;">Support</div>
+        </div>
+        <div style="position:absolute; left:22%; top:67%; width:74px; height:74px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(139,92,246,.13); border:1.5px solid rgba(139,92,246,.5);"></div>
+        <div style="position:absolute; left:81%; top:33%; width:60px; height:60px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(14,165,233,.13); border:1.5px solid rgba(14,165,233,.5);"></div>
+        <div style="position:absolute; left:62%; top:79%; width:64px; height:64px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(34,197,94,.13); border:1.5px solid rgba(34,197,94,.5);"></div>
+        <div style="position:absolute; left:16%; top:33%; width:52px; height:52px; transform:translate(-50%,-50%); border-radius:50%; background:rgba(251,113,133,.13); border:1.5px solid rgba(251,113,133,.5);"></div>
+
+        <!-- zoom -->
+        <div style="position:absolute; right:16px; bottom:16px; display:flex; flex-direction:column; border:1px solid #e6e8ec; border-radius:9px; overflow:hidden; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.06);">
+          <div style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#717784; border-bottom:1px solid #eceef1;">+</div>
+          <div style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#717784;">−</div>
+        </div>
+        <!-- legend -->
+        <div style="position:absolute; left:16px; bottom:16px; background:#fff; border:1px solid #e6e8ec; border-radius:9px; padding:9px 12px; box-shadow:0 1px 3px rgba(0,0,0,.06);">
+          <div style="font-size:11px; color:#9aa0aa; font-weight:600; margin-bottom:6px;">Cluster size</div>
+          <div style="display:flex; align-items:center; gap:8px;"><span style="width:8px;height:8px;border-radius:50%;background:#c7d2fe;"></span><span style="width:14px;height:14px;border-radius:50%;background:#a5b4fc;"></span><span style="width:20px;height:20px;border-radius:50%;background:#6366f1;"></span><span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa0aa; margin-left:4px;">→ 128K</span></div>
+        </div>
+        <!-- zoom level chip -->
+        <div style="position:absolute; left:16px; top:16px; font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa0aa; background:#fff; border:1px solid #e6e8ec; border-radius:7px; padding:5px 9px;">Level 2 · mid-level clusters</div>
+      </div>
+
+      <!-- inspector -->
+      <div style="width:312px; flex:none; border-left:1px solid #eceef1; display:flex; flex-direction:column; background:#fff;">
+        <div style="padding:16px 18px 14px; border-bottom:1px solid #eceef1;">
+          <div style="display:flex; align-items:center; gap:8px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:#6366f1; margin-bottom:8px;"><span style="width:9px;height:9px;border-radius:3px;background:#6366f1;"></span>Selected cluster</div>
+          <div style="font-size:18px; font-weight:700; letter-spacing:-.01em; line-height:1.25;">Build web &amp; mobile applications</div>
+          <div style="font-size:13px; color:#717784; margin-top:8px; line-height:1.5;">Users ask the agent to scaffold, implement, and refactor full-stack web and mobile apps across frameworks like React, Next.js, and Flutter.</div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1px; background:#eceef1; border-bottom:1px solid #eceef1;">
+          <div style="background:#fff; padding:13px 16px;"><div style="font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:600;">128,420</div><div style="font-size:11px; color:#9aa0aa; margin-top:2px;">Conversations</div></div>
+          <div style="background:#fff; padding:13px 16px;"><div style="font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:600; color:#16a34a;">+18%</div><div style="font-size:11px; color:#9aa0aa; margin-top:2px;">30-day growth</div></div>
+          <div style="background:#fff; padding:13px 16px;"><div style="font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:600;">4.2</div><div style="font-size:11px; color:#9aa0aa; margin-top:2px;">Avg turns</div></div>
+          <div style="background:#fff; padding:13px 16px;"><div style="font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:600; color:#16a34a;">0.4%</div><div style="font-size:11px; color:#9aa0aa; margin-top:2px;">Safety flags</div></div>
+        </div>
+        <div style="padding:16px 18px;">
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:#9aa0aa; margin-bottom:10px;">30-day trend</div>
+          <svg viewBox="0 0 280 64" style="width:100%; height:60px;"><polyline points="0,50 28,46 56,48 84,40 112,42 140,34 168,30 196,24 224,26 252,16 280,12" fill="none" stroke="#6366f1" stroke-width="2"/><polyline points="0,50 28,46 56,48 84,40 112,42 140,34 168,30 196,24 224,26 252,16 280,12 280,64 0,64" fill="rgba(99,102,241,.08)" stroke="none"/></svg>
+        </div>
+        <div style="padding:0 18px 16px;">
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:#9aa0aa; margin-bottom:10px;">Top child clusters</div>
+          <div style="display:flex; flex-direction:column; gap:7px;">
+            <div style="display:flex; align-items:center; gap:8px; font-size:13px;"><span style="flex:1;">React component implementation</span><span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa0aa;">42,100</span></div>
+            <div style="display:flex; align-items:center; gap:8px; font-size:13px;"><span style="flex:1;">Next.js routing &amp; API setup</span><span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa0aa;">28,540</span></div>
+            <div style="display:flex; align-items:center; gap:8px; font-size:13px;"><span style="flex:1;">Flutter mobile UI building</span><span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa0aa;">19,870</span></div>
+          </div>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="padding:14px 18px; border-top:1px solid #eceef1; display:flex; gap:8px;">
+          <div style="flex:1; height:38px; border-radius:8px; background:#4f46e5; color:#fff; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">Drill down →</div>
+          <div style="width:38px; height:38px; border-radius:8px; border:1px solid #e6e8ec; display:flex; align-items:center; justify-content:center; color:#717784;">⚑</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= FRAME C : INK MAP / SCATTER ================= -->
+<div style="position:absolute; left:2840px; top:0; width:1320px;">
+  <div data-drags-parent="1" style="display:flex; align-items:center; gap:10px; padding:0 4px 14px; font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:#8a8f99; cursor:grab;">
+    <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#10b981;"></span>方向 C · Ink Map / Scatter
+  </div>
+  <div data-screen-label="Direction C — Map" style="width:1320px; height:824px; background:#ffffff; border:1px solid #e9ebf0; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden; font-family:'Schibsted Grotesk',sans-serif; color:#15171c; display:flex; flex-direction:column;">
+
+    <!-- top bar -->
+    <div style="height:58px; flex:none; border-bottom:1px solid #eef0f3; display:flex; align-items:center; padding:0 16px; gap:14px;">
+      <div style="display:flex; align-items:center; gap:9px; font-weight:800; font-size:17px; letter-spacing:-.02em;">
+        <span style="display:inline-flex; width:26px; height:26px; border-radius:8px; background:#0d1016; align-items:center; justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981;"></span></span>
+        Clio
+      </div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#9aa0aa;">embeddings · 1,238,904 pts</div>
+      <div style="flex:1;"></div>
+      <div style="display:flex; align-items:center; gap:8px; height:34px; padding:0 12px; border:1px solid #e9ebf0; border-radius:8px; font-size:13px; color:#767b86;">Facet <b style="color:#15171c; font-weight:600;">Task performed</b> <span style="color:#bcc1cb;">▾</span></div>
+      <div style="display:flex; align-items:center; gap:8px; height:34px; padding:0 12px; border:1px solid #e9ebf0; border-radius:8px; font-size:13px; color:#767b86;">Color <b style="color:#10b981; font-weight:600;">Safety score</b> <span style="color:#bcc1cb;">▾</span></div>
+      <div style="display:flex; height:34px; border:1px solid #e9ebf0; border-radius:8px; overflow:hidden; font-size:13px;">
+        <div style="display:flex; align-items:center; padding:0 13px; color:#767b86;">Clusters</div>
+        <div style="display:flex; align-items:center; padding:0 13px; background:#0d1016; color:#fff; font-weight:600;">Scatter</div>
+      </div>
+    </div>
+
+    <!-- body -->
+    <div style="flex:1; display:flex; min-height:0;">
+      <!-- sidebar -->
+      <div style="width:252px; flex:none; border-right:1px solid #eef0f3; display:flex; flex-direction:column;">
+        <div style="padding:14px 16px 10px; font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#9aa0aa;">Clusters · L2</div>
+        <div style="flex:1; overflow:hidden; padding:2px 10px;">
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; border-radius:8px; background:#ecfdf5; font-size:13.5px; font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #34d399;"></span>Build web &amp; mobile apps<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#10b981;">0.4</span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; font-size:13px; color:#41454d;"><span style="width:8px;height:8px;border-radius:50%;background:#22d3ee;"></span>Content writing<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9aa0aa;">0.2</span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; font-size:13px; color:#41454d;"><span style="width:8px;height:8px;border-radius:50%;background:#a78bfa;"></span>Research &amp; analysis<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9aa0aa;">0.3</span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; font-size:13px; color:#41454d;"><span style="width:8px;height:8px;border-radius:50%;background:#fbbf24;"></span>Customer support<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9aa0aa;">0.5</span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; border-radius:8px; background:#fef2f2; font-size:13px; color:#b91c1c; font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#fb7185;box-shadow:0 0 6px #fb7185;"></span>Generate bulk SEO spam<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#ef4444;">4.8</span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:8px 8px; font-size:13px; color:#41454d;"><span style="width:8px;height:8px;border-radius:50%;background:#60a5fa;"></span>Translation &amp; localization<span style="flex:1;"></span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9aa0aa;">0.1</span></div>
+        </div>
+        <div style="padding:14px 16px; border-top:1px solid #eef0f3;">
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:#9aa0aa; margin-bottom:8px;">Safety score</div>
+          <div style="display:flex; align-items:center; gap:0; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#9aa0aa;"><span style="margin-right:6px;">0</span><span style="flex:1; height:8px; border-radius:4px; background:linear-gradient(90deg,#10b981,#fbbf24,#fb7185);"></span><span style="margin-left:6px;">5</span></div>
+        </div>
+      </div>
+
+      <!-- map (dark canvas) -->
+      <div style="flex:1; position:relative; background:#0d1016; overflow:hidden; background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px); background-size:40px 40px;">
+        <div style="position:absolute; left:33%; top:44%; width:230px; height:200px; transform:translate(-50%,-50%); border-radius:50%; background:radial-gradient(circle, rgba(52,211,153,.28), rgba(52,211,153,0) 70%);"></div>
+        <div style="position:absolute; left:24%; top:36%; width:5px; height:5px; border-radius:50%; background:#34d399; box-shadow:0 0 6px #34d399;"></div>
+        <div style="position:absolute; left:30%; top:42%; width:6px; height:6px; border-radius:50%; background:#6ee7b7; box-shadow:0 0 7px #34d399;"></div>
+        <div style="position:absolute; left:38%; top:39%; width:4px; height:4px; border-radius:50%; background:#34d399; box-shadow:0 0 5px #34d399;"></div>
+        <div style="position:absolute; left:36%; top:50%; width:5px; height:5px; border-radius:50%; background:#a7f3d0; box-shadow:0 0 6px #34d399;"></div>
+        <div style="position:absolute; left:28%; top:51%; width:4px; height:4px; border-radius:50%; background:#34d399; box-shadow:0 0 5px #34d399;"></div>
+        <div style="position:absolute; left:33%; top:33%; font-family:'Schibsted Grotesk'; font-size:13px; font-weight:700; color:#a7f3d0; transform:translate(-50%,0); text-shadow:0 1px 6px rgba(0,0,0,.6);">Build web &amp; mobile apps</div>
+
+        <div style="position:absolute; left:60%; top:31%; width:170px; height:150px; transform:translate(-50%,-50%); border-radius:50%; background:radial-gradient(circle, rgba(34,211,238,.24), rgba(34,211,238,0) 70%);"></div>
+        <div style="position:absolute; left:57%; top:28%; width:5px;height:5px;border-radius:50%;background:#22d3ee;box-shadow:0 0 6px #22d3ee;"></div>
+        <div style="position:absolute; left:63%; top:33%; width:4px;height:4px;border-radius:50%;background:#67e8f9;box-shadow:0 0 5px #22d3ee;"></div>
+        <div style="position:absolute; left:60%; top:36%; width:5px;height:5px;border-radius:50%;background:#22d3ee;box-shadow:0 0 6px #22d3ee;"></div>
+        <div style="position:absolute; left:60%; top:22%; font-family:'Schibsted Grotesk'; font-size:12px; font-weight:700; color:#a5f3fc; transform:translate(-50%,0);">Content writing</div>
+
+        <div style="position:absolute; left:75%; top:57%; width:150px; height:130px; transform:translate(-50%,-50%); border-radius:50%; background:radial-gradient(circle, rgba(167,139,250,.24), rgba(167,139,250,0) 70%);"></div>
+        <div style="position:absolute; left:72%; top:55%; width:5px;height:5px;border-radius:50%;background:#a78bfa;box-shadow:0 0 6px #a78bfa;"></div>
+        <div style="position:absolute; left:77%; top:59%; width:4px;height:4px;border-radius:50%;background:#c4b5fd;box-shadow:0 0 5px #a78bfa;"></div>
+        <div style="position:absolute; left:75%; top:49%; font-family:'Schibsted Grotesk'; font-size:12px; font-weight:700; color:#ddd6fe; transform:translate(-50%,0);">Research &amp; analysis</div>
+
+        <div style="position:absolute; left:46%; top:70%; width:130px; height:115px; transform:translate(-50%,-50%); border-radius:50%; background:radial-gradient(circle, rgba(251,191,36,.22), rgba(251,191,36,0) 70%);"></div>
+        <div style="position:absolute; left:44%; top:68%; width:4px;height:4px;border-radius:50%;background:#fbbf24;box-shadow:0 0 5px #fbbf24;"></div>
+        <div style="position:absolute; left:48%; top:72%; width:5px;height:5px;border-radius:50%;background:#fcd34d;box-shadow:0 0 6px #fbbf24;"></div>
+        <div style="position:absolute; left:46%; top:63%; font-family:'Schibsted Grotesk'; font-size:11px; font-weight:700; color:#fde68a; transform:translate(-50%,0);">Customer support</div>
+
+        <div style="position:absolute; left:84%; top:30%; width:96px; height:96px; transform:translate(-50%,-50%); border-radius:50%; background:radial-gradient(circle, rgba(251,113,133,.3), rgba(251,113,133,0) 70%); border:1px dashed rgba(251,113,133,.7);"></div>
+        <div style="position:absolute; left:84%; top:30%; width:6px;height:6px;border-radius:50%;background:#fb7185;box-shadow:0 0 10px #fb7185; transform:translate(-50%,-50%);"></div>
+        <div style="position:absolute; left:84%; top:19%; font-family:'IBM Plex Mono',monospace; font-size:10px; font-weight:600; color:#fda4af; transform:translate(-50%,0); text-align:center;">⚑ SEO spam · 4.8</div>
+
+        <div style="position:absolute; left:18%; top:62%; width:3px;height:3px;border-radius:50%;background:rgba(96,165,250,.7);"></div>
+        <div style="position:absolute; left:88%; top:66%; width:3px;height:3px;border-radius:50%;background:rgba(167,139,250,.6);"></div>
+        <div style="position:absolute; left:14%; top:48%; width:3px;height:3px;border-radius:50%;background:rgba(52,211,153,.6);"></div>
+        <div style="position:absolute; left:54%; top:84%; width:3px;height:3px;border-radius:50%;background:rgba(251,191,36,.6);"></div>
+
+        <div style="position:absolute; left:18px; top:16px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:#5b6573;">UMAP projection · 240,000 sampled points · colored by safety score</div>
+        <div style="position:absolute; right:16px; bottom:16px; display:flex; flex-direction:column; border:1px solid #23262e; border-radius:9px; overflow:hidden; background:#15191f;">
+          <div style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#8a8f99; border-bottom:1px solid #23262e;">+</div>
+          <div style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#8a8f99;">−</div>
+        </div>
+      </div>
+
+      <!-- inspector -->
+      <div style="width:312px; flex:none; border-left:1px solid #eef0f3; display:flex; flex-direction:column;">
+        <div style="padding:16px 18px 14px; border-bottom:1px solid #eef0f3; background:#fef2f2;">
+          <div style="display:flex; align-items:center; gap:8px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:#dc2626; margin-bottom:8px;">⚑ Flagged cluster</div>
+          <div style="font-size:18px; font-weight:700; letter-spacing:-.01em; line-height:1.25;">Generate bulk SEO spam content</div>
+          <div style="font-size:13px; color:#7f1d1d; margin-top:8px; line-height:1.5;">Many accounts use a near-identical prompt template to mass-produce keyword-stuffed articles — likely coordinated abuse.</div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1px; background:#eef0f3; border-bottom:1px solid #eef0f3;">
+          <div style="background:#fff; padding:13px 16px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:20px; font-weight:600;">8,940</div><div style="font-size:11px; color:#9aa0aa; margin-top:2px;">Conversations</div></div>
+          <div style="background:#fff; padding:13px 16px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:20px; font-weight:600; color:#dc2626;">312</div><div style="font-size:11px; color:#9aa0aa; margin-top:2px;">Accounts</div></div>
+          <div style="background:#fff; padding:13px 16px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:20px; font-weight:600; color:#dc2626;">4.8</div><div style="font-size:11px; color:#9aa0aa; margin-top:2px;">Safety score</div></div>
+          <div style="background:#fff; padding:13px 16px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:20px; font-weight:600; color:#dc2626;">+420%</div><div style="font-size:11px; color:#9aa0aa; margin-top:2px;">7-day growth</div></div>
+        </div>
+        <div style="padding:16px 18px;">
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:#9aa0aa; margin-bottom:10px;">Why it surfaced</div>
+          <div style="display:flex; flex-direction:column; gap:8px; font-size:13px; color:#41454d;">
+            <div style="display:flex; gap:8px;"><span style="color:#10b981;">●</span>Below account-diversity threshold</div>
+            <div style="display:flex; gap:8px;"><span style="color:#fbbf24;">●</span>Identical prompt structure across 312 accounts</div>
+            <div style="display:flex; gap:8px;"><span style="color:#fb7185;">●</span>Sudden 7-day spike (+420%)</div>
+          </div>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="padding:14px 18px; border-top:1px solid #eef0f3; display:flex; gap:8px;">
+          <div style="flex:1; height:38px; border-radius:8px; background:#dc2626; color:#fff; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">Escalate to T&amp;S</div>
+          <div style="width:38px; height:38px; border-radius:8px; border:1px solid #e9ebf0; display:flex; align-items:center; justify-content:center; color:#767b86;">⋯</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+</body>
+</html>

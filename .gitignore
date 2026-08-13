@@ -1,0 +1,45 @@
+node_modules
+dist
+out
+/dist-qa/
+/dist-qa2/
+/dist-qa-legacy/
+.env
+.env.*
+!.env.example
+*.dmg
+
+# 本地日志与覆盖率报告（发布证据应存入明确的受审目录）
+*.log
+coverage/
+.nyc_output/
+
+# npm pack 产物（openpipal-acp 私发 tarball，本地留档不进库）
+*.tgz
+
+# Playwright / E2E 测试产物
+playwright-report/
+test-results/
+.playwright-mcp/
+
+# 外部工具缓存
+.serena/
+
+# macOS 系统文件
+.DS_Store
+
+# Claude Code 会话级产物
+.claude/plans/
+.claude/worktrees/
+
+# 开发/调试输出
+outputs/
+*.heapsnapshot
+/tmp/
+
+# 根目录临时验证脚本
+verify-*.js
+
+# 开发期 UI 验证截图（按 ws-*/ux-review/ 命名约定）
+tests/artifacts/ws-*
+tests/artifacts/ux-review/

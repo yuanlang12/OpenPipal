@@ -1,0 +1,664 @@
+import { useState, useRef, useCallback, useEffect, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
+import { Square, ArrowUp, Paperclip, X, FileText, Zap, FolderOpen } from 'lucide-react'
+import { ModelControl } from './shared/ModelControl'
+import { useAppStore } from '../stores/appStore'
+import { useChatStore } from '../stores/chatStore'
+import { extractPastedImages } from '../utils/pasteImages'
+import { expandSkillMentions } from '../chat/skillRequest'
+import { useSkillMentions, type SkillInfo } from './shared/SkillMention'
+import { useSourcesStore } from '../stores/sourcesStore'
+import { fmtSize } from '../utils/format'
+import type { FileAttachmentData, SourceType, VoiceSessionState } from '../types'
+import { PendingMessageStack } from './PendingMessageStack'
+import { VoiceCallInline } from './VoiceCallInline'
+import { useTranslation } from 'react-i18next'
+
+/** Cave 模式可吃的 source-worthy 扩展名 —— 跟 SourcesPanel.inferSourceType 一致 */
+const SOURCE_WORTHY_EXTS = new Set(['pdf', 'md', 'markdown', 'html', 'htm', 'txt', 'text'])
+
+function getFileExt(filePath: string): string {
+  const m = filePath.toLowerCase().match(/\.([a-z0-9]+)$/)
+  return m ? m[1] : ''
+}
+
+function inferSourceTypeForInput(filePath: string): SourceType {
+  const ext = getFileExt(filePath)
+  switch (ext) {
+    case 'pdf': return 'pdf'
+    case 'md':
+    case 'markdown': return 'md'
+    case 'html':
+    case 'htm': return 'html'
+    case 'txt':
+    case 'text': return 'txt'
+    default: return 'other'
+  }
+}
+
+function fileNameStem(filePath: string): string {
+  const m = filePath.match(/([^/\\]+)$/)
+  if (!m) return filePath
+  const name = m[1]
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(0, dot) : name
+}
+
+export interface FileAttachment {
+  fileName: string
+  textContent: string
+  fileType: string
+  sizeBytes: number
+  localPath?: string
+}
+
+interface InputBarProps {
+  onStartVoice?: () => void
+  voiceAvailable?: boolean
+  // 内联语音通话状态（替代顶部 VoiceCallStrip）
+  voiceSessionState?: VoiceSessionState
+  voiceDuration?: number
+  voiceIsAISpeaking?: boolean
+  voiceInputLevel?: number
+  onHangupVoice?: () => void
+}
+
+/** 上下文用量圆环——16px SVG 进度环，颜色随占比分级；无数据时不渲染（由调用方判断） */
+function ContextRing({ promptTokens, contextWindow, budget, compacted }: {
+  promptTokens: number; contextWindow: number; budget: number; compacted: boolean
+}) {
+  const { t } = useTranslation()
+  const ratio = Math.min(1, Math.max(0, contextWindow > 0 ? promptTokens / contextWindow : 0))
+  const colorClass = ratio > 0.85
+    ? 'text-red-500 dark:text-red-400'
+    : ratio > 0.6
+      ? 'text-amber-500 dark:text-amber-400'
+      : 'text-surface-400'
+  const r = 6
+  const c = 2 * Math.PI * r
+  const title = t('chat.input.contextUsage', {
+    used: `${(promptTokens / 1000).toFixed(1)}k`,
+    total: `${Math.round(contextWindow / 1000)}k`,
+    budget: `${Math.round(budget / 1000)}k`,
+    compacted: compacted ? t('chat.input.compactedSuffix') : '',
+  })
+  return (
+    <div
+      data-testid="context-ring"
+      title={title}
+      className={`flex items-center gap-1 shrink-0 ${colorClass}`}
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" className="-rotate-90">
+        <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" />
+        <circle
+          cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+          strokeDasharray={`${c * ratio} ${c}`}
+        />
+      </svg>
+      {compacted && <span data-testid="context-ring-compacted" className="w-2 h-2 rounded-full bg-current opacity-70" />}
+    </div>
+  )
+}
+
+export function InputBar({
+  onStartVoice,
+  voiceAvailable,
+  voiceSessionState = 'idle',
+  voiceDuration = 0,
+  voiceIsAISpeaking = false,
+  voiceInputLevel = 0,
+  onHangupVoice
+}: InputBarProps) {
+  const { t } = useTranslation()
+  const { currentRole } = useAppStore()
+  // 离散 selector(不再整 store 解构)—— 避免任意 chatStore 变动(每次 tool 事件/流式提交)都重渲染整个 InputBar
+  const isStreaming = useChatStore(s => s.isStreaming)
+  const sendMessage = useChatStore(s => s.sendMessage)
+  const abortChat = useChatStore(s => s.abortChat)
+  const pendingFileAttachments = useChatStore(s => s.pendingFileAttachments)
+  const addPendingFileAttachment = useChatStore(s => s.addPendingFileAttachment)
+  const removePendingFileAttachment = useChatStore(s => s.removePendingFileAttachment)
+  const clearPendingFileAttachments = useChatStore(s => s.clearPendingFileAttachments)
+  const conversationConfig = useChatStore(s => s.conversationConfig)
+  // 当前会话若绑定了独立智能体（Workspace Agent），技能选择器只列它自有目录的技能（隔离）
+  const activeWorkspaceId = useChatStore(s => s.activeWorkspaceId)
+  const setConversationWorkingDir = useChatStore(s => s.setConversationWorkingDir)
+  const setConversationModelPreset = useChatStore(s => s.setConversationModelPreset)
+  const enqueuePending = useChatStore(s => s.enqueuePending)
+  const pendingMentions = useChatStore(s => s.pendingMentions)
+  const removePendingMention = useChatStore(s => s.removePendingMention)
+  const clearPendingMentions = useChatStore(s => s.clearPendingMentions)
+  const pendingAnnotations = useChatStore(s => s.pendingAnnotations)
+  const removePendingAnnotation = useChatStore(s => s.removePendingAnnotation)
+  const clearPendingAnnotations = useChatStore(s => s.clearPendingAnnotations)
+  const contextUsage = useChatStore(s => s.activeConversationId ? s.contextUsage[s.activeConversationId] : undefined)
+  const roleName = currentRole?.name || 'learner'
+  const onSend = useCallback((content: string, images?: string[], fileAttachments?: FileAttachmentData[]) =>
+    sendMessage(content, roleName, images, fileAttachments), [sendMessage, roleName])
+  const onAbort = abortChat
+  const [input, setInput] = useState('')
+  const [images, setImages] = useState<string[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // 技能选择弹出层（+ 号菜单入口；@ 内联触发走 useSkillMentions）
+  const [showSkillPicker, setShowSkillPicker] = useState(false)
+  const [allSkills, setAllSkills] = useState<SkillInfo[]>([])
+  const skillPickerRef = useRef<HTMLDivElement>(null)
+
+  // @ 触发技能补全 + 内联 token 着色（弹层/镜像层都挂在 textarea 的 relative 容器里）
+  const mentions = useSkillMentions({
+    skills: allSkills,
+    value: input,
+    onChange: setInput,
+    textareaRef,
+    mirrorClassName: 'px-3 py-2.5 text-[13px] leading-relaxed text-surface-800'
+  })
+
+  const [modelName, setModelName] = useState('')
+  const [modelIsBuiltin, setModelIsBuiltin] = useState(false)
+  const [modelSupportsThinking, setModelSupportsThinking] = useState(false)
+  const [modelSupportsDial, setModelSupportsDial] = useState(false)
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; model: string; active: boolean; supportsThinking?: boolean; supportsEffortDial?: boolean; providerName?: string; builtin?: boolean }>>([])
+
+  // 会话专属模型（ConversationConfig.modelPresetId）：设置了就用它，否则跟随全局默认。
+  // 预设被删（记忆里的 id 查无此预设）→ 视同跟随全局，picker 里给出标注。
+  const sessionPresetId = conversationConfig?.modelPresetId
+  const sessionPreset = sessionPresetId ? availableModels.find(m => m.id === sessionPresetId) : undefined
+  const sessionPresetDangling = !!sessionPresetId && availableModels.length > 0 && !sessionPreset
+  // 两个分支都来自红线出口：sessionPreset 是 getAvailableModels 的哨兵列表，modelName 是
+  // get-model-full 的展示口径（主进程已遮蔽并附 builtin 位）——builtin 时一律按位本地化
+  const effectiveModelName = sessionPreset
+    ? (sessionPreset.builtin ? t('chat.modelControl.builtinModel') : sessionPreset.model)
+    : (modelIsBuiltin ? t('chat.modelControl.builtinModel') : modelName)
+  const effectiveSupportsThinking = sessionPreset ? !!sessionPreset.supportsThinking : modelSupportsThinking
+  const effectiveSupportsDial = sessionPreset ? !!sessionPreset.supportsEffortDial : modelSupportsDial
+
+  // 读当前激活模型的完整配置（含 supportsThinking）
+  const refreshActiveModel = useCallback(async () => {
+    const mc = await window.api.getModelConfigFull?.().catch(() => null)
+    if (mc) {
+      setModelName(mc.model || '')
+      setModelIsBuiltin(!!mc.builtin)
+      setModelSupportsThinking(!!mc.supportsThinking)
+      setModelSupportsDial(!!mc.supportsEffortDial)
+    }
+  }, [])
+
+  useEffect(() => {
+    window.api.listSkills?.(activeWorkspaceId || undefined).then(setAllSkills).catch(() => {})
+    refreshActiveModel()
+    window.api.getAvailableModels?.().then(setAvailableModels).catch(() => {})
+  }, [refreshActiveModel, activeWorkspaceId])
+
+  // 会话内选模型 = 本会话专属（只写会话配置，不碰全局 modelConfig——改全局默认去设置页）
+  const handleSwitchModel = (id: string) => setConversationModelPreset(id)
+  const handleFollowGlobal = () => setConversationModelPreset(undefined)
+
+  // 点击外部关闭弹出层
+  useEffect(() => {
+    if (!showSkillPicker) return
+    const handler = (e: MouseEvent) => {
+      if (skillPickerRef.current && !skillPickerRef.current.contains(e.target as Node)) setShowSkillPicker(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showSkillPicker])
+
+  const selectedDir = conversationConfig?.workingDir || ''
+  // 思考开关/档位 UI 已抽到 shared/ThinkingControl（欢迎页共用），状态仍走会话配置
+
+  const handleSelectDir = async () => {
+    const dir = await window.api.selectDirectory?.()
+    if (dir) setConversationWorkingDir(dir)
+  }
+
+  const clearDir = () => setConversationWorkingDir('')
+
+  const handleSend = () => {
+    const trimmed = input.trim()
+
+    // === Slash 命令拦截:/goal <text> | /goal show | /goal clear ===
+    // 必须在 hasContent / isStreaming 判断之前,即使流式中也允许设/清/查看 goal
+    if (trimmed.startsWith('/goal')) {
+      const cid = useChatStore.getState().activeConversationId
+      if (!cid) {
+        console.warn('[Goal] 无活跃会话,slash 命令忽略')
+        return
+      }
+      // 截掉 "/goal" 后剩余文本(允许 /goal、/goalfoo 等情况:slice(5) 后再 trim)
+      const rest = trimmed.slice(5).trim()
+      const api = window.api as any
+      if (rest === '' || rest === 'show') {
+        api.showGoal?.(cid)
+      } else if (rest === 'clear') {
+        api.clearGoal?.(cid)
+      } else {
+        api.setGoal?.(cid, rest)
+      }
+      setInput('')
+      textareaRef.current?.focus()
+      return
+    }
+
+    const hasContent = trimmed || images.length > 0 || pendingFileAttachments.length > 0 || pendingMentions.length > 0 || pendingAnnotations.length > 0
+    if (!hasContent) return
+
+    // 文件不再注入消息内容——只传路径，AI 用自有工具读取
+    const filesMeta = pendingFileAttachments.map(f => ({
+      fileName: f.fileName,
+      fileType: f.fileType,
+      sizeBytes: f.sizeBytes,
+      path: f.path
+    }))
+
+    const defaultText = pendingFileAttachments.length > 0
+      ? (trimmed || (pendingFileAttachments.length > 1 ? '请分析这些文件' : '请分析这个文件'))
+      : trimmed
+
+    // 正文里的 @技能名 = 对这条消息的强调，就地换成标签（不写会话配置）
+    const withSkills = expandSkillMentions(defaultText, allSkills.map(s => s.name))
+
+    // Phase 6: 如果有 Comment 选中的元素（可多选），把 <mentioned-element> 片段按加入顺序拼接 prepend 到消息；
+    // 圈画评论同理——文字成 <canvas-annotation> 行、截图并入 images（模型按"随消息附图"提示对应）
+    const annotationLines = pendingAnnotations.map(a =>
+      `<canvas-annotation ref="${a.ref}"${a.image ? ' screenshot="随消息附图为该圈选区域截图（红色笔迹圈出的部位）"' : ''}>${a.text}</canvas-annotation>`
+    )
+    const mentionBlock = [...pendingMentions, ...annotationLines]
+    const finalText = mentionBlock.length > 0
+      ? `${mentionBlock.join('\n')}\n\n${withSkills}`
+      : withSkills
+    const allImages = [...images, ...pendingAnnotations.map(a => a.image).filter((x): x is string => !!x)]
+
+    // Agent 正在跑 → 入队挂起（卡片堆叠到输入框上方，等用户决定立即送 / 自动跟单）
+    // 空闲 → 直接发出（保持原行为）
+    if (isStreaming) {
+      enqueuePending(finalText, allImages.length > 0 ? allImages : undefined, filesMeta)
+    } else {
+      onSend(finalText, allImages.length > 0 ? allImages : undefined, filesMeta)
+    }
+    setInput('')
+    setImages([])
+    clearPendingFileAttachments()
+    if (pendingMentions.length > 0) clearPendingMentions()
+    if (pendingAnnotations.length > 0) clearPendingAnnotations()
+    textareaRef.current?.focus()
+  }
+
+  // 判断是否为图片文件
+  const isImageFile = (name: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name)
+
+  // 图片文件 → base64 进 images state
+  const addImageFromPath = async (filePath: string) => {
+    try {
+      const resp = await fetch(`file://${filePath}`)
+      const blob = await resp.blob()
+      const reader = new FileReader()
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1]
+        setImages(prev => [...prev, base64])
+      }
+      reader.readAsDataURL(blob)
+    } catch {
+      // fallback: 用 Electron 读文件
+      const result = await (window.api as any).readFileBase64?.(filePath)
+      if (result) setImages(prev => [...prev, result])
+    }
+  }
+
+  // 非图片文件 → upload 到 workspace
+  const addFileAttachment = async (filePath: string) => {
+    if (!(window.api as any)?.uploadFile) return
+    try {
+      const uploaded = await (window.api as any).uploadFile(filePath)
+      addPendingFileAttachment({
+        fileName: uploaded.fileName,
+        fileType: uploaded.fileName.split('.').pop() || '',
+        sizeBytes: uploaded.sizeBytes,
+        path: uploaded.path
+      })
+    } catch (err: any) {
+      console.error('[FileUpload] 上传失败:', err.message)
+    }
+  }
+
+  // 处理单个文件（按 cave 模式 + 文件类型自动分流）
+  // - 图片 → 内联到 images（原行为）
+  // - learner + study + source-worthy(pdf/md/html/txt) → 添加到知识库 sources
+  // - 其他 → fileAttachment（原行为）
+  const handleFile = async (filePath: string) => {
+    if (isImageFile(filePath)) {
+      await addImageFromPath(filePath)
+      return
+    }
+    // Cave 模式自动归类(C 路径)：知识库 source 而非单次 chat attachment
+    const isStudy = currentRole?.layoutManifest?.preferredLayout === 'study'
+    const ext = getFileExt(filePath)
+    if (isStudy && SOURCE_WORTHY_EXTS.has(ext)) {
+      await useSourcesStore.getState().addOptimistic({
+        title: fileNameStem(filePath),
+        type: inferSourceTypeForInput(filePath),
+        filePath
+      })
+      return
+    }
+    await addFileAttachment(filePath)
+  }
+
+  const handleFileUpload = async () => {
+    if (!window.api?.openFileDialog) return
+    const filePaths = await window.api.openFileDialog()
+    if (!filePaths) return
+    // 支持多选
+    const paths = Array.isArray(filePaths) ? filePaths : [filePaths]
+    for (const fp of paths) {
+      await handleFile(fp)
+    }
+  }
+
+  // 拖拽处理
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(true)
+  }
+
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+  }
+
+  const handleDrop = async (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+
+    const files = e.dataTransfer?.files
+    if (!files || files.length === 0) return
+
+    // 同步取完 File 引用再异步处理（DataTransfer 在 await 后可能失效）
+    for (const file of Array.from(files)) {
+      // Electron 32+ 移除了 File.path——真实路径走 preload 的 webUtils；旧字段兜底 legacy
+      const filePath = ((window.api as any).getPathForFile?.(file) ?? (file as any).path) as string | undefined
+      if (filePath) {
+        await handleFile(filePath)
+      } else if (file.type.startsWith('image/')) {
+        // 浏览器模式：图片走 base64
+        const reader = new FileReader()
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(',')[1]
+          setImages(prev => [...prev, base64])
+        }
+        reader.readAsDataURL(file)
+      }
+    }
+  }
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // @ 弹层开着时它先吃键（↑↓ 导航 / Enter 选中 / Esc 关闭），不与发送冲突
+    if (mentions.handleKeyDown(e)) return
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
+
+  // 自动撑高输入框；未达上限时禁用滚动条——scrollHeight 取整会比真实内容矮零点几像素
+  // (13px×1.625 行高是小数),overflow-y:auto 会为这零点几像素冒出常驻滚动条
+  const INPUT_MAX_HEIGHT = 160
+  const autoResize = () => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, INPUT_MAX_HEIGHT) + 'px'
+    el.style.overflowY = el.scrollHeight > INPUT_MAX_HEIGHT ? 'auto' : 'hidden'
+  }
+
+  // 输入内容变化(含发送后程序化清空)后重算高度:空内容回到单行自然高度,
+  // 不再因写死的 height 短于实际行高而出现多余的上下滚动条(及其溢出圆角)。
+  useEffect(() => { autoResize() }, [input])
+
+  const handlePaste = (e: ClipboardEvent) => {
+    extractPastedImages(e, (b64) => setImages(prev => [...prev, b64]), {
+      onFilePath: (p) => { void handleFile(p) }
+    })
+  }
+
+  const removeImage = (index: number) => {
+    setImages(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // 流式中也能点 Send —— 会走 enqueue 分支挂到上方队列
+  const hasInputContent = input.trim().length > 0 || images.length > 0 || pendingFileAttachments.length > 0
+  const canSend = hasInputContent
+
+  // "+" 按钮弹出菜单
+  const [showPlusMenu, setShowPlusMenu] = useState(false)
+  const plusMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!showPlusMenu) return
+    const handler = (e: MouseEvent) => {
+      if (plusMenuRef.current && !plusMenuRef.current.contains(e.target as Node)) setShowPlusMenu(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showPlusMenu])
+
+  return (
+    <div
+      className="op-composer-dock px-5 pt-2 pb-4"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragOver && (
+        <div className="max-w-[880px] mx-auto mb-2 p-3 text-center border border-dashed border-brand-400 rounded-lg bg-brand-50/50 dark:bg-brand-900/10">
+          <p className="text-[12px] text-brand-600 dark:text-brand-400">{t('chat.input.dropFiles')}</p>
+        </div>
+      )}
+
+      {/* Agent 跑的时候用户挂起的待发消息（卡片堆叠） */}
+      <PendingMessageStack />
+
+      {/* 统一输入容器 —— 宽度对齐消息列(max-w-880 居中)。
+          这里是全窗口最厚的一块玻璃:消息从它底下滚过去,blur 才有东西可折射。 */}
+      <div className={`op-composer op-glass op-glass-edge max-w-[880px] mx-auto transition-shadow ${
+        isDragOver ? 'op-composer--drop' : ''
+      }`}>
+        {/* 已选附件/图片/pills — 容器内顶部 */}
+        {(images.length > 0 || pendingFileAttachments.length > 0 || selectedDir || pendingMentions.length > 0 || pendingAnnotations.length > 0) && (
+          <div className="px-3 pt-2.5 flex flex-wrap gap-1.5">
+            {pendingAnnotations.map((a, i) => (
+              <span key={`a${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/20 text-[10px] text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800" title={a.text}>
+                {a.image ? (
+                  <img src={`data:image/jpeg;base64,${a.image}`} alt="" className="w-6 h-6 object-cover rounded-sm border border-red-200 dark:border-red-800" />
+                ) : (
+                  <span>✏️</span>
+                )}
+                {a.text.length > 14 ? `${a.text.slice(0, 14)}…` : a.text}
+                <button onClick={() => removePendingAnnotation(i)} className="ml-0.5 text-red-300 hover:text-red-500"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            ))}
+            {pendingMentions.map((m, i) => {
+              // 从 <mentioned-element ref dom>text</mentioned-element> 提取 dom 尾段/文本摘要做 chip 简短展示
+              const dom = m.match(/dom="([^"]*)"/)?.[1] || ''
+              const text = m.match(/>([^<]*)<\/mentioned-element>/)?.[1] || ''
+              const domTail = dom.split(' > ').pop() || dom
+              const label = text ? (text.length > 16 ? `${text.slice(0, 16)}…` : text) : (domTail || t('chat.input.selectedElement'))
+              return (
+                <span key={`m${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 text-[10px] text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800" title={m}>
+                  💬 {label}
+                  <button onClick={() => removePendingMention(i)} className="ml-0.5 text-amber-300 hover:text-amber-500"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )
+            })}
+            {selectedDir && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-100 text-[10px] text-surface-500">
+                <FolderOpen className="w-3 h-3" />
+                {selectedDir.split('/').pop()}
+                <button onClick={clearDir} className="ml-0.5 text-surface-300 hover:text-surface-500"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            )}
+            {pendingFileAttachments.map((file, i) => (
+              <span key={`f${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-100 text-[10px] text-surface-500">
+                <FileText className="w-3 h-3" />
+                {file.fileName}
+                <span className="text-surface-300">({fmtSize(file.sizeBytes)})</span>
+                <button onClick={() => removePendingFileAttachment(i)} className="ml-0.5 text-surface-300 hover:text-surface-500"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            ))}
+            {images.map((img, i) => (
+              <div key={`i${i}`} className="relative group">
+                <img src={`data:image/jpeg;base64,${img}`} alt="" className="w-8 h-8 object-cover rounded border border-surface-200" />
+                <button onClick={() => removeImage(i)} className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-surface-600 text-white rounded-full flex items-center justify-center text-[8px] opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 文本输入区 —— relative：@ 弹层与内联 token 镜像层都锚在这里 */}
+        <div className="relative">
+          {mentions.mirror}
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => { mentions.handleChange(e); setTimeout(autoResize, 0) }}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onSelect={mentions.handleSelect}
+            onClick={mentions.handleSelect}
+            onScroll={mentions.handleScroll}
+            onFocus={mentions.handleFocus}
+            onBlur={mentions.handleBlur}
+            onCompositionStart={mentions.handleCompositionStart}
+            onCompositionEnd={mentions.handleCompositionEnd}
+            placeholder={t('chat.input.placeholder')}
+            rows={1}
+            className={`relative w-full bg-transparent text-surface-800 text-[13px] px-3 py-2.5 resize-none outline-none placeholder:text-surface-300 leading-relaxed ${mentions.textareaClass}`}
+            style={{ minHeight: '36px', maxHeight: '160px', overflowY: 'hidden', ...mentions.textareaStyle }}
+          />
+          {mentions.popup}
+        </div>
+
+        {/* 底部工具栏 —— relative：技能弹层用 absolute bottom-full 贴着工具栏往上弹，
+            缺定位祖先时会锚到更外层容器、整个弹到视窗外（此前"点添加技能没反应"的真因） */}
+        <div className="relative flex items-center px-2 pb-2 gap-1 min-w-0">
+          {/* 左侧：目录 + "+" 菜单 */}
+          <button
+            onClick={handleSelectDir}
+            title={selectedDir || t('chat.input.chooseWorkingDirectory')}
+            className="p-1.5 rounded-md text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
+          >
+            <FolderOpen className="w-4 h-4" />
+          </button>
+
+          <div className="relative" ref={plusMenuRef}>
+            <button
+              data-testid="inputbar-plus-btn"
+              onClick={() => setShowPlusMenu(!showPlusMenu)}
+              className="p-1.5 rounded-md text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
+            >
+              <span className="text-[16px] leading-none font-light">+</span>
+            </button>
+
+            {showPlusMenu && (
+              <div className="absolute bottom-full left-0 mb-1 w-48 op-menu py-1 z-50 animate-fade-in">
+                <button
+                  onClick={() => { handleFileUpload(); setShowPlusMenu(false) }}
+                  className="w-full text-left px-3 py-2 text-[12px] text-surface-600 hover:bg-surface-50 flex items-center gap-2 transition-colors"
+                >
+                  <Paperclip className="w-3.5 h-3.5" />
+                  {t('chat.input.uploadFileOrImage')}
+                </button>
+                <button
+                  onClick={() => { setShowSkillPicker(!showSkillPicker); setShowPlusMenu(false) }}
+                  className="w-full text-left px-3 py-2 text-[12px] text-surface-600 hover:bg-surface-50 flex items-center gap-2 transition-colors"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  {t('chat.input.addSkill')}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* 内联语音控件 —— 空闲显示麦克风，通话中原地变紧凑控件（替代顶部长条） */}
+          <VoiceCallInline
+            sessionState={voiceSessionState}
+            duration={voiceDuration}
+            isAISpeaking={voiceIsAISpeaking}
+            inputLevel={voiceInputLevel}
+            voiceAvailable={!!voiceAvailable}
+            onStart={onStartVoice}
+            onHangup={() => onHangupVoice?.()}
+          />
+
+          {/* 技能选择弹出层 */}
+          {showSkillPicker && (
+            <div ref={skillPickerRef} className="absolute bottom-full left-12 mb-1 w-64 op-menu py-1 z-50 max-h-48 overflow-y-auto animate-fade-in">
+              <div className="px-3 py-1 text-[10px] text-surface-400">{t('chat.input.skillPickerHint')}</div>
+              {allSkills.length === 0 && (
+                <div className="px-3 py-2 text-[12px] text-surface-400">
+                  {activeWorkspaceId ? t('chat.input.noWorkspaceSkills') : t('chat.input.noSkills')}
+                </div>
+              )}
+              {allSkills.map(skill => (
+                <button
+                  key={skill.name}
+                  onClick={() => { mentions.insertSkill(skill.name); setShowSkillPicker(false) }}
+                  className="w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-2 transition-colors text-surface-600 hover:bg-surface-50"
+                >
+                  <Zap className="w-3 h-3 shrink-0" />
+                  <span className="truncate">{skill.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 右侧：思考开关 + 模型 + 发送/停止 */}
+          <div className="flex-1" />
+
+          {/* 模型+思考深度合一控件；会话内选模型=会话专属，重置行=跟随全局 */}
+          {effectiveModelName && (
+            <ModelControl
+              models={availableModels}
+              displayModel={effectiveModelName}
+              supportsThinking={effectiveSupportsThinking}
+              supportsDial={effectiveSupportsDial}
+              selectedId={sessionPresetId}
+              resetRow={{
+                label: modelName
+                  ? t('chat.input.followGlobalDefaultWithModel', { model: modelName })
+                  : t('chat.input.followGlobalDefault'),
+              }}
+              notice={sessionPresetDangling ? t('chat.input.missingPreset') : undefined}
+              onSelectModel={(id) => id ? handleSwitchModel(id) : handleFollowGlobal()}
+            />
+          )}
+
+          {/* 上下文用量圆环 —— 无数据(会话还没发过消息)时不渲染 */}
+          {contextUsage && <ContextRing {...contextUsage} />}
+
+          {/* 流式中：左 Stop（放弃当前回复）+ 右 Send（挂队列）；空闲：仅 Send */}
+          {isStreaming && (
+            <button onClick={onAbort} data-testid="stop-btn"
+              title={t('chat.input.stopReply')}
+              className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-800/40 text-red-500 active:scale-95 transition-all">
+              <Square className="w-3.5 h-3.5" fill="currentColor" />
+            </button>
+          )}
+          {(!isStreaming || hasInputContent) && (
+            <button onClick={handleSend} disabled={!canSend} data-testid="send-btn"
+              title={isStreaming ? t('chat.input.queueAfterReply') : t('chat.input.send')}
+              className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
+                canSend
+                  ? 'bg-brand-500 hover:bg-brand-600 text-ink-on-accent active:translate-y-[0.5px]'
+                  : 'bg-surface-100 text-surface-300 cursor-not-allowed'
+              }`}>
+              <ArrowUp className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

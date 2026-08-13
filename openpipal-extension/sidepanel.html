@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: #fafaf9; }
+    iframe { width: 100%; height: 100%; border: none; }
+    .error {
+      display: none;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      color: #78716c;
+      font-size: 13px;
+      text-align: center;
+      padding: 32px;
+    }
+    .error.visible { display: flex; }
+    .error-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: #f5f5f4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 4px;
+    }
+    .error-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #292524;
+    }
+    .error-desc {
+      font-size: 12px;
+      color: #a8a29e;
+      line-height: 1.6;
+      max-width: 260px;
+    }
+    .error-steps {
+      text-align: left;
+      font-size: 12px;
+      color: #78716c;
+      line-height: 1.8;
+      background: #f5f5f4;
+      border-radius: 8px;
+      padding: 12px 16px;
+      max-width: 260px;
+      width: 100%;
+    }
+    .error-steps .step-number {
+      color: #a8a29e;
+      margin-right: 6px;
+    }
+    .error button {
+      padding: 8px 20px;
+      border: 1px solid #d6d3d1;
+      border-radius: 8px;
+      background: white;
+      color: #292524;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .error button:hover { background: #f5f5f4; }
+    .error-status {
+      font-size: 11px;
+      color: #d6d3d1;
+    }
+  </style>
+</head>
+<body>
+  <iframe id="app" src="http://localhost:3031" allow="clipboard-write; clipboard-read"></iframe>
+  <div class="error" id="error" role="status" aria-live="polite">
+    <div class="error-icon">🔌</div>
+    <div class="error-title" data-i18n="disconnectedTitle"></div>
+    <div class="error-desc" data-i18n="disconnectedDescription"></div>
+    <div class="error-steps">
+      <div><span class="step-number">1.</span><span data-i18n="openDesktopStep"></span></div>
+      <div><span class="step-number">2.</span><span data-i18n="waitForReconnectStep"></span></div>
+    </div>
+    <button id="reconnect-button" type="button" data-i18n="reconnectButton"></button>
+    <div class="error-status" id="error-status" data-i18n="connectingStatus"></div>
+  </div>
+  <div style="position:fixed;bottom:2px;right:8px;font-size:9px;color:#d6d3d1;pointer-events:none" id="ver"></div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

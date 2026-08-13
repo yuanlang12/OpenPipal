@@ -1,0 +1,110 @@
+appId: com.openpipal.app
+productName: OpenPipal
+directories:
+  buildResources: resources
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  # Root-only development configuration must not leak into app.asar.
+  - '!{eslint.config.mjs,playwright.config.ts,postcss.config.js,tailwind.config.js,vitest.config.ts}'
+  # Development MCP configuration is intentionally distinct from the sanitized extraResource below.
+  - '!mcp-servers.json'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # 必须排除的本地密钥与开发工件 —— 严禁随包分发
+  - '!.env'
+  - '!.env.example'
+  - '!openpipal-acp/**'
+  - '!openpipal-extension/**'
+  - '!verify-*.js'
+  - '!tests/**'
+  - '!playwright-report/**'
+  - '!test-results/**'
+  # Never nest historical release artifacts when a build uses a custom output directory.
+  - '!dist/**'
+  # QA 打包留下的 dist-qa* 里各躺着一个完整 .app；不排除会被整个塞进 app.asar
+  # （实测把 152MB 的包吹成 1.2GB）。dist 的排除不覆盖它们，名字不一样。
+  - '!dist-qa*/**'
+  - '!release/**'
+  - '!docs/**'
+  - '!.claude/**'
+  - '!.serena/**'
+  - '!.playwright-mcp/**'
+  - '!CLAUDE.md'
+  - '!scripts/**'
+  # 运行时编译器（artifact-store/ds-compile 的 require('esbuild'|'typescript')）进包但裁剪：
+  # typescript 只需 lib/typescript.js —— createSourceFile 纯语法解析，不加载默认库/locale/tsc
+  - '!node_modules/typescript/lib/_ts*.js'
+  - '!node_modules/typescript/lib/lib*.d.ts'
+  - '!node_modules/typescript/lib/{cs,de,es,fr,it,ja,ko,pl,pt-br,ru,tr,zh-cn,zh-tw}/**'
+  # esbuild/bin 是 @esbuild 平台包二进制的重复硬链接（打包会materialize成双份），JS API 只走 @esbuild
+  - '!node_modules/esbuild/bin/**'
+asarUnpack:
+  # esbuild 同步 API 用 new Worker(__filename) 自举 + spawn @esbuild/<平台>/bin/esbuild，
+  # worker_threads 与 exec 都吃不了 asar 内路径 —— 两个包必须整体落成真实文件
+  - '**/node_modules/esbuild/**'
+  - '**/node_modules/@esbuild/**'
+mac:
+  # Electron 43 no longer supports macOS 11. Keep the packaged requirement explicit.
+  minimumSystemVersion: '12.0'
+  # Release signing must use the checked-in, reviewed entitlement contract.
+  hardenedRuntime: true
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.inherit.plist
+  extendInfo:
+    NSScreenCaptureUsageDescription: "OpenPipal uses screen recording only when you ask it to inspect a target application window."
+    NSMicrophoneUsageDescription: "OpenPipal uses the microphone only when you start voice input or live interpretation."
+    NSCameraUsageDescription: "OpenPipal uses the camera only when you approve camera access for an embedded MCP App."
+    NSLocationUsageDescription: "OpenPipal uses your location only when you approve location access for an embedded MCP App."
+    NSLocationWhenInUseUsageDescription: "OpenPipal uses your location only when you approve location access for an embedded MCP App."
+    NSAppleEventsUsageDescription: "OpenPipal uses Apple Events to inspect, focus, and paste into the target application you choose."
+  notarize: false
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  # pi-coding-agent 的图片读取器会在 Photon 模块加载时从 process.execPath 同目录兜底找 WASM。
+  # electron-vite 只打进 JS chunk，不会自动复制这个二进制资源；缺失时所有图片都会误报"无法缩小"。
+  # npm 嵌套/提升位置都列上——缺席的那条只警告不报错，哪条存在拷哪条。
+  extraFiles:
+    - from: node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm
+      to: MacOS/photon_rs_bg.wasm
+    - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm
+      to: MacOS/photon_rs_bg.wasm
+extraResources:
+  # dc 渲染/导出运行时 —— dc-export.ts / dc-headless.ts 打包态读 process.resourcesPath/dc-runtime；
+  # 漏掉会导致正式版导出 ENOENT（vendor/react.production.min.js 找不到）
+  - from: resources/dc-runtime
+    to: dc-runtime
+    filter: ['**/*', '!backup-pre-w1/**']
+  - from: resources/skills
+    to: skills
+    filter: ['**/*']
+  # Apache 2.0 attribution for bundled skills from openai/skills.
+  # Must ship inside the distributed app so downstream users can find the license notice.
+  # 托盘 template 图 —— index.ts createTray 打包态读 process.resourcesPath/tray
+  - from: resources/tray
+    to: tray
+  - from: resources/SKILLS-NOTICE.md
+    to: SKILLS-NOTICE.md
+  - from: resources/system-agents
+    to: system-agents
+    filter: ['**/*']
+  # subagent 档位定义 — 首启 seed 到 ~/.openpipal/subagents/
+  - from: resources/subagents
+    to: subagents
+    filter: ['**/*']
+  # 分发版本专用的 MCP 配置(精简版,不含内部业务 server)。
+  # 运行时 loadConfig() 读 process.resourcesPath/mcp-servers.json。
+  # 仓库根的 mcp-servers.json 仅在 dev 模式 (__dirname/../../) 被读到,二者独立。
+  - from: resources/mcp-servers.json
+    to: mcp-servers.json
+  # Localized macOS privacy prompts. The top-level Info.plist values above remain the fallback.
+  - from: resources/mac/en.lproj/InfoPlist.strings
+    to: en.lproj/InfoPlist.strings
+  - from: resources/mac/zh-Hans.lproj/InfoPlist.strings
+    to: zh-Hans.lproj/InfoPlist.strings
+dmg:
+  artifactName: ${name}-${version}-${arch}.${ext}

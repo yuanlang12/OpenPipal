@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "runtimeSeeds": [
+    "@anthropic-ai/sandbox-runtime",
+    "@earendil-works/pi-agent-core",
+    "@earendil-works/pi-ai",
+    "@earendil-works/pi-coding-agent",
+    "@modelcontextprotocol/sdk",
+    "dotenv",
+    "esbuild",
+    "i18next",
+    "ignore",
+    "mammoth",
+    "pdf-parse",
+    "perfect-freehand",
+    "protobufjs",
+    "quickjs-emscripten",
+    "react-i18next",
+    "sharp",
+    "typescript",
+    "ws",
+    "yaml"
+  ],
+  "repositoryInputs": [
+    {
+      "id": "application-icon",
+      "classification": "binary",
+      "paths": [
+        "resources/icon.icns"
+      ]
+    },
+    {
+      "id": "bundled-skills",
+      "classification": "skills",
+      "paths": [
+        "resources/skills"
+      ],
+      "exclude": [
+        "doc/assets/doc.png",
+        "pdf/assets/pdf.png",
+        "slides/assets/slides.png",
+        "spreadsheet/assets/spreadsheet.png"
+      ]
+    },
+    {
+      "id": "dc-runtime",
+      "classification": "vendored",
+      "paths": [
+        "resources/dc-runtime"
+      ]
+    },
+    {
+      "id": "font-licenses",
+      "classification": "vendored",
+      "paths": [
+        "src/renderer/src/assets/fonts/LICENSE-Geist.txt",
+        "src/renderer/src/assets/fonts/LICENSE-InstrumentSerif.txt"
+      ]
+    },
+    {
+      "id": "mcp-server-catalogue",
+      "classification": "vendored",
+      "paths": [
+        "resources/mcp-servers.json"
+      ]
+    },
+    {
+      "id": "photon-wasm",
+      "classification": "binary",
+      "paths": [
+        "node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm",
+        "node_modules/@earendil-works/pi-coding-agent/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm"
+      ],
+      "atLeastOne": true,
+      "optional": true
+    },
+    {
+      "id": "self-hosted-fonts",
+      "classification": "binary",
+      "paths": [
+        "src/renderer/src/assets/fonts"
+      ],
+      "exclude": [
+        "LICENSE-Geist.txt",
+        "LICENSE-InstrumentSerif.txt"
+      ]
+    },
+    {
+      "id": "skill-images",
+      "classification": "binary",
+      "paths": [
+        "resources/skills/doc/assets/doc.png",
+        "resources/skills/pdf/assets/pdf.png",
+        "resources/skills/slides/assets/slides.png",
+        "resources/skills/spreadsheet/assets/spreadsheet.png"
+      ]
+    },
+    {
+      "id": "skills-notice",
+      "classification": "vendored",
+      "paths": [
+        "resources/SKILLS-NOTICE.md"
+      ]
+    },
+    {
+      "id": "subagent-profiles",
+      "classification": "vendored",
+      "paths": [
+        "resources/subagents"
+      ]
+    },
+    {
+      "id": "system-agents",
+      "classification": "vendored",
+      "paths": [
+        "resources/system-agents"
+      ]
+    },
+    {
+      "id": "tray-images",
+      "classification": "binary",
+      "paths": [
+        "resources/tray"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+extends: ./electron-builder.yml
+
+# Release packages alone receive the immutable candidate build manifest.
+# Development and ordinary build:mac/build:unpack flows keep using electron-builder.yml.
+afterPack: ./scripts/embed-macos-release-build-manifest.mjs

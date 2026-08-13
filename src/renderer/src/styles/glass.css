@@ -1,0 +1,373 @@
+/* =========================================================================
+   Liquid glass — 表面系统。值原样取自官方设计系统 tokens/glass.css。
+
+   一块玻璃永远是四件事,缺一件就退化成「半透明矩形」:
+     1. tint   — 近白薄膜(38/56/74/84% = thin/regular/thick/chrome)
+     2. blur   — backdrop-filter blur + saturate(200%) + brightness(106%)
+                 饱和度让背后的颜色活着,提亮让它读作「被照亮」而不是「能看穿」
+     3. rim    — 四道内侧光:亮顶边 + 整圈 hairline + 暗底反光 + 大范围内辉光
+     4. depth  — 冷调、软、宽的外阴影,比不透明卡片再软一档
+
+   ✦ 铁律:玻璃只有在「有内容从底下穿过去」时才成立。
+     消息列表必须滚到输入框和标题栏「下面」,配一层保护渐变把画布化开。
+     没有 pass-behind,再高的 blur 也只是一块灰白矩形 —— 所以本文件只给
+     标题栏 / 输入框 / 浮层 / HUD 药丸上玻璃,不给侧栏和会话画布上。
+   ========================================================================= */
+
+:root {
+  /* ---------- Blur 阶 ---------- */
+  --glass-blur-xs: 8px;
+  --glass-blur-sm: 14px;
+  --glass-blur-md: 24px;
+  --glass-blur-lg: 40px;
+  --glass-blur-xl: 64px;
+  /* 本产品实际用的两档。官方 40/64px 是给「浮在天空上」调的 —— 天空是平滑渐变,
+   * 糊多少都无所谓;我们的玻璃底下是 13-15px 正文,糊到 64px 只剩一团雾,
+   * 折射反而读不出形状。压到能看见字形轮廓、又认不出内容的区间。 */
+  --glass-blur-chrome: 26px;
+  --glass-blur-panel: 20px;
+  --glass-saturate: 200%;
+  --glass-brightness: 106%;
+
+  /* ---------- Tint：白色薄膜,不是米色 ---------- */
+  --glass-paper-rgb: 255 255 255;
+  --glass-thin:    rgb(var(--glass-paper-rgb) / 0.38);
+  --glass-regular: rgb(var(--glass-paper-rgb) / 0.56);
+  /* 白膜盖在白画布上,官方的 74/84% 等于什么都看不见 —— 那套值假设背后是蓝天。
+   * 压到 60/68%,底下穿过去的内容才有机会透出来。 */
+  --glass-thick:   rgb(var(--glass-paper-rgb) / 0.60);
+  --glass-chrome:  color-mix(in srgb, var(--sw-bg-primary) 74%, transparent);
+  /* 从主题 token 派生,而不是写死白 —— 否则用户在外观设置里改 surface 种子色,
+     正文颜色会跟着变而 chrome 不变,主题控件形同虚设。 */
+  --glass-sidebar: color-mix(in srgb, var(--sw-bg-sidebar) 82%, transparent);
+  /* 会话画布:官方规范写「画布不上玻璃」,那条规则的前提是天空在窗口**外面**。
+   * 挂了 NSVisualEffectView 之后,材质就是环境本身 —— 挂靠面板在 macOS 语境里
+   * 更接近通知中心/HUD 而不是文档编辑器,整块都该是材质。
+   * 82% 的白膜:正文对比度基本没动,但面板在别的应用旁边会跟着染上环境色。 */
+  --glass-canvas:  color-mix(in srgb, var(--sw-bg-primary) 88%, transparent);
+
+  /* ---------- Rim：四道内侧光 ---------- */
+  --glass-rim:
+    inset 0 1px 0 rgb(255 255 255 / 0.90),
+    inset 0 0 0 1px rgb(255 255 255 / 0.42),
+    inset 0 -1px 0 rgb(255 255 255 / 0.30),
+    inset 0 12px 26px -14px rgb(255 255 255 / 0.55),
+    /* 冷色外描边:白底上四道白光全隐形,玻璃就没有边。这一道负责把边界画出来 */
+    0 0 0 1px var(--glass-hairline);
+  --glass-rim-strong:
+    inset 0 1px 0 rgb(255 255 255 / 1),
+    inset 0 0 0 1px rgb(255 255 255 / 0.60),
+    inset 0 -1px 0 rgb(255 255 255 / 0.42),
+    inset 0 16px 32px -16px rgb(255 255 255 / 0.75);
+  --glass-rim-quiet:
+    inset 0 1px 0 rgb(255 255 255 / 0.60),
+    inset 0 0 0 1px rgb(255 255 255 / 0.24),
+    inset 0 -1px 0 rgb(255 255 255 / 0.18);
+  --glass-hairline: rgb(38 56 70 / 0.07);
+  --border-glass:   rgb(255 255 255 / 0.55);
+
+  /* 折射边 — 左上/右下亮、中间暗的 1px 渐变描边,模拟光穿过厚玻璃 */
+  --glass-edge: linear-gradient(150deg,
+    rgb(255 255 255 / 0.95) 0%, rgb(255 255 255 / 0.25) 34%,
+    rgb(255 255 255 / 0.10) 62%, rgb(255 255 255 / 0.70) 100%);
+
+  /* ---------- Depth：冷调,软而宽 ---------- */
+  --glass-shadow-rgb: 38 56 70;
+  --glass-shadow-sm: 0 2px 8px rgb(var(--glass-shadow-rgb) / 0.06), 0 1px 2px rgb(var(--glass-shadow-rgb) / 0.04);
+  --glass-shadow-md: 0 10px 28px rgb(var(--glass-shadow-rgb) / 0.10), 0 2px 6px rgb(var(--glass-shadow-rgb) / 0.05);
+  --glass-shadow-lg: 0 24px 56px rgb(var(--glass-shadow-rgb) / 0.13), 0 6px 14px rgb(var(--glass-shadow-rgb) / 0.06);
+  --glass-shadow-xl: 0 40px 90px rgb(var(--glass-shadow-rgb) / 0.16), 0 12px 28px rgb(var(--glass-shadow-rgb) / 0.07);
+
+  /* ---------- Sheen：顶光渐变 + 左上角高光 ---------- */
+  --glass-sheen:
+    linear-gradient(178deg, rgb(255 255 255 / 0.72) 0%, rgb(255 255 255 / 0.22) 22%, rgb(255 255 255 / 0.02) 46%, rgb(255 255 255 / 0) 62%),
+    radial-gradient(120% 60% at 18% -12%, rgb(255 255 255 / 0.55) 0%, rgb(255 255 255 / 0) 60%);
+
+  /* ---------- 保护渐变：画布在玻璃底下化开,而不是被硬边裁断 ---------- */
+  --glass-veil: linear-gradient(180deg,
+    rgb(255 255 255 / 0) 0%, rgb(255 255 255 / 0.65) 42%,
+    rgb(255 255 255 / 0.94) 84%, rgb(255 255 255 / 1) 100%);
+}
+
+.dark {
+  --glass-paper-rgb: 32 40 46;
+  --glass-brightness: 96%;
+  --glass-thin:    rgb(var(--glass-paper-rgb) / 0.38);
+  --glass-regular: rgb(var(--glass-paper-rgb) / 0.54);
+  --glass-thick:   rgb(var(--glass-paper-rgb) / 0.70);
+  --glass-chrome:  color-mix(in srgb, var(--sw-bg-primary) 82%, transparent);
+  --glass-sidebar: color-mix(in srgb, var(--sw-bg-sidebar) 86%, transparent);
+  --glass-canvas:  color-mix(in srgb, var(--sw-bg-primary) 90%, transparent);
+
+  --glass-rim:
+    inset 0 1px 0 rgb(255 255 255 / 0.22),
+    inset 0 0 0 1px rgb(255 255 255 / 0.09),
+    inset 0 -1px 0 rgb(255 255 255 / 0.06),
+    inset 0 12px 26px -14px rgb(255 255 255 / 0.10);
+  --glass-rim-strong:
+    inset 0 1px 0 rgb(255 255 255 / 0.32),
+    inset 0 0 0 1px rgb(255 255 255 / 0.14),
+    inset 0 -1px 0 rgb(255 255 255 / 0.09),
+    inset 0 16px 32px -16px rgb(255 255 255 / 0.14);
+  --glass-rim-quiet:
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  --glass-hairline: rgb(255 255 255 / 0.08);
+  --border-glass:   rgb(255 255 255 / 0.12);
+
+  --glass-edge: linear-gradient(150deg,
+    rgb(255 255 255 / 0.30) 0%, rgb(255 255 255 / 0.08) 34%,
+    rgb(255 255 255 / 0.03) 62%, rgb(255 255 255 / 0.20) 100%);
+
+  --glass-shadow-sm: 0 2px 8px rgb(0 0 0 / 0.35);
+  --glass-shadow-md: 0 8px 24px rgb(0 0 0 / 0.45);
+  --glass-shadow-lg: 0 20px 48px rgb(0 0 0 / 0.55);
+  --glass-shadow-xl: 0 32px 72px rgb(0 0 0 / 0.62);
+
+  --glass-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.14) 0%, rgb(255 255 255 / 0.03) 38%, rgb(255 255 255 / 0) 62%);
+
+  --glass-veil: linear-gradient(180deg,
+    rgb(22 29 34 / 0) 0%, rgb(22 29 34 / 0.72) 42%,
+    rgb(22 29 34 / 0.96) 84%, rgb(22 29 34 / 1) 100%);
+}
+
+/* =========================================================================
+   表面原语 —— 组件主动加类来「上玻璃」,本文件不反向覆盖任何组件。
+   ========================================================================= */
+
+.op-glass {
+  position: relative;
+  background: var(--glass-thick);
+  backdrop-filter: blur(var(--glass-blur-panel)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-blur-panel)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness));
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glass-rim), var(--glass-shadow-md);
+}
+
+/* 窗口 chrome:标题栏。方角、静音 rim、底部一根 hairline。
+   不挂 backdrop-filter:body 是透明的、.op-app-shell 也不刷背景,标题栏在页面内
+   根本没有可采样的背景像素 —— 实测加与不加像素完全一致。它的通透感来自窗口的
+   NSVisualEffectView。而且挂上去还有实际代价:一个常驻的合成层,外加它会建立
+   backdrop root,把所有嵌套浮层的模糊一并掐死。 */
+.op-glass-chrome {
+  position: relative;
+  background: var(--glass-chrome);
+  border-radius: 0;
+  box-shadow: var(--glass-rim-quiet), 0 1px 0 var(--glass-hairline);
+}
+
+/* 折射边:和 .op-glass 叠加,读感最强。用 mask 抠出 1px 描边,不占布局。 */
+.op-glass-edge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(--glass-edge);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* 保护渐变 —— 输入框底下那层「画布化开」。铺满宿主,不吃事件。 */
+.op-glass-veil {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  background: var(--glass-veil);
+}
+
+/* =========================================================================
+   Motion —— 进行中的步骤永远「扫光」,不是干转一个圈。
+   ========================================================================= */
+
+@keyframes op-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@keyframes op-sweep { 0% { transform: translateX(-120%); } 100% { transform: translateX(220%); } }
+
+/* 文字扫光:一道光从标签里穿过去(Thinking、正在跑的工具名、流式状态行) */
+.op-shimmer-text {
+  background: linear-gradient(100deg,
+    var(--fg-tertiary) 0%, var(--fg-tertiary) 34%,
+    var(--fg-primary) 50%,
+    var(--fg-tertiary) 66%, var(--fg-tertiary) 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: op-shimmer 2.2s var(--ease-soft) infinite;
+}
+
+/* 表面扫光:一条 42% 宽的高光横穿整块卡片,用在跑着的 ToolCallCard 上 */
+.op-sweep { position: relative; overflow: hidden; }
+.op-sweep::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 42%;
+  background: linear-gradient(100deg, rgb(255 255 255 / 0) 0%, rgb(255 255 255 / 0.75) 50%, rgb(255 255 255 / 0) 100%);
+  animation: op-sweep 1.8s var(--ease-soft) infinite;
+  pointer-events: none;
+}
+.dark .op-sweep::after {
+  background: linear-gradient(100deg, rgb(255 255 255 / 0) 0%, rgb(255 255 255 / 0.14) 50%, rgb(255 255 255 / 0) 100%);
+}
+
+/* 外观设置里的「始终关闭动效」写的是 [data-sw-reduced-motion='always'](lib/theme.ts),
+   shimmer.css 里那六个类都认它。新加的两个类当初只写了 prefers-reduced-motion,
+   于是用户把动效关到底、工具卡照样扫光 —— 补上,保持同一套开关。 */
+[data-sw-reduced-motion='always'] .op-shimmer-text {
+  animation: none;
+  background: none;
+  color: var(--fg-secondary);
+  -webkit-text-fill-color: var(--fg-secondary);
+}
+[data-sw-reduced-motion='always'] .op-sweep::after { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .op-shimmer-text {
+    animation: none;
+    background: none;
+    color: var(--fg-secondary);
+    -webkit-text-fill-color: var(--fg-secondary);
+  }
+  .op-sweep::after { display: none; }
+}
+
+/* =========================================================================
+   应用位点 —— 组件主动挂上来的类。这里只写「这块玻璃在本产品里怎么表现」,
+   不反向覆盖任何组件的布局或配色(那是上一版翻车的地方)。
+   ========================================================================= */
+
+/* 输入框:聚焦时抬一档 rim + 阴影。不放大、不换色 —— press 是 translateY(0.5px),
+   永远不是 scale-up。 */
+/* 输入框在欢迎页和会话页是同一个物件:静止时轻轻浮着,聚焦只是「再抬高一档」。
+   聚焦不描边、不换色 —— 一圈墨色描边会把它读成「一个被选中的控件」,
+   而它是页面主体,不该有选中态。反馈交给阴影的深浅差。 */
+.op-composer {
+  border-radius: var(--radius-xl);
+  /* 盖掉 .op-glass 里那道冷色外描边:玻璃需要它来交代边界,输入框不需要 —— 
+     它靠阴影浮起来,再加一圈灰边就重了。 */
+  box-shadow: var(--glass-rim), var(--glass-shadow-md);
+  transition: box-shadow var(--dur-base) var(--ease-out);
+}
+.op-composer:focus-within {
+  box-shadow: var(--glass-rim), var(--glass-shadow-lg);
+}
+/* 必须写成 .op-composer.op-composer--drop 并排在 :focus-within 之后:
+   单类修饰符特异度 (0,1,0) 压不过伪类的 (0,2,0),而拖文件进来时输入框
+   通常已经是聚焦态 —— 那正是最需要拖拽反馈的场景。 */
+.op-composer.op-composer--drop,
+.op-composer-solid.op-composer--drop {
+  border-color: var(--accent);
+  box-shadow: var(--glass-rim-strong), var(--focus-ring);
+}
+
+/* 输入区外壳:不吃事件,让保护渐变下面的消息还能被选中;内部控件自己收回来 */
+/* --op-dock-h 的默认值住在这里,由 App.tsx 的 ResizeObserver 实测后覆盖。
+   之前每个消费者各写一份 var(--op-dock-h, 132px) 兜底,加上 useState(132),
+   同一个数字散在四处;调整停靠高度得逐个找。--op-dock-gap 同理:保护渐变、
+   滚动内边距、跳转药丸原来各写各的 +28/+20/+12,含义都是「输入区上方的余量」。 */
+.op-chat-view {
+  --op-dock-h: 132px;
+  --op-dock-gap: 20px;
+}
+.op-glass-veil { height: calc(var(--op-dock-h) + var(--op-dock-gap) + 8px); }
+.op-chat-dock { pointer-events: none; }
+.op-chat-dock > * { pointer-events: auto; }
+
+/* 浮层菜单:实心浮层,不上玻璃。
+   原本按官方 Menu 抄了 backdrop-filter,但本产品里每个浮层都嵌在自带
+   backdrop-filter 的祖先里(标题栏 .op-glass-chrome / 输入框 .op-glass),
+   而带 backdrop-filter 的元素会建立 Backdrop Root —— 后代只能采样该祖先自己的
+   子树,浮层又整个悬在祖先盒子外面,于是模糊恒等于没有。
+   与其留一条永远不生效的规则,不如老实用不透明浮层:菜单文字本来就该压得住
+   底下滚动的内容。 */
+.op-menu {
+  position: relative;
+  border-radius: var(--radius-lg);
+  background: var(--sw-bg-elevated);
+  border: 1px solid var(--sw-border);
+  box-shadow: var(--glass-shadow-lg);
+}
+
+/* 输入框的「不上玻璃」变体 —— 官方 Composer 的 glass={false}。
+   欢迎页底下没有内容穿过去,上玻璃只会得到一块浅灰矩形;所以这里老老实实用
+   实心浮层 + 默认描边 + shadow-sm,聚焦时走墨色描边 + focus ring。
+   玻璃出现在哪里,本身就是一条信息:它只出现在有东西从底下流过去的地方。 */
+.op-composer-solid {
+  position: relative;
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  /* 近乎看不见的发丝边:只负责在浅色背景上交代一下边界,主体存在感来自阴影 */
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--glass-shadow-md);
+  transition: box-shadow var(--dur-base) var(--ease-out);
+}
+.op-composer-solid:focus-within {
+  box-shadow: var(--glass-shadow-lg);
+}
+
+/* =========================================================================
+   窗口本体 —— 整扇窗就是那块玻璃。
+   BrowserWindow 已经是 transparent + frame:false + hasShadow:false,
+   渲染层却铺了一张直角不透明白纸,所以它在桌面上读作「一张纸」而不是
+   「一块浮着的玻璃」。补上圆角 + 冷描边 + 高光顶边,桌面从四角透出来,
+   窗口才成为一个物件。(orb 模式已在 window-tracker 里彻底移除,不用担心
+   72px 圆球被圆角裁到。)
+   ========================================================================= */
+.op-app-shell {
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow:
+    inset 0 0 0 1px var(--glass-hairline),
+    inset 0 1px 0 rgb(255 255 255 / 0.55);
+}
+.dark .op-app-shell {
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.10),
+    inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+
+/* 顶光 —— 官方 GlassPanel 默认就开着 sheen,我上一版为了克制没加,
+   结果白底上玻璃只剩一层平膜:没有高光,它就只是「半透明」,不是「被照亮」。
+   放在 ::before,内容靠 z-index 抬到上面。 */
+.op-titlebar::before,
+.op-composer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--glass-sheen);
+  pointer-events: none;
+  z-index: 0;
+}
+.op-titlebar > *,
+.op-composer > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 侧栏 —— macOS 的 vibrant sidebar。窗口挂了 NSVisualEffectView,这里只要不刷满
+   不透明底色,材质就自己透上来;不需要 backdrop-filter(它采不到桌面)。
+   会话画布仍然是不透明白 —— 正文压在毛玻璃上会糊,规范也把画布划在「不上玻璃」那侧。 */
+.op-sidebar {
+  background: var(--glass-sidebar);
+}
+
+/* 会话画布 —— 厚材质而不是纯白纸。玻璃的观感来自「整块面板都在环境里」,
+   一块贴死的白矩形怎么调 rim 和 blur 都救不回来。 */
+.op-content-column { background: var(--glass-canvas); }
+
+/* 只藏滚动条本身,不动滚动能力 —— 用在「靠左右箭头翻页、滚动条纯属噪音」的横向
+   容器上(模板扇形选择器)。注意 overflow-x:auto 会连带把 overflow-y 算成 auto,
+   所以这类容器还要留够纵向内边距,否则 transform 撑出的高度会再冒一条竖直滚动条。 */
+.op-no-scrollbar { scrollbar-width: none; }
+.op-no-scrollbar::-webkit-scrollbar { width: 0; height: 0; display: none; }

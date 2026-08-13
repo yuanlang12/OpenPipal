@@ -1,0 +1,375 @@
+/* ============================================================
+ * OpenPipal Design Tokens (sw-*)
+ *
+ * 三层 token 架构(参考 Codex / VS Code / Tailwind v4):
+ *   L1: 物理色板  — 原始色值(OKLCH/HEX),从不直接给组件用
+ *   L2: 语义 token — 组件实际用的(--sw-bg-primary, --sw-fg-primary, ...)
+ *   L3: 主题派生  — 由 L2 + --sw-contrast 自动计算(border / hover / text-secondary)
+ *
+ * 自定义主题协议见: src/shared/theme-schema.ts (openpipal-theme-v1)
+ * 想换主题:只改 L2 即可,L3 自动跟随。
+ * ============================================================ */
+
+@layer theme {
+  :root {
+    /* ════════════════════════════════════════════════════════
+     * L1 — 物理色板(OKLCH 主,关键色保 HEX 调试方便)
+     * 命名:--sw-<hue>-<step>  step 0..1000 越小越亮
+     * ════════════════════════════════════════════════════════ */
+
+    /* Brand: 官方 sage 鼠尾草绿(Phase F 预览 — 沿用 amber 变量名,值换官方 sage) */
+    --sw-amber-50:  #F2F4EE;   /* sage-50 */
+    --sw-amber-100: #E4EADA;   /* sage-100 */
+    --sw-amber-200: #C8D4B0;   /* sage-200 */
+    --sw-amber-300: #A8BB87;   /* sage-300 */
+    --sw-amber-400: #88A165;   /* sage-400 */
+    --sw-amber-500: #6F864F;   /* sage-500 — primary accent */
+    --sw-amber-600: #586B3F;   /* sage-600 */
+    --sw-amber-700: #424F30;   /* sage-700 */
+    --sw-amber-800: #2F3823;   /* sage-800 */
+    --sw-amber-900: #232A1A;   /* sage 更深(官方止于 800) */
+
+    /* Surface: 官方 daylight 冷中性阶 + cool ink 前景(沿用 stone 变量名)
+     * 玻璃的 tint 是白的,底色一暖透过去就发黄,所以中性阶必须偏冷。 */
+    --sw-stone-0:   #FFFFFF;   /* bg-canvas / bg-elevated — 会话画布是不透明白 */
+    --sw-stone-50:  #FAFBFC;   /* bg-subtle */
+    --sw-stone-100: #F6F8FA;   /* bg-surface — 面板/侧栏 */
+    --sw-stone-200: #EDF1F4;   /* bg-muted — 输入/inset */
+    --sw-stone-300: #D9E1E7;   /* border-default */
+    --sw-stone-400: #AEB8BF;   /* fg-quaternary — disabled */
+    --sw-stone-500: #7E8A92;   /* fg-tertiary — placeholder/meta */
+    --sw-stone-600: #4C575E;   /* fg-secondary — sub-copy */
+    --sw-stone-700: #1B2429;   /* fg-primary — 正文/标题,同时是 action accent */
+    --sw-stone-800: #161D22;   /* bg-inverse — 代码块/暗面板 */
+    --sw-stone-900: #0F151A;   /* 更深 */
+
+    /* Sand: 侧边栏专用(暖沙色,作 fallback 不再直接使用) */
+    --sw-sand-50:   oklch(96.5% 0.008 70);   /* #F7F4F1 */
+    --sw-sand-100: oklch(93.5% 0.008 65);    /* #EFEBE7 */
+    --sw-sand-200: oklch(90.0% 0.010 60);    /* #E8E3DE */
+    --sw-sand-300: oklch(87.0% 0.010 60);    /* #E0DBD6 */
+
+    /* ════════════════════════════════════════════════════════
+     * 默认 RGB 三元组(applyTheme() 在 main.tsx 启动时会覆盖)
+     * 提供首屏渲染 fallback,避免 React mount 前 :root var 未定义的闪白
+     * 派生自 default light theme: accent=#1B2429 / surface=#FFFFFF / ink=#1B2429
+     * ════════════════════════════════════════════════════════ */
+    /* ink 派生(种子 accent=#1B2429) — action color 是墨色,不是色相 */
+    --sw-brand-50-rgb:   237 240 241;
+    --sw-brand-100-rgb:  219 224 227;
+    --sw-brand-200-rgb:  191 199 203;
+    --sw-brand-300-rgb:  159 170 175;
+    --sw-brand-400-rgb:   99 112 119;
+    --sw-brand-500-rgb:   27  36  41;
+    --sw-brand-600-rgb:   23  31  35;
+    --sw-brand-700-rgb:   19  25  29;
+    --sw-brand-800-rgb:   15  20  23;
+    --sw-brand-900-rgb:   11  14  16;
+
+    /* daylight 派生(种子 surface=#FFFFFF / ink=#1B2429) */
+    --sw-surface-0-rgb:   255 255 255;
+    --sw-surface-50-rgb:  246 246 247;
+    --sw-surface-100-rgb: 232 233 234;
+    --sw-surface-200-rgb: 198 200 202;
+    --sw-surface-300-rgb: 152 156 159;
+    --sw-surface-400-rgb: 118 123 127;
+    --sw-surface-500-rgb:  73  80  85;
+    --sw-surface-600-rgb:  50  58  62;
+    --sw-surface-700-rgb:  27  36  41;
+    --sw-surface-800-rgb:  25  33  38;
+    --sw-surface-900-rgb:  23  31  35;
+
+    --sw-sidebar-50-rgb:  244 244 245;
+    --sw-sidebar-100-rgb: 232 233 234;
+    --sw-sidebar-200-rgb: 221 222 223;
+    --sw-sidebar-300-rgb: 209 211 212;
+
+    --sw-accent-rgb:   27  36  41;
+    --sw-surface-rgb: 255 255 255;
+    --sw-ink-rgb:      27  36  41;
+
+    /* Semantic raw — 官方语义色(success=sage / danger=clay-red / info=slate / warning=amber) */
+    --sw-green-400: #6F864F;  /* success = sage-500 */
+    --sw-green-500: #586B3F;  /* sage-600 */
+    --sw-red-400:   #B25A3E;  /* danger(官方) */
+    --sw-red-500:   #9A4A30;  /* danger 深 */
+    --sw-blue-400:  #5B7388;  /* info(官方) */
+    --sw-blue-500:  #4A5F73;  /* info 深 */
+    --sw-yellow-400: #B8843C; /* warning(官方) */
+
+    /* ════════════════════════════════════════════════════════
+     * L2 — 语义 token(LIGHT 模式默认)
+     * 组件应该只用这层,不直接引用 L1
+     * ════════════════════════════════════════════════════════ */
+
+    /* 主题种子色(对应 Codex 的 accent / surface / ink + contrast) */
+    /* action accent = ink。主按钮/激活导航/链接/焦点环都是白底近黑;
+     * sage 退回品牌位(--sw-brand-sage),只做 success / orb / logo。 */
+    --sw-accent:        var(--sw-stone-700);   /* 动作色 = 墨 */
+    --sw-brand-sage:    var(--sw-amber-500);   /* 品牌 sage — 不做动作色、不做焦点环 */
+    --sw-surface:       var(--sw-stone-0);     /* 会话画布 = 不透明白 */
+    --sw-ink:           var(--sw-stone-700);   /* 前景文字种子 */
+    --sw-contrast:      50;                    /* 0-100,影响二/三级文字透明度 */
+    --sw-sidebar-opaque: 1;                    /* 0 = 半透明侧边栏,1 = 不透明 */
+
+    /* 背景层级 */
+    --sw-bg-primary:    var(--sw-surface);
+    --sw-bg-secondary:  color-mix(in srgb, var(--sw-surface) 96%, var(--sw-ink));
+    --sw-bg-tertiary:   color-mix(in srgb, var(--sw-surface) 92%, var(--sw-ink));
+    /* sidebar 比画布略深一档的冷面 — 自动跟随 surface 种子色 */
+    --sw-bg-sidebar:    color-mix(in srgb, var(--sw-surface) 96%, var(--sw-ink));
+    --sw-bg-elevated:   var(--sw-stone-0);     /* dropdown / modal — 官方纯白浮层 */
+    --sw-bg-overlay:    color-mix(in srgb, var(--sw-ink) 40%, transparent);
+
+    /* 前景层级 — 派生自 --sw-ink + --sw-contrast */
+    --sw-fg-primary:    var(--sw-ink);
+    --sw-fg-secondary:  color-mix(in srgb, var(--sw-ink) calc(50% + var(--sw-contrast) * 0.3%), transparent);
+    --sw-fg-tertiary:   color-mix(in srgb, var(--sw-ink) calc(35% + var(--sw-contrast) * 0.2%), transparent);
+    --sw-fg-disabled:   color-mix(in srgb, var(--sw-ink) 25%, transparent);
+    --sw-fg-on-accent:  var(--sw-stone-0);     /* 强调色背景上的文字 */
+
+    /* 边框 */
+    --sw-border:        color-mix(in oklab, var(--sw-ink) 8%, transparent);
+    --sw-border-heavy:  color-mix(in oklab, var(--sw-ink) 14%, transparent);
+    --sw-border-light:  color-mix(in oklab, var(--sw-ink) 5%, transparent);
+    --sw-border-focus:  var(--sw-accent);
+
+    /* 交互态 */
+    --sw-list-hover:    color-mix(in oklab, var(--sw-ink) 4%, transparent);
+    --sw-list-active:   color-mix(in oklab, var(--sw-ink) 8%, transparent);
+    --sw-list-selected: color-mix(in srgb, var(--sw-accent) 12%, transparent);
+
+    /* 链接 */
+    --sw-link:          var(--sw-accent);
+    --sw-link-hover:    color-mix(in srgb, var(--sw-accent) 80%, var(--sw-ink));
+
+    /* 代码/预格式化 — 全部基于种子色派生,主题切换跟随 */
+    --sw-code-bg:       color-mix(in srgb, var(--sw-surface) 88%, var(--sw-ink));
+    --sw-code-fg:       color-mix(in oklab, var(--sw-accent) 85%, black);
+    --sw-pre-bg:        color-mix(in srgb, var(--sw-ink) 92%, black);
+    --sw-pre-fg:        color-mix(in srgb, var(--sw-surface) 80%, var(--sw-ink));
+
+    /* 语义状态色 — 对齐官方(success=sage / danger=clay-red / warning=amber / info=slate)
+     * bg tint 用官方固定值,不用 color-mix(官方给了精确的 parchment 混色) */
+    --sw-success:       var(--sw-green-500);   /* = #6F864F sage */
+    --sw-success-bg:    #EDF1E1;
+    --sw-danger:        var(--sw-red-500);      /* = #B25A3E clay-red */
+    --sw-danger-bg:     #F4DCD2;
+    --sw-warning:       var(--sw-yellow-400);   /* = #B8843C */
+    --sw-warning-bg:    #F6ECD7;
+    --sw-info:          var(--sw-blue-500);     /* = #5B7388 slate */
+    --sw-info-bg:       #E2E8ED;
+
+    /* Diff(支持主题字符串自定义) */
+    --sw-diff-added:    var(--sw-green-400);
+    --sw-diff-removed:  var(--sw-red-400);
+
+    /* Clay / Sand 别名(官方次要色,引用 openpipal-ds.css 官方 token) */
+    --sw-clay:          var(--clay-500, #B26A3F);
+    --sw-clay-soft:     var(--clay-300, #D9A57E);
+    --sw-sand:          var(--sand-300, #C9B98E);
+
+    /* Skill/Tag 语义色 */
+    --sw-tag-skill:     var(--sw-accent);
+
+    /* ════════════════════════════════════════════════════════
+     * 尺寸 / 形状 / 排版 / 阴影 token
+     * ════════════════════════════════════════════════════════ */
+
+    /* 间距基准 */
+    --sw-spacing:       0.25rem;               /* 4px */
+
+    /* 全局内容字号。uiZoom 是整个应用的缩放；contentScale 由阅读密度提供，
+     * 让紧凑 / 舒适 / 宽松分别与 14 / 15 / 16px 对话正文对齐。
+     * 保留 base token，避免某一个区域重新写死字号后脱离外观设置。 */
+    --sw-ui-zoom:       1;
+    --sw-content-scale: 1;
+    --sw-ui-text-scale: 1;
+    --sw-text-xs-base:  11px;
+    --sw-text-sm-base:  12px;
+    --sw-text-base-base:14px;
+    --sw-text-lg-base:  16px;
+    --sw-text-xl-base:  20px;
+    --sw-text-2xl-base: 28px;
+    --sw-text-3xl-base: 36px;
+    --sw-text-xs:       calc(var(--sw-text-xs-base) * var(--sw-ui-text-scale));
+    --sw-text-sm:       calc(var(--sw-text-sm-base) * var(--sw-ui-text-scale));
+    --sw-text-base:     calc(var(--sw-text-base-base) * var(--sw-ui-text-scale));
+    --sw-text-lg:       calc(var(--sw-text-lg-base) * var(--sw-ui-text-scale));
+    --sw-text-xl:       calc(var(--sw-text-xl-base) * var(--sw-ui-text-scale));
+    --sw-text-2xl:      calc(var(--sw-text-2xl-base) * var(--sw-ui-text-scale));
+    --sw-text-3xl:      calc(var(--sw-text-3xl-base) * var(--sw-ui-text-scale));
+
+    /* 聊天阅读 token。applyTheme() 会按“紧凑/舒适/宽松”覆盖基准值；
+     * --sw-ui-zoom 继续作为用户可调的字号倍率叠加在它们之上。 */
+    --sw-chat-body-base:       15px;
+    --sw-chat-reasoning-base:  13px;
+    --sw-chat-label-base:      13px;
+    --sw-chat-meta-base:       12px;
+    --sw-chat-small-base:      11px;
+    --sw-chat-text:       calc(var(--sw-chat-body-base) * var(--sw-ui-zoom));
+    --sw-chat-reasoning:  calc(var(--sw-chat-reasoning-base) * var(--sw-ui-zoom));
+    --sw-chat-label:      calc(var(--sw-chat-label-base) * var(--sw-ui-zoom));
+    --sw-chat-meta:       calc(var(--sw-chat-meta-base) * var(--sw-ui-zoom));
+    --sw-chat-small:      calc(var(--sw-chat-small-base) * var(--sw-ui-zoom));
+    --sw-chat-leading:    1.7;
+
+    /* 消息体最大宽度(统一所有消息体/工具卡片/思考卡片) */
+    --sw-msg-max-width: 85%;
+
+    /* 消息间距(连续 timeline 节点的垂直 gap) */
+    --sw-msg-gap-y:     16px;
+    --sw-chat-user-padding-y: 11px;
+    --sw-chat-user-padding-x: 14px;
+
+    /* 行高 */
+    --sw-leading-tight:   1.25;
+    --sw-leading-snug:    1.375;
+    --sw-leading-normal:  1.5;
+    --sw-leading-relaxed: 1.625;
+
+    /* 字重 */
+    --sw-fw-normal:     400;
+    --sw-fw-medium:     500;
+    --sw-fw-semibold:   600;
+    --sw-fw-bold:       700;
+
+    /* 字体族 — 官方:Geist(UI)+ Geist Mono(系统/agent voice)+ Instrument Serif(编辑性) */
+    --sw-font-ui:       'Geist', 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --sw-font-mono:     'Geist Mono', 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+    --sw-font-serif:    'Instrument Serif', ui-serif, Georgia, serif;
+
+    /* 圆角(全局 scale 控制) */
+    --sw-radius-scale:  1;
+    /* 官方圆角:xs4 / sm6 / md8 / lg12 / xl16 / 2xl20 */
+    --sw-radius-xs:     calc(0.25rem  * var(--sw-radius-scale));  /* 4px */
+    --sw-radius-sm:     calc(0.375rem * var(--sw-radius-scale));  /* 6px */
+    --sw-radius-md:     calc(0.5rem   * var(--sw-radius-scale));  /* 8px */
+    --sw-radius-lg:     calc(0.75rem  * var(--sw-radius-scale));  /* 12px */
+    --sw-radius-xl:     calc(1rem     * var(--sw-radius-scale));  /* 16px */
+    --sw-radius-2xl:    calc(1.25rem  * var(--sw-radius-scale));  /* 20px */
+    --sw-radius-3xl:    calc(1.5rem   * var(--sw-radius-scale));  /* 24px */
+    --sw-radius-full:   9999px;
+
+    /* 阴影 */
+    /* 官方 warm-tinted 阴影(rgba(28,30,26),从不纯黑) */
+    --sw-shadow-sm:     0 1px 2px rgba(28,30,26,0.05), 0 1px 1px rgba(28,30,26,0.03);
+    --sw-shadow-md:     0 4px 10px rgba(28,30,26,0.06), 0 2px 3px rgba(28,30,26,0.03);
+    --sw-shadow-lg:     0 12px 28px rgba(28,30,26,0.08), 0 4px 8px rgba(28,30,26,0.04);
+    --sw-shadow-xl:     0 24px 56px rgba(28,30,26,0.10), 0 8px 16px rgba(28,30,26,0.05);
+    --sw-shadow-2xl:    0 24px 56px rgba(28,30,26,0.12), 0 8px 16px rgba(28,30,26,0.06);
+
+    /* 业务尺寸 token(对应 Codex --height-toolbar / --spacing-token-sidebar) */
+    --sw-height-toolbar:    44px;
+    --sw-height-toolbar-sm: 36px;
+    --sw-height-statusbar:  28px;
+    --sw-height-row:        36px;
+    --sw-sidebar-width:     clamp(220px, 280px, min(420px, calc(100vw - 280px)));
+    --sw-padding-panel:     calc(var(--sw-spacing) * 4);
+    --sw-padding-row-x:     calc(var(--sw-spacing) * 3);
+    --sw-padding-row-y:     calc(var(--sw-spacing) * 2);
+
+    /* 动画曲线 */
+    --sw-ease-enter:        cubic-bezier(0.19, 1, 0.22, 1);
+    --sw-ease-exit:         cubic-bezier(0.65, 0, 0.4, 1);
+    --sw-ease-in-out:       cubic-bezier(0.4, 0, 0.2, 1);
+    --sw-duration-fast:     0.15s;
+    --sw-duration-normal:   0.22s;
+    --sw-duration-slow:     0.32s;
+
+    /* 滚动条 */
+    --sw-scrollbar-thumb:   color-mix(in srgb, var(--sw-ink) 18%, transparent);
+    --sw-scrollbar-thumb-hover: color-mix(in srgb, var(--sw-ink) 32%, transparent);
+  }
+
+  /* ════════════════════════════════════════════════════════
+   * DARK 模式 — 重定义 L2 种子色,L3 自动跟随
+   * ════════════════════════════════════════════════════════ */
+  .dark {
+    /* 暗色把 accent 反过来:近白墨。sage 仍只做 success / orb / logo。 */
+    --sw-accent:        #F2F6F9;
+    --sw-brand-sage:    var(--sw-amber-300);
+    --sw-surface:       var(--sw-stone-800);
+    --sw-ink:           #F2F6F9;
+    --sw-contrast:      60;                    /* 暗色默认对比度略高 */
+
+    --sw-bg-primary:    var(--sw-surface);
+    --sw-bg-secondary:  color-mix(in srgb, var(--sw-surface) 92%, var(--sw-stone-0));
+    --sw-bg-tertiary:   color-mix(in srgb, var(--sw-surface) 85%, var(--sw-stone-0));
+    --sw-bg-sidebar:    color-mix(in srgb, var(--sw-surface) 88%, black);
+    --sw-bg-elevated:   color-mix(in srgb, var(--sw-surface) 90%, var(--sw-stone-0));
+    --sw-bg-overlay:    color-mix(in srgb, var(--sw-stone-900) 60%, transparent);
+
+    --sw-border:        color-mix(in oklab, var(--sw-ink) 12%, transparent);
+    --sw-border-heavy:  color-mix(in oklab, var(--sw-ink) 20%, transparent);
+    --sw-border-light:  color-mix(in oklab, var(--sw-ink) 8%, transparent);
+
+    --sw-list-hover:    color-mix(in oklab, var(--sw-ink) 6%, transparent);
+    --sw-list-active:   color-mix(in oklab, var(--sw-ink) 12%, transparent);
+    --sw-list-selected: color-mix(in srgb, var(--sw-accent) 18%, transparent);
+
+    --sw-code-bg:       color-mix(in srgb, var(--sw-surface) 80%, var(--sw-ink));
+    --sw-code-fg:       color-mix(in oklab, var(--sw-accent) 70%, white);
+    --sw-pre-bg:        color-mix(in srgb, var(--sw-surface) 90%, black);
+    --sw-pre-fg:        color-mix(in srgb, var(--sw-surface) 20%, var(--sw-ink));
+
+    --sw-fg-on-accent:  var(--sw-stone-900);   /* 暗色下亮 accent + 深字 */
+
+    --sw-scrollbar-thumb:        color-mix(in srgb, var(--sw-ink) 22%, transparent);
+    --sw-scrollbar-thumb-hover:  color-mix(in srgb, var(--sw-ink) 40%, transparent);
+
+    /* Dark 模式 RGB 三元组(applyTheme 会覆盖)
+     * 派生自 default dark: accent=#F2F6F9 / surface=#161D22 / ink=#F2F6F9 */
+    --sw-brand-50-rgb:   242 246 249;
+    --sw-brand-100-rgb:  244 247 250;
+    --sw-brand-200-rgb:  246 249 251;
+    --sw-brand-300-rgb:  248 250 252;
+    --sw-brand-400-rgb:  251 252 253;
+    --sw-brand-500-rgb:  242 246 249;
+    --sw-brand-600-rgb:  206 209 212;
+    --sw-brand-700-rgb:  169 172 174;
+    --sw-brand-800-rgb:  133 135 137;
+    --sw-brand-900-rgb:   97  98 100;
+
+    --sw-surface-0-rgb:    22  29  34;   /* #161D22 bg-canvas(dark) */
+    --sw-surface-50-rgb:   31  38  43;
+    --sw-surface-100-rgb:  44  51  55;
+    --sw-surface-200-rgb:  77  83  87;
+    --sw-surface-300-rgb: 121 126 130;
+    --sw-surface-400-rgb: 161 166 169;
+    --sw-surface-500-rgb: 201 205 208;
+    --sw-surface-600-rgb: 220 224 226;
+    --sw-surface-700-rgb: 242 246 249;   /* #F2F6F9 fg-inverse */
+    --sw-surface-800-rgb: 223 226 229;
+    --sw-surface-900-rgb: 206 209 212;
+
+    --sw-sidebar-50-rgb:   19  26  31;
+    --sw-sidebar-100-rgb:  26  33  38;
+    --sw-sidebar-200-rgb:  37  45  50;
+    --sw-sidebar-300-rgb:  48  56  61;
+
+    /* JS 跑起来之前的暗色兜底,必须与上面的暗色种子同值:
+     * accent/ink = #F2F6F9,surface = stone-800 #161D22。
+     * 这三行原本还是改版前的暖色 sage/parchment —— applyTheme 一跑就被覆盖,
+     * 所以肉眼看不出来,但首帧和「主题还没加载」的路径会闪一下绿。 */
+    --sw-accent-rgb:  242 246 249;
+    --sw-surface-rgb:  22  29  34;
+    --sw-ink-rgb:     242 246 249;
+  }
+}
+
+/* ============================================================
+ * 平台标记(为 Phase C 做铺垫,区分 electron / browser)
+ * ============================================================ */
+[data-openpipal-env='browser'] {
+  /* 浏览器插件 iframe 模式下的特殊 token 覆写位 */
+}
+
+/* ============================================================
+ * 全局缩放支持(--sw-ui-zoom > 1 时同时缩放间距/字号)
+ * ============================================================ */
+@supports (zoom: 1) {
+  :root[data-sw-zoom-mode='zoom'] {
+    zoom: var(--sw-ui-zoom);
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "extensionName": {
+    "message": "OpenPipal"
+  },
+  "extensionDescription": {
+    "message": "OpenPipal browser assistant — connect web context to the desktop AI app"
+  },
+  "actionTitle": {
+    "message": "Open OpenPipal"
+  },
+  "disconnectedTitle": {
+    "message": "OpenPipal is not connected"
+  },
+  "disconnectedDescription": {
+    "message": "The browser extension works with the OpenPipal desktop app."
+  },
+  "openDesktopStep": {
+    "message": "Open the OpenPipal desktop app"
+  },
+  "waitForReconnectStep": {
+    "message": "Wait for the connection to recover automatically"
+  },
+  "reconnectButton": {
+    "message": "Reconnect"
+  },
+  "connectingStatus": {
+    "message": "Trying to connect…"
+  },
+  "retryStatus": {
+    "message": "Tried $COUNT$ times. Retrying automatically every 5 seconds.",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "contextMenuExplain": {
+    "message": "Explain with OpenPipal"
+  },
+  "contextMenuTranslate": {
+    "message": "Translate with OpenPipal"
+  }
+}

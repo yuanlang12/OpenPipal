@@ -1,0 +1,6 @@
+"NSScreenCaptureUsageDescription" = "OpenPipal uses screen recording only when you ask it to inspect a target application window.";
+"NSMicrophoneUsageDescription" = "OpenPipal uses the microphone only when you start voice input or live interpretation.";
+"NSCameraUsageDescription" = "OpenPipal uses the camera only when you approve camera access for an embedded MCP App.";
+"NSLocationUsageDescription" = "OpenPipal uses your location only when you approve location access for an embedded MCP App.";
+"NSLocationWhenInUseUsageDescription" = "OpenPipal uses your location only when you approve location access for an embedded MCP App.";
+"NSAppleEventsUsageDescription" = "OpenPipal uses Apple Events to inspect, focus, and paste into the target application you choose.";

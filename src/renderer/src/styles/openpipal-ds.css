@@ -1,0 +1,283 @@
+/* =========================================================================
+   OpenPipal Design System — 官方 token + 原语(从 ../OpenPipal Design System/
+   colors_and_type.css + components.css 原样移植)。
+   这是官方静态层:语义字号类 .sw-heading-* / 组件原语 .sw-btn 等。
+   themeable 的 --sw-*-rgb(tailwind 用)在 tokens.css,由 applyTheme 运行时计算。
+   注:html/body 默认块 + 字体 @import 已由 global.css 负责,此处不重复。
+   ========================================================================= */
+
+:root {
+/* ---------- Type families ---------- */
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+  --font-serif: 'Instrument Serif', ui-serif, Georgia, serif;
+
+  /* ---------- Backgrounds (daylight cool neutral ladder) ----------
+   * 官方设计系统 2026-08 把 parchment 暖阶换成冷调近白:玻璃的 tint 是白的,
+   * 底色一暖,透过玻璃的一切就发黄。elevated 白只给「浮起来的东西」。 */
+  --bg-canvas:      var(--sw-bg-primary);
+  --bg-surface:     var(--sw-bg-secondary);
+  --bg-elevated:    var(--sw-bg-elevated);
+  --bg-muted:       var(--sw-bg-tertiary);
+  --bg-subtle:      #FAFBFC;
+  --bg-inverse:     var(--sw-fg-primary);
+  --bg-inverse-2:   #212A30;
+
+  /* ---------- Foreground (cool ink,四档严格按层级用) ---------- */
+  --fg-primary:     var(--sw-fg-primary);
+  --fg-secondary:   var(--sw-fg-secondary);
+  --fg-tertiary:    var(--sw-fg-tertiary);
+  --fg-quaternary:  var(--sw-fg-disabled);
+  --fg-inverse:     var(--sw-bg-primary);
+  --fg-inverse-2:   #BCC6CD;
+  --fg-on-accent:   var(--sw-fg-on-accent);
+
+  /* ---------- Ink RGB — 所有 hairline / hover / 阴影的 alpha 源 ---------- */
+  --ink-rgb: var(--sw-ink-rgb);
+  --accent-rgb: var(--sw-accent-rgb);
+
+  /* ---------- Accent = ink,不是色相 ----------
+   * 主按钮、激活导航、链接、焦点环都是白底近黑。sage 退回品牌位:
+   * 只负责 success / orb / logo,永远不做动作色、不做焦点环。 */
+  --accent:        var(--sw-accent);
+  --accent-hover:  color-mix(in srgb, var(--sw-accent) 88%, var(--sw-surface));
+  --accent-press:  color-mix(in srgb, var(--sw-accent) 92%, black);
+  --accent-tint:   rgb(var(--accent-rgb) / 0.10);
+  --accent-quiet:  rgb(var(--accent-rgb) / 0.06);
+  --brand:         #6F864F;
+
+  /* ---------- Sage (brand) ---------- */
+  --sage-50:  #F2F4EE; --sage-100: #E4EADA; --sage-200: #C8D4B0; --sage-300: #A8BB87;
+  --sage-400: #88A165; --sage-500: #6F864F; --sage-600: #586B3F; --sage-700: #424F30; --sage-800: #2F3823;
+
+  /* ---------- Sand (secondary) ---------- */
+  --sand-50: #FAF6EB; --sand-100: #F0EADC; --sand-200: #E2D7BC; --sand-300: #C9B98E; --sand-400: #A89968; --sand-500: #8A7C4E;
+
+  /* ---------- Clay (rare highlight — agent activity, links) ---------- */
+  --clay-100: #F2E3D6; --clay-300: #D9A57E; --clay-500: #B26A3F; --clay-700: #804527;
+
+  /* ---------- Semantic ---------- */
+  --color-success: var(--sage-500);
+  --color-warning: #B8843C;
+  --color-danger:  #B25A3E;
+  --color-info:    #5B7388;
+  --bg-success: #EDF1E1; --bg-warning: #F6ECD7; --bg-danger: #F4DCD2; --bg-info: #E2E8ED;
+
+  /* ---------- Borders ---------- */
+  --border-subtle:  var(--sw-border-light);
+  --border-default: var(--sw-border-heavy);
+  --border-strong:  color-mix(in oklab, var(--sw-ink) 28%, transparent);
+  --border-focus:   var(--accent);
+  --focus-ring:     0 0 0 3px rgb(var(--accent-rgb) / 0.12);
+
+  /* ---------- Interaction — hover/press 永远是 ink 的低透明度,不是新色相 ---------- */
+  --list-hover:    rgb(var(--ink-rgb) / 0.04);
+  --list-active:   rgb(var(--ink-rgb) / 0.08);
+  --list-selected: rgb(var(--accent-rgb) / 0.12);
+
+  /* ---------- Shadows (cool-tinted,永不纯黑) ---------- */
+  --shadow-xs:  0 1px 1px rgb(var(--ink-rgb) / 0.03);
+  --shadow-sm:  0 1px 2px rgb(var(--ink-rgb) / 0.05), 0 1px 1px rgb(var(--ink-rgb) / 0.03);
+  --shadow-md:  0 4px 10px rgb(var(--ink-rgb) / 0.06), 0 2px 3px rgb(var(--ink-rgb) / 0.03);
+  --shadow-lg:  0 12px 28px rgb(var(--ink-rgb) / 0.08), 0 4px 8px rgb(var(--ink-rgb) / 0.04);
+  --shadow-xl:  0 24px 56px rgb(var(--ink-rgb) / 0.10), 0 8px 16px rgb(var(--ink-rgb) / 0.05);
+  --shadow-inner: inset 0 1px 2px rgb(var(--ink-rgb) / 0.05);
+  /* 品牌光晕 — 只给 agent 活动(orb / streaming pill),是 sage 不是 accent */
+  --glow-brand: 0 8px 24px rgb(111 134 79 / 0.35), 0 0 42px rgb(111 134 79 / 0.22);
+
+  /* ---------- Radii ---------- */
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+  --radius-xl: 16px; --radius-2xl: 20px; --radius-3xl: 24px; --radius-pill: 9999px;
+
+  /* ---------- Spacing (4pt base) ---------- */
+  --space-0: 0; --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px;
+  --space-6: 24px; --space-7: 28px; --space-8: 32px; --space-10: 40px; --space-12: 48px;
+  --space-16: 64px; --space-20: 80px; --space-24: 96px;
+
+  /* ---------- Motion ---------- */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-enter: cubic-bezier(0.19, 1, 0.22, 1);
+  --ease-exit: cubic-bezier(0.65, 0, 0.4, 1);
+  --dur-fast: 140ms; --dur-base: 200ms; --dur-slow: 320ms;
+
+  /* ---------- Type scale (semantic) ---------- */
+  --display-2xl-size: 64px; --display-2xl-line: 1.04; --display-2xl-tracking: -0.025em; --display-2xl-weight: 500;
+  --display-xl-size: 48px; --display-xl-line: 1.08; --display-xl-tracking: -0.022em; --display-xl-weight: 500;
+  --display-lg-size: 36px; --display-lg-line: 1.12; --display-lg-tracking: -0.02em; --display-lg-weight: 500;
+  --heading-xl-size: 24px; --heading-xl-line: 1.25; --heading-xl-tracking: -0.012em; --heading-xl-weight: 600;
+  --heading-lg-size: 20px; --heading-lg-line: 1.3; --heading-lg-tracking: -0.008em; --heading-lg-weight: 600;
+  --heading-md-size: 17px; --heading-md-line: 1.4; --heading-md-tracking: -0.004em; --heading-md-weight: 600;
+  --heading-sm-size: 15px; --heading-sm-line: 1.4; --heading-sm-tracking: 0; --heading-sm-weight: 600;
+  --body-lg-size: 16px; --body-lg-line: 1.55; --body-lg-weight: 400;
+  --body-md-size: 14px; --body-md-line: 1.5; --body-md-weight: 400;
+  --body-sm-size: 13px; --body-sm-line: 1.45; --body-sm-weight: 400;
+  --caption-size: 12px; --caption-line: 1.4; --caption-tracking: 0.01em; --caption-weight: 500;
+  --label-size: 11px; --label-line: 1.3; --label-tracking: 0.06em; --label-weight: 500;
+  --mono-md-size: 13px; --mono-md-line: 1.5;
+  --mono-sm-size: 12px; --mono-sm-line: 1.45;
+}
+
+/* =========================================================================
+   DARK — 只剩「没有 --sw-* 对应物」的那几个。
+   上面 bg/fg/accent/border/ink-rgb 全部别名到了 tokens.css 的主题层,
+   种子一翻它们自动跟着翻;在这里再抄一遍暗色值,就等于把同一个事实
+   写两处 —— 改主题时必然漏一处。这正是之前 dark accent 还停在 sage 绿的成因。
+   ========================================================================= */
+.dark {
+  --bg-subtle:    #131A1F;
+  --bg-inverse-2: #E7EDF2;
+  --fg-inverse-2: #4C575E;
+
+  --brand:         var(--sage-300);
+  --color-success: var(--sage-300);
+  --color-danger:  var(--clay-300);
+}
+
+/* ---------- Type utility classes ---------- */
+.sw-display-2xl { font-size: var(--display-2xl-size); line-height: var(--display-2xl-line); letter-spacing: var(--display-2xl-tracking); font-weight: var(--display-2xl-weight); }
+.sw-display-xl  { font-size: var(--display-xl-size);  line-height: var(--display-xl-line);  letter-spacing: var(--display-xl-tracking);  font-weight: var(--display-xl-weight); }
+.sw-display-lg  { font-size: var(--display-lg-size);  line-height: var(--display-lg-line);  letter-spacing: var(--display-lg-tracking);  font-weight: var(--display-lg-weight); }
+.sw-h1, .sw-heading-xl { font-size: var(--heading-xl-size); line-height: var(--heading-xl-line); letter-spacing: var(--heading-xl-tracking); font-weight: var(--heading-xl-weight); }
+.sw-h2, .sw-heading-lg { font-size: var(--heading-lg-size); line-height: var(--heading-lg-line); letter-spacing: var(--heading-lg-tracking); font-weight: var(--heading-lg-weight); }
+.sw-h3, .sw-heading-md { font-size: var(--heading-md-size); line-height: var(--heading-md-line); letter-spacing: var(--heading-md-tracking); font-weight: var(--heading-md-weight); }
+.sw-h4, .sw-heading-sm { font-size: var(--heading-sm-size); line-height: var(--heading-sm-line); letter-spacing: var(--heading-sm-tracking); font-weight: var(--heading-sm-weight); }
+.sw-body-lg { font-size: var(--body-lg-size); line-height: var(--body-lg-line); }
+.sw-body    { font-size: var(--body-md-size); line-height: var(--body-md-line); }
+.sw-body-sm { font-size: var(--body-sm-size); line-height: var(--body-sm-line); }
+.sw-caption { font-size: var(--caption-size); line-height: var(--caption-line); letter-spacing: var(--caption-tracking); font-weight: var(--caption-weight); color: var(--fg-tertiary); }
+.sw-label   { font-size: var(--label-size); line-height: var(--label-line); letter-spacing: var(--label-tracking); font-weight: var(--label-weight); text-transform: uppercase; color: var(--fg-tertiary); }
+.sw-mono    { font-family: var(--font-mono); font-size: var(--mono-md-size); line-height: var(--mono-md-line); }
+.sw-mono-sm { font-family: var(--font-mono); font-size: var(--mono-sm-size); line-height: var(--mono-sm-line); }
+.sw-serif   { font-family: var(--font-serif); }
+
+/* =========================================================================
+   Component primitives (从 components.css 原样移植)
+   ========================================================================= */
+
+/* ---------- Buttons ---------- */
+.sw-btn {
+  font-family: var(--font-sans); font-size: 13px; font-weight: 500; line-height: 1;
+  letter-spacing: -0.005em; display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; padding: 0 14px; height: 34px; border-radius: var(--radius-md);
+  border: 1px solid transparent; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  user-select: none; white-space: nowrap;
+}
+.sw-btn:active { transform: translateY(0.5px); }
+.sw-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.sw-btn-sm { height: 28px; font-size: 12px; padding: 0 10px; border-radius: var(--radius-sm); }
+.sw-btn-lg { height: 42px; font-size: 14px; padding: 0 18px; }
+.sw-btn-primary { background: var(--accent); color: var(--fg-on-accent); border-color: var(--accent); }
+.sw-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.sw-btn-primary:active { background: var(--sage-700); }
+.sw-btn-secondary { background: var(--bg-elevated); color: var(--fg-primary); border-color: var(--border-default); }
+.sw-btn-secondary:hover { background: var(--bg-surface); border-color: var(--border-strong); }
+.sw-btn-secondary:active { background: var(--bg-muted); }
+.sw-btn-ghost { background: transparent; color: var(--fg-secondary); }
+.sw-btn-ghost:hover { background: var(--bg-muted); color: var(--fg-primary); }
+.sw-btn-danger { background: var(--color-danger); color: #FFFFFF; }
+.sw-btn-danger:hover { background: #9E4A30; }
+.sw-btn-icon { width: 32px; padding: 0; }
+
+/* ---------- Inputs ---------- */
+.sw-input, .sw-textarea {
+  font-family: var(--font-sans); font-size: 13px; line-height: 1.4; color: var(--fg-primary);
+  background: var(--bg-elevated); border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  padding: 9px 12px; width: 100%; transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+  box-shadow: var(--shadow-xs);
+}
+.sw-input::placeholder, .sw-textarea::placeholder { color: var(--fg-tertiary); }
+.sw-input:hover, .sw-textarea:hover { border-color: var(--border-strong); }
+.sw-input:focus, .sw-textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.sw-textarea { min-height: 80px; resize: vertical; }
+
+/* ---------- Badge / Chip ---------- */
+.sw-badge {
+  display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-sans);
+  font-size: 11px; font-weight: 500; letter-spacing: 0.01em; padding: 3px 8px;
+  border-radius: var(--radius-pill); background: var(--bg-muted); color: var(--fg-secondary);
+}
+.sw-badge-sage { background: var(--sage-100); color: var(--sage-700); }
+.sw-badge-sand { background: var(--sand-100); color: var(--sand-500); }
+.sw-badge-warning { background: var(--bg-warning); color: var(--color-warning); }
+.sw-badge-danger { background: var(--bg-danger); color: var(--color-danger); }
+.sw-badge-info { background: var(--bg-info); color: var(--color-info); }
+.sw-badge-dot::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+
+/* ---------- Card ---------- */
+.sw-card { background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-sm); }
+.sw-card-flat { background: var(--bg-surface); border-radius: var(--radius-lg); padding: 16px; }
+
+/* ---------- Toggle ---------- */
+.sw-toggle { display: inline-block; width: 32px; height: 18px; border-radius: 999px; background: var(--border-default); position: relative; cursor: pointer; transition: background var(--dur-fast); }
+.sw-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px; background: var(--bg-elevated); box-shadow: var(--shadow-xs); transition: transform var(--dur-fast) var(--ease-out); }
+.sw-toggle.on { background: var(--accent); }
+.sw-toggle.on::after { transform: translateX(14px); }
+
+/* ---------- Checkbox ----------
+ * 原生勾选框在 Chromium 里是系统蓝,不在色板内。`text-brand-500 focus:ring-*`
+ * 那套写法要 @tailwindcss/forms 插件才生效,本仓库没装,所以一直是浏览器默认蓝。
+ * 这里 appearance:none 自己画:未选是冷描边空框,选中是墨底白勾,焦点走统一 focus ring。 */
+.sw-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.sw-checkbox:hover { border-color: var(--accent); }
+.sw-checkbox:checked { background: var(--accent); border-color: var(--accent); }
+.sw-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 3.5px;
+  height: 7px;
+  border: solid var(--fg-on-accent);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+.sw-checkbox:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.sw-checkbox:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------- Avatar (dock mark) — 仅用于品牌标识,不用于消息流 ---------- */
+.sw-avatar { width: 28px; height: 28px; border-radius: 999px; background: var(--sand-200); color: var(--sand-500); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.sw-avatar-sage { background: var(--sage-200); color: var(--sage-700); }
+.sw-avatar-clay { background: var(--clay-100); color: var(--clay-700); }
+.sw-avatar-agent { width: 28px; height: 28px; border-radius: var(--radius-md); background: var(--fg-primary); position: relative; display: inline-block; }
+.sw-avatar-agent::after { content: ''; position: absolute; right: -5px; top: 6px; width: 4px; height: 16px; border-radius: 2px; background: var(--sage-400); }
+
+/* ---------- Menu ---------- */
+.sw-menu { background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 5px; box-shadow: var(--shadow-lg); min-width: 200px; }
+.sw-menu-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--radius-sm); font-size: 13px; color: var(--fg-primary); cursor: pointer; transition: background var(--dur-fast); }
+.sw-menu-item:hover { background: var(--bg-surface); }
+.sw-menu-item-shortcut { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary); }
+.sw-menu-sep { height: 1px; background: var(--border-subtle); margin: 5px -5px; }
+
+/* ---------- Kbd ---------- */
+.sw-kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 4px; background: var(--bg-muted); border: 1px solid var(--border-default); border-bottom-width: 2px; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-secondary); line-height: 1; }
+
+/* ---------- Toast ---------- */
+.sw-toast { display: flex; align-items: center; gap: 10px; background: var(--bg-inverse); color: var(--fg-inverse); padding: 10px 14px; border-radius: var(--radius-lg); font-size: 13px; box-shadow: var(--shadow-lg); max-width: 380px; }
+.sw-toast-icon { width: 6px; height: 6px; border-radius: 999px; background: var(--sage-400); flex-shrink: 0; }
+
+/* ---------- Tabs ---------- */
+.sw-tabs { display: inline-flex; gap: 2px; background: var(--bg-muted); padding: 3px; border-radius: var(--radius-md); }
+.sw-tab { padding: 5px 10px; font-size: 12px; font-weight: 500; color: var(--fg-secondary); border-radius: var(--radius-sm); cursor: pointer; transition: background var(--dur-fast); }
+.sw-tab.active { background: var(--bg-elevated); color: var(--fg-primary); box-shadow: var(--shadow-xs); }
+.sw-tab:not(.active):hover { color: var(--fg-primary); }
+
+/* ---------- Divider / Tooltip ---------- */
+.sw-divider { height: 1px; background: var(--border-subtle); width: 100%; }
+.sw-tooltip { display: inline-block; background: var(--bg-inverse); color: var(--fg-inverse); padding: 5px 9px; border-radius: var(--radius-sm); font-size: 11.5px; box-shadow: var(--shadow-md); }

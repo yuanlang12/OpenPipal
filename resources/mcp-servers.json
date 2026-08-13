@@ -1,0 +1,10 @@
+{
+  "context7": {
+    "command": "npx",
+    "args": ["-y", "@upstash/context7-mcp"]
+  },
+  "deepwiki": {
+    "command": "npx",
+    "args": ["-y", "mcp-deepwiki@latest"]
+  }
+}

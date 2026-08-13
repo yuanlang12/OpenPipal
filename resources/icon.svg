@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OpenPipal macOS 应用图标源文件（规格来自 src/renderer/src/components/shared/OpenPipalLogo.tsx：
+  ink #1F2520 主面板 + sage #6F864F 贴边窄条，坐标吸附半模块网格，暖白 #FAF8F3 底）。
+  Apple 图标网格：1024 画布、824×824 圆角瓷砖居中、四周留透明边距。
+  重新生成 icns：node scripts/render-app-icon.cjs && ls resources/icon.icns
+-->
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 瓷砖：824×824 @ (100,100)，圆角 185 ≈ Apple squircle 近似 -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#FAF8F3"/>
+  <!-- 官方 mark，64 视窗等比放大 8.75 倍（560px 盒）居中：(1024-560)/2 = 232 -->
+  <g transform="translate(232 232) scale(8.75)">
+    <rect x="8" y="8" width="36" height="48" fill="#1F2520"/>
+    <rect x="50" y="14" width="6" height="36" fill="#6F864F"/>
+  </g>
+</svg>

@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "policyId": "openpipal-macos-release-v1",
+  "evidenceOnly": true,
+  "publicReleaseClearance": false,
+  "candidateContentSha256": "PENDING",
+  "review": {
+    "owner": "PENDING",
+    "approver": "PENDING",
+    "candidate": "SELF",
+    "status": "PENDING"
+  },
+  "teamIdentifier": "PENDING",
+  "architectures": [
+    "arm64",
+    "x86_64"
+  ],
+  "app": {
+    "name": "OpenPipal.app",
+    "bundleIdentifier": "com.openpipal.app",
+    "productName": "OpenPipal",
+    "minimumSystemVersion": "12.0",
+    "helperBundleIdentifiers": [
+      "com.openpipal.app.helper",
+      "com.openpipal.app.helper.GPU",
+      "com.openpipal.app.helper.Plugin",
+      "com.openpipal.app.helper.Renderer"
+    ]
+  },
+  "buildManifestPath": "Contents/Resources/openpipal-release-build.json",
+  "sourcePaths": [
+    "config/macos-release-policy.json",
+    "electron-builder.release.yml",
+    "electron-builder.yml",
+    "package-lock.json",
+    "package.json",
+    "resources/entitlements.mac.inherit.plist",
+    "resources/entitlements.mac.plist",
+    "resources/mac/en.lproj/InfoPlist.strings",
+    "resources/mac/zh-Hans.lproj/InfoPlist.strings",
+    "scripts/embed-macos-release-build-manifest.mjs",
+    "scripts/generate-third-party-inventory.mjs",
+    "scripts/verify-macos-release.mjs"
+  ],
+  "entitlements": {
+    "main": "resources/entitlements.mac.plist",
+    "helper": "resources/entitlements.mac.inherit.plist",
+    "forbidden": [
+      "com.apple.security.app-sandbox",
+      "com.apple.security.cs.allow-unsigned-executable-memory",
+      "com.apple.security.cs.debugger",
+      "com.apple.security.cs.disable-library-validation",
+      "com.apple.security.get-task-allow",
+      "com.apple.security.inherit"
+    ]
+  },
+  "privacyKeys": [
+    "NSAppleEventsUsageDescription",
+    "NSCameraUsageDescription",
+    "NSLocationUsageDescription",
+    "NSLocationWhenInUseUsageDescription",
+    "NSMicrophoneUsageDescription",
+    "NSScreenCaptureUsageDescription"
+  ],
+  "localizations": [
+    {
+      "locale": "en",
+      "sourcePath": "resources/mac/en.lproj/InfoPlist.strings",
+      "bundlePath": "Contents/Resources/en.lproj/InfoPlist.strings"
+    },
+    {
+      "locale": "zh-Hans",
+      "sourcePath": "resources/mac/zh-Hans.lproj/InfoPlist.strings",
+      "bundlePath": "Contents/Resources/zh-Hans.lproj/InfoPlist.strings"
+    }
+  ],
+  "manualCheckIds": [
+    "DMG_CONTAINED_APP_MATCH",
+    "FRESH_INSTALL_AND_FIRST_LAUNCH",
+    "LOCALIZED_PRIVACY_PROMPTS_EN",
+    "LOCALIZED_PRIVACY_PROMPTS_ZH_HANS",
+    "TCC_MICROPHONE",
+    "TCC_CAMERA",
+    "TCC_LOCATION",
+    "TCC_APPLE_EVENTS_FOCUS_PASTE",
+    "TCC_ACCESSIBILITY",
+    "TCC_EXTERNAL_WINDOW_SCREEN_RECORDING",
+    "NATIVE_IMAGE_CANVAS_ESBUILD",
+    "PHOTON_WASM",
+    "RUNTIME_CHAT",
+    "DESIGN_ARTIFACT",
+    "ARM64_HARDWARE_FLOW",
+    "X86_64_HARDWARE_FLOW"
+  ],
+  "manualEvidence": {
+    "schemaVersion": 3,
+    "signatureDomain": "openpipal.macos-release.manual-evidence.v1",
+    "signatureAlgorithm": "Ed25519",
+    "operator": {
+      "identity": "PENDING",
+      "keyId": "PENDING",
+      "publicKeySpkiBase64": "PENDING"
+    },
+    "approver": {
+      "identity": "PENDING",
+      "keyId": "PENDING",
+      "publicKeySpkiBase64": "PENDING"
+    }
+  }
+}

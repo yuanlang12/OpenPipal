@@ -1,0 +1,208 @@
+/* ============================================================
+ * OpenPipal — Shimmer & Streaming visual protocol
+ *
+ * 借鉴 Codex 的 4 种流式视觉态:
+ *   1. .sw-loading-shimmer   — 文本本身扫光,无限循环。streaming 中的 assistant 文字
+ *   2. .sw-cadenced-shimmer  — 一次性扫光定格,thinking 结束时收尾
+ *   3. .sw-skeleton-shimmer  — 骨架屏 + 横扫,tool/visualizer 加载占位
+ *   4. .sw-pulsing-dot       — 6×6 脉动小点,持续呼吸提示
+ *
+ * 关键点(对照 Codex 原理):
+ *   - loading-shimmer 用 text-fill-color: transparent + background-clip: text → 文字本身在动
+ *   - steps(48, end) → 把动画离散化成 48 帧,营造"终端字符流"质感
+ *   - prefers-reduced-motion 全覆盖
+ * ============================================================ */
+
+/* ════════════════════════════════════════════════════════
+ * 旧 API(Visualizer 历史在用,保留向后兼容)
+ * ════════════════════════════════════════════════════════ */
+@keyframes shimmer-sweep {
+  0%   { background-position: -100% 0; }
+  100% { background-position:  200% 0; }
+}
+@keyframes shimmer-slide {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(400%); }
+}
+@keyframes shimmer-wave {
+  0%   { transform: translateX(-100%); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateX(100%);  opacity: 0; }
+}
+.animate-shimmer       { animation: shimmer-sweep 1.5s ease-in-out infinite; }
+.animate-shimmer-slide { animation: shimmer-slide 1.5s ease-in-out infinite; }
+.animate-shimmer-wave  { animation: shimmer-wave  1.5s ease-in-out infinite; }
+
+/* ════════════════════════════════════════════════════════
+ * 1. sw-loading-shimmer — 文本扫光(无限循环)
+ *
+ * 用法:<span class="sw-loading-shimmer">正在思考...</span>
+ * 视觉:文字本身呼吸式扫光,不需要外置 spinner
+ * ════════════════════════════════════════════════════════ */
+.sw-loading-shimmer {
+  --sw-shimmer-base: var(--sw-fg-secondary, rgb(var(--sw-surface-500-rgb) / 1));
+  --sw-shimmer-peak: var(--sw-fg-primary,   rgb(var(--sw-surface-700-rgb) / 1));
+  background: var(--sw-shimmer-base)
+    linear-gradient(
+      to right,
+      transparent 0%,
+      var(--sw-shimmer-peak) 40%,
+      var(--sw-shimmer-peak) 60%,
+      transparent 100%
+    );
+  background-position: -100% 0;
+  background-repeat: no-repeat;
+  background-size: 50% 200%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+          text-fill-color: transparent;
+  animation: sw-shimmer-text 2s steps(48, end) infinite;
+  display: inline-block;
+}
+
+@keyframes sw-shimmer-text {
+  0%   { background-position: -100% 0; }
+  100% { background-position:  200% 0; }
+}
+
+/* ════════════════════════════════════════════════════════
+ * 2. sw-cadenced-shimmer — 一次性扫光定格
+ *
+ * 用法:append "sw-cadenced-shimmer" 类时触发一次扫光,1s 后回归静止
+ * 视觉:像打字机最后一次扫过定格,thinking 结束的 cue
+ * ════════════════════════════════════════════════════════ */
+.sw-cadenced-shimmer {
+  --sw-shimmer-base: var(--sw-fg-secondary, rgb(var(--sw-surface-500-rgb) / 1));
+  --sw-shimmer-peak: var(--sw-fg-primary,   rgb(var(--sw-surface-700-rgb) / 1));
+  background: var(--sw-shimmer-base)
+    linear-gradient(
+      to right,
+      transparent 0%,
+      var(--sw-shimmer-peak) 40%,
+      var(--sw-shimmer-peak) 60%,
+      transparent 100%
+    );
+  background-position: -100% 0;
+  background-repeat: no-repeat;
+  background-size: 50% 200%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+          text-fill-color: transparent;
+  animation: sw-shimmer-cadenced 1s steps(48, end) 1 forwards;
+  display: inline-block;
+}
+
+@keyframes sw-shimmer-cadenced {
+  0%   { background-position: -100% 0; }
+  100% { background-position:  250% 0; }
+}
+
+/* ════════════════════════════════════════════════════════
+ * 3. sw-skeleton-shimmer — 骨架屏 + 横扫
+ *
+ * 用法:<div class="sw-skeleton-shimmer h-4 rounded" />
+ * 视觉:占位条状,3s 慢速横扫,工具/iframe 加载等待
+ * ════════════════════════════════════════════════════════ */
+.sw-skeleton-shimmer {
+  --sw-sk-base:      color-mix(in srgb, var(--sw-fg-tertiary, rgb(var(--sw-surface-400-rgb) / 1)) 22%, transparent);
+  --sw-sk-highlight: color-mix(in srgb, var(--sw-fg-tertiary, rgb(var(--sw-surface-400-rgb) / 1)) 38%, transparent);
+  background-color: var(--sw-sk-base);
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--sw-radius-sm);
+}
+.sw-skeleton-shimmer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--sw-sk-highlight) 50%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: sw-shimmer-sweep 3s linear infinite;
+}
+
+@keyframes sw-shimmer-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%);  }
+}
+
+/* ════════════════════════════════════════════════════════
+ * 4. sw-pulsing-dot — 6×6 脉动小点
+ *
+ * 用法:<span class="sw-pulsing-dot" /> 行内插入,默认随 currentColor
+ * ════════════════════════════════════════════════════════ */
+.sw-pulsing-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: currentColor;
+  animation: sw-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes sw-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50%      { opacity: 1;    transform: scale(1.08); }
+}
+
+/* ════════════════════════════════════════════════════════
+ * 5. sw-build-* — 「搭建中」可视化加载特效(方案 A)
+ *    呼吸 ✦ + 依次脉冲的骨架条(文案轮换在组件 JS 里)。
+ *    ⚠️ 颜色不写死:由组件上的 Tailwind brand-x 与 ink-x 类驱动(= 运行时 --sw-brand-x-rgb 三元组),
+ *    因此自动跟随「设置 → 外观」自定义强调色 + 深/浅色。本文件只放与配色无关的动效。
+ * ════════════════════════════════════════════════════════ */
+.sw-spark-breathe {
+  display: inline-block;
+  animation: sw-breathe 1.6s ease-in-out infinite;
+}
+@keyframes sw-breathe {
+  0%, 100% { transform: scale(1);    opacity: 0.6; }
+  50%      { transform: scale(1.18); opacity: 1;   }
+}
+.sw-build-bar {
+  height: 9px;
+  border-radius: var(--sw-radius-xs);
+  animation: sw-build-pulse 1.5s ease-in-out infinite;
+}
+@keyframes sw-build-pulse {
+  0%, 100% { opacity: 0.32; }
+  50%      { opacity: 1;    }
+}
+
+/* ════════════════════════════════════════════════════════
+ * reduced-motion 退化 — 全部静止
+ * ════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .sw-loading-shimmer,
+  .sw-cadenced-shimmer {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
+            text-fill-color: currentColor;
+    background: none;
+  }
+  .sw-skeleton-shimmer::before { animation: none; }
+  .sw-pulsing-dot { animation: none; opacity: 0.7; }
+  .sw-spark-breathe { animation: none; }
+  .sw-build-bar { animation: none; opacity: 0.6; }
+}
+
+/* 用户在 Settings 选"总是关闭"动效 — data-attr 强制退化 */
+[data-sw-reduced-motion='always'] .sw-loading-shimmer,
+[data-sw-reduced-motion='always'] .sw-cadenced-shimmer {
+  animation: none;
+  -webkit-text-fill-color: currentColor;
+          text-fill-color: currentColor;
+  background: none;
+}
+[data-sw-reduced-motion='always'] .sw-skeleton-shimmer::before { animation: none; }
+[data-sw-reduced-motion='always'] .sw-pulsing-dot { animation: none; opacity: 0.7; }
+[data-sw-reduced-motion='always'] .sw-spark-breathe { animation: none; }
+[data-sw-reduced-motion='always'] .sw-build-bar { animation: none; opacity: 0.6; }

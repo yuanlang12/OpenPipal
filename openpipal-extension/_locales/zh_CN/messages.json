@@ -1,0 +1,43 @@
+{
+  "extensionName": {
+    "message": "OpenPipal"
+  },
+  "extensionDescription": {
+    "message": "OpenPipal 浏览器助手 —— 将网页上下文连接到桌面端 AI 应用"
+  },
+  "actionTitle": {
+    "message": "打开 OpenPipal"
+  },
+  "disconnectedTitle": {
+    "message": "未连接到 OpenPipal"
+  },
+  "disconnectedDescription": {
+    "message": "浏览器插件需要配合 OpenPipal 桌面应用使用。"
+  },
+  "openDesktopStep": {
+    "message": "打开 OpenPipal 桌面应用"
+  },
+  "waitForReconnectStep": {
+    "message": "等待连接自动恢复"
+  },
+  "reconnectButton": {
+    "message": "重新连接"
+  },
+  "connectingStatus": {
+    "message": "正在尝试连接…"
+  },
+  "retryStatus": {
+    "message": "已尝试 $COUNT$ 次，每 5 秒自动重试。",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "contextMenuExplain": {
+    "message": "用 OpenPipal 解释"
+  },
+  "contextMenuTranslate": {
+    "message": "用 OpenPipal 翻译"
+  }
+}

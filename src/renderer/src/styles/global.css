@@ -1,0 +1,301 @@
+@import 'katex/dist/katex.min.css';
+@import './fonts.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 外观设置的「UI 字号」不能只影响聊天：根字号让 rem 化的布局与控件一同
+ * 合理让位；下面的兼容层覆盖历史遗留的 text-[12px] 一类固定 UI 字号。
+ * HTML/网页 Artifact 在 iframe 内，有自己的文档和字号，故不会被这里拉伸。 */
+:root {
+  font-size: calc(16px * var(--sw-ui-zoom));
+}
+
+/* 已迁移的 text-sw-* 走 tokens.css。这里给 Tailwind 默认字号和旧的任意 px
+ * 工具类补同一条缩放链，避免侧栏、历史列表和 Artifact 控件留在旧字号。 */
+:root .text-xs { font-size: calc(0.75rem * var(--sw-content-scale)); }
+:root .text-sm { font-size: calc(0.875rem * var(--sw-content-scale)); }
+:root .text-base { font-size: calc(1rem * var(--sw-content-scale)); }
+:root .text-lg { font-size: calc(1.125rem * var(--sw-content-scale)); }
+:root .text-xl { font-size: calc(1.25rem * var(--sw-content-scale)); }
+:root .text-2xl { font-size: calc(1.5rem * var(--sw-content-scale)); }
+:root .text-3xl { font-size: calc(1.875rem * var(--sw-content-scale)); }
+:root .text-4xl { font-size: calc(2.25rem * var(--sw-content-scale)); }
+:root .text-5xl { font-size: calc(3rem * var(--sw-content-scale)); }
+:root .text-6xl { font-size: calc(3.75rem * var(--sw-content-scale)); }
+
+:root [class~='text-[8px]'] { font-size: calc(8px * var(--sw-ui-text-scale)); }
+:root [class~='text-[9px]'] { font-size: calc(9px * var(--sw-ui-text-scale)); }
+:root [class~='text-[10px]'] { font-size: calc(10px * var(--sw-ui-text-scale)); }
+:root [class~='text-[11px]'] { font-size: calc(11px * var(--sw-ui-text-scale)); }
+:root [class~='text-[12px]'] { font-size: calc(12px * var(--sw-ui-text-scale)); }
+:root [class~='text-[13px]'] { font-size: calc(13px * var(--sw-ui-text-scale)); }
+:root [class~='text-[14px]'] { font-size: calc(14px * var(--sw-ui-text-scale)); }
+:root [class~='text-[15px]'] { font-size: calc(15px * var(--sw-ui-text-scale)); }
+:root [class~='text-[16px]'] { font-size: calc(16px * var(--sw-ui-text-scale)); }
+:root [class~='text-[17px]'] { font-size: calc(17px * var(--sw-ui-text-scale)); }
+:root [class~='text-[18px]'] { font-size: calc(18px * var(--sw-ui-text-scale)); }
+:root [class~='text-[34px]'] { font-size: calc(34px * var(--sw-ui-text-scale)); }
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: var(--sw-font-ui);
+    overflow: hidden;
+    -webkit-app-region: drag;
+    /* 透明 body:orb 模式靠 window transparency 透出桌面;docked 模式由 App.tsx 根 div 的 bg-surface-0 撑面板 */
+    background: transparent;
+    color: var(--sw-fg-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* .dark body 的颜色已通过 --sw-fg-primary 在 .dark 块中自动分叉,无需独立 override */
+
+  input, textarea, button, div[class*="overflow"], a, iframe {
+    -webkit-app-region: no-drag;
+  }
+
+  /* 滚动条 — 走 token,跟随主题；height 管横向,缺省会退回系统默认粗条 */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--sw-scrollbar-thumb);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--sw-scrollbar-thumb-hover);
+  }
+  ::-webkit-scrollbar-corner { background: transparent; }
+
+  /* ════════════════════════════════════════════════════════
+   * Markdown prose — 全部基于 token,主题切换自动跟随
+   * 不再需要 .dark overrides(token 自己分叉)
+   * ════════════════════════════════════════════════════════ */
+  .prose-light {
+    color: var(--sw-fg-secondary);
+    font-size: var(--sw-text-sm);
+    line-height: var(--sw-leading-relaxed);
+    letter-spacing: -0.01em;
+    /* 聊天滚动容器已 overflow-x hidden：长 URL/无空格串必须自行折行，否则被裁切 */
+    overflow-wrap: break-word;
+  }
+  .prose-light .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .prose-light p { margin: 0.5em 0; }
+  .prose-light p:first-child { margin-top: 0; }
+  .prose-light p:last-child { margin-bottom: 0; }
+  .prose-light code {
+    background: var(--sw-code-bg);
+    padding: 2px 5px;
+    border-radius: var(--sw-radius-xs);
+    font-size: var(--sw-text-sm);
+    color: var(--sw-code-fg);
+    font-family: var(--sw-font-mono);
+  }
+  .prose-light pre {
+    background: var(--sw-pre-bg);
+    border-radius: var(--sw-radius-md);
+    padding: 12px 14px;
+    overflow-x: auto;
+    margin: 10px 0;
+  }
+  .prose-light pre code {
+    background: none;
+    color: var(--sw-pre-fg);
+    padding: 0;
+    font-size: var(--sw-text-sm);
+    line-height: var(--sw-leading-normal);
+  }
+  .prose-light ul, .prose-light ol { padding-left: 1.4em; margin: 0.5em 0; }
+  .prose-light li { margin: 0.25em 0; }
+  .prose-light blockquote {
+    border-left: 2px solid var(--sw-accent);
+    padding-left: 12px;
+    color: var(--sw-fg-tertiary);
+    margin: 10px 0;
+    font-style: italic;
+  }
+  .prose-light h1, .prose-light h2, .prose-light h3 {
+    color: var(--sw-fg-primary);
+    margin: 0.8em 0 0.3em;
+    font-weight: var(--sw-fw-semibold);
+    letter-spacing: -0.02em;
+  }
+  .prose-light h1 { font-size: 1.15em; }
+  .prose-light h2 { font-size: 1.05em; }
+  .prose-light h3 { font-size: 1em; }
+  .prose-light a {
+    color: var(--sw-link);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--sw-link) 30%, transparent);
+    text-underline-offset: 2px;
+    transition: text-decoration-color var(--sw-duration-fast);
+  }
+  .prose-light a:hover { text-decoration-color: var(--sw-link); }
+  .prose-light table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 10px 0;
+    font-size: var(--sw-text-sm);
+  }
+  .prose-light th, .prose-light td {
+    border: 1px solid var(--sw-border);
+    padding: 6px 10px;
+    text-align: left;
+    /* anywhere 能压缩单元格 min-content(break-word 不能)——超长无空格串在窄面板里折行而非把表格顶出容器 */
+    overflow-wrap: anywhere;
+  }
+  .prose-light th {
+    background: var(--sw-bg-secondary);
+    font-weight: var(--sw-fw-semibold);
+    color: var(--sw-fg-secondary);
+  }
+  .prose-light strong { color: var(--sw-fg-primary); }
+
+  /* 聊天 Markdown 不再复用工作区/文档预览的 12px prose 基准。
+   * 它与流式文字、静态回答共用阅读密度 token，避免外观设置只影响用户气泡。 */
+  .sw-chat-prose {
+    font-size: var(--sw-chat-text);
+    line-height: var(--sw-chat-leading);
+  }
+  .sw-chat-prose code,
+  .sw-chat-prose pre code {
+    font-size: 0.9em;
+  }
+  .sw-chat-prose pre code {
+    line-height: var(--sw-leading-normal);
+  }
+  .sw-chat-prose table { font-size: inherit; }
+
+  /* 思考内容保持视觉次级，但不再降到不可读的 metadata 字号。 */
+  .sw-chat-reasoning {
+    font-size: var(--sw-chat-reasoning);
+    line-height: var(--sw-chat-leading);
+  }
+
+  .sw-chat-user-bubble {
+    padding: var(--sw-chat-user-padding-y) var(--sw-chat-user-padding-x);
+  }
+
+  /* KaTeX 在暗色下继承父色(prose-light color 已经 token 化) */
+  .dark .katex,
+  .dark .katex .mord,
+  .dark .katex .mbin,
+  .dark .katex .mrel,
+  .dark .katex .mopen,
+  .dark .katex .mclose,
+  .dark .katex .mpunct,
+  .dark .katex .mop {
+    color: inherit;
+  }
+}
+
+/* 分栏拖拽期间屏蔽 iframe 指针事件（ResizeHandle 双保险——Pointer Capture 之外的兜底） */
+body.sw-split-dragging iframe {
+  pointer-events: none;
+}
+
+/* Global Agent avatars — six roles × three states in 128px source cells.
+ * Heads are optically normalized while natural silhouette width is preserved.
+ * Day and dark ASCII frames are static sprite lookups: no timers, layout
+ * movement, filters, or extra image requests. */
+.sw-role-avatar {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  overflow: visible;
+  vertical-align: middle;
+  background-image: url('../assets/agent-avatars/day-sprite-atlas.png');
+  background-repeat: no-repeat;
+  background-size: 600% 300%;
+  image-rendering: pixelated;
+  contain: layout paint;
+}
+
+.dark .sw-role-avatar {
+  background-image: url('../assets/agent-avatars/night-sprite-atlas.png');
+}
+
+.sw-role-avatar__state-frame {
+  position: absolute;
+  inset: 0;
+  display: block;
+  background-image: inherit;
+  background-repeat: no-repeat;
+  background-size: 600% 300%;
+  image-rendering: pixelated;
+  opacity: 1;
+}
+
+.sw-role-avatar--animated.sw-role-avatar--thinking .sw-role-avatar__state-frame {
+  animation: sw-agent-thinking 1.4s steps(1, end) infinite;
+}
+
+.sw-role-avatar--animated.sw-role-avatar--generating .sw-role-avatar__state-frame {
+  animation: sw-agent-generating 900ms steps(1, end) infinite;
+}
+
+@keyframes sw-agent-thinking {
+  0%, 28% { opacity: 0; }
+  29%, 100% { opacity: 1; }
+}
+
+@keyframes sw-agent-generating {
+  0%, 18% { opacity: 0; }
+  19%, 72% { opacity: 1; }
+  73%, 100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sw-role-avatar__state-frame {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
+
+[data-sw-reduced-motion='always'] .sw-role-avatar__state-frame {
+  animation: none !important;
+  opacity: 1 !important;
+}
+
+/* Welcome role selection — transform keeps every button's 64px layout slot
+ * stable; opacity quiets non-selected roles while preserving their original
+ * hues and avoiding filter work or an added frame. */
+.sw-welcome-avatar {
+  transform-origin: center;
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 150ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.sw-welcome-avatar--active {
+  transform: scale(1.12);
+  opacity: 1;
+}
+
+.sw-welcome-avatar--inactive {
+  transform: scale(0.9);
+  opacity: 0.55;
+}
+
+.group:hover .sw-welcome-avatar--inactive {
+  transform: scale(1);
+  opacity: 0.8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sw-welcome-avatar {
+    transition: none;
+  }
+}
+
+[data-sw-reduced-motion='always'] .sw-welcome-avatar {
+  transition: none;
+}

@@ -1,0 +1,6 @@
+"NSScreenCaptureUsageDescription" = "仅当你要求 OpenPipal 检查目标应用窗口时，OpenPipal 才会使用屏幕录制权限。";
+"NSMicrophoneUsageDescription" = "仅当你启动语音输入或实时翻译时，OpenPipal 才会使用麦克风。";
+"NSCameraUsageDescription" = "仅当你批准嵌入式 MCP App 使用摄像头时，OpenPipal 才会访问摄像头。";
+"NSLocationUsageDescription" = "仅当你批准嵌入式 MCP App 使用位置信息时，OpenPipal 才会访问你的位置。";
+"NSLocationWhenInUseUsageDescription" = "仅当你批准嵌入式 MCP App 使用位置信息时，OpenPipal 才会访问你的位置。";
+"NSAppleEventsUsageDescription" = "OpenPipal 使用 Apple Events 检查并聚焦你选择的目标应用，以及粘贴你批准的内容。";

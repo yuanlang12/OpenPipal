@@ -1,0 +1,46 @@
+{
+  "name": "openpipal-acp",
+  "version": "0.2.0",
+  "description": "ACP (Agent Client Protocol) adapter for OpenPipal — exposes the OpenPipal desktop Agent (4 built-in roles + user-saved Agents) to any ACP-compatible editor (Zed/JetBrains/Neovim).",
+  "keywords": [
+    "acp",
+    "agent-client-protocol",
+    "openpipal",
+    "ai-agent",
+    "zed",
+    "jetbrains",
+    "neovim",
+    "editor-integration"
+  ],
+  "homepage": "https://openpipal.io",
+  "license": "MIT",
+  "author": "OpenPipal",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "openpipal-acp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test:protocol": "npm run build && node scripts/protocol-compat-smoke.mjs",
+    "prepublishOnly": "npm run build && npm run typecheck"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -1,0 +1,36 @@
+/**
+ * 自托管字体 —— 之前是 @import Google Fonts CDN。
+ *
+ * 换掉的理由有三条，每条都是实测的：
+ *   1. 启动即向第三方报到，和"不经手任何东西"的隐私主张冲突；
+ *   2. 那个 CDN 域名在中国大陆不通（本机实测 curl 返回 000），而 CSS 的
+ *      @import 是阻塞式的——要等它超时才继续渲染；
+ *   3. 断网时字体直接回退，界面观感和联网时不一致。
+ *
+ * 三款字体均为 OFL-1.1，允许随软件分发；许可证与字体同目录（LICENSE-*.txt）。
+ * 只带 latin 子集：界面里的中文由系统字体承担，打包只多 268KB。
+ *
+ * font-display: swap —— 字体是本地文件，几乎不会走到 fallback，但万一读盘慢
+ * 也先用系统字体把内容画出来，不要空白等待。
+ */
+
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 300; font-display: swap;
+  src: url('../assets/fonts/geist-sans-latin-300-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('../assets/fonts/geist-sans-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('../assets/fonts/geist-sans-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 600; font-display: swap;
+  src: url('../assets/fonts/geist-sans-latin-600-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 700; font-display: swap;
+  src: url('../assets/fonts/geist-sans-latin-700-normal.woff2') format('woff2'); }
+
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('../assets/fonts/geist-mono-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('../assets/fonts/geist-mono-latin-500-normal.woff2') format('woff2'); }
+
+@font-face { font-family: 'Instrument Serif'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('../assets/fonts/instrument-serif-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Instrument Serif'; font-style: italic; font-weight: 400; font-display: swap;
+  src: url('../assets/fonts/instrument-serif-latin-400-italic.woff2') format('woff2'); }
