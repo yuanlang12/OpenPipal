@@ -34,12 +34,6 @@
       "classification": "skills",
       "paths": [
         "resources/skills"
-      ],
-      "exclude": [
-        "doc/assets/doc.png",
-        "pdf/assets/pdf.png",
-        "slides/assets/slides.png",
-        "spreadsheet/assets/spreadsheet.png"
       ]
     },
     {
@@ -83,16 +77,6 @@
       "exclude": [
         "LICENSE-Geist.txt",
         "LICENSE-InstrumentSerif.txt"
-      ]
-    },
-    {
-      "id": "skill-images",
-      "classification": "binary",
-      "paths": [
-        "resources/skills/doc/assets/doc.png",
-        "resources/skills/pdf/assets/pdf.png",
-        "resources/skills/slides/assets/slides.png",
-        "resources/skills/spreadsheet/assets/spreadsheet.png"
       ]
     },
     {
