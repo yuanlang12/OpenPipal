@@ -359,19 +359,18 @@
       "note": "裁剪脚本在这个路径上留了一道接缝:私仓版本(五个非默认内置角色)由 exclude-release-cut-internals 裁掉,脚本随即写入一个返回空对象的替身,好让 role-manager 一行不用改就能编译。策略里必须把这两件事分开记:『私仓那份不发行』是 exclude 那条,『发行树里这份替身可公开』是本条。规则按顺序求值、最后命中者决定去留,所以本条排在 exclude 之后。少了它,校验器会正确地把接缝替身报成 EXCLUDED_PATH_PRESENT —— 那不是误报,是策略当时确实没描述这道接缝。 同理还有两个只存在于发行树、私仓里根本没有的产物:OPEN-SOURCE-CUT.json(裁剪清单,记录从哪个私仓提交裁出、按哪条规则丢了什么)与 README.zh-CN.md(由 docs/open-source/README.public.zh-CN.md 改名而来)。它们同样是接缝,同样必须被显式分类,否则校验器报未分类——报得对。"
     },
     {
-      "id": "replace-foreign-document-skills",
+      "id": "remove-third-party-fixtures-and-provenance-ledgers",
       "scope": "reviewed-baseline",
-      "action": "blocked-replacement",
+      "action": "exclude",
       "overrides": [
-        "reviewed-baseline-default"
+        "reviewed-baseline-default",
+        "remove-private-history-and-qa"
       ],
-      "note": "文档处理类技能(docx/pdf/pptx/xlsx + skill-creator)不是本项目写的,来自第三方技能集。证据:skill-creator 正文 32 次 \"Codex\" / 2 次 \"OpenAI\",slides 14 次 \"OpenAI\",spreadsheet 1 次 \"Codex\";doc 与 pdf 无显式标记但同型同源(纯英文、同样的 When to use / Workflow 骨架、同样的 bundled scripts 结构)。2026-08-13 审计发现时它们已随 fd15d4a5 / ad2431b3 进入公开树(46 个文件),仓库当时仍为 Private。漏出原因:拦截规则按名字逐个枚举,未被点名者落到默认「保留」——分类机制能抓「没被规则覆盖」,抓不到「被规则覆盖但归错类」。按 blocked-replacement 而非 exclude:这是真实能力(文档读写),只是尚未自研替换,未替换=不带,发行树里留下有据可查的接缝。所有者 2026-08-13 确认。",
+      "note": "tests/fixtures/dc/Clio*.dc.html 是 Anthropic 的 Clio 产品设计稿原件(87KB + 44KB),正文逐条描述 Clio 隐私分析流水线并点名 Claude 3 Haiku / Claude 3.5 Sonnet。与 resources/dc-runtime/ 同源——architecture.md:288 自陈「support.js 来自 Clio 交付物」。运行时已被 replace-design-runtime-material 拦下,喂给运行时的黄金样例却从 tests/fixtures/ 走了出去:旧规则拦了 tests/artifacts/**(截图),没拦 tests/fixtures/dc/**。两份出身台账不随发行:open-source-provenance.md 公开了 30+ 条待决结论、私仓 commit 短哈希与逐项字节数,还含「9,199 行提示词抓取用于对齐官方 Claude Design」这类自陈;open-source-readiness.md 已过期且自相矛盾(写着 Status: BLOCKED / README 仍称闭源,而同树 README 是 Apache-2.0)。裁掉了文件、留下文件名和抄袭自述,等于白裁。所有者 2026-08-13 确认。",
       "patterns": [
-        "resources/skills/doc/**",
-        "resources/skills/pdf/**",
-        "resources/skills/skill-creator/**",
-        "resources/skills/slides/**",
-        "resources/skills/spreadsheet/**"
+        "tests/fixtures/dc/**",
+        "docs/open-source-provenance.md",
+        "docs/open-source-readiness.md"
       ]
     }
   ],

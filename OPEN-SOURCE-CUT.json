@@ -1,22 +1,22 @@
 {
-  "generatedFrom": "7ccbb22bc9a1abb573ccb7594a20828702cac2a9",
+  "generatedFrom": "7d059a1f7bc924ee3fe8dd0e9e59f60b5bc4a507",
   "policyId": "openpipal-open-source-candidate-v1",
   "trackedInPrivateRepo": 1100,
-  "publishedFiles": 708,
+  "publishedFiles": 750,
   "droppedByRule": {
     "remove-private-history-and-qa": 269,
     "exclude-non-default-agents": 20,
+    "remove-third-party-fixtures-and-provenance-ledgers": 4,
     "exclude-renamed-private-material": 3,
     "replace-design-runtime-material": 11,
     "replace-design-instruction-material": 19,
-    "replace-foreign-document-skills": 46,
     "exclude-release-cut-internals": 1,
     "exclude-project-website": 23
   },
   "seams": [
     "src/main/roles/optional-roles.ts → 空实现（只保留默认 Agent）",
     "src/renderer/src/components/artifacts/dcRuntime.ts → 8 个设计运行时 ?raw 内联换成空串",
-    "docs/third-party-inventory-inputs.json → 摘掉 1 项已裁输入",
+    "docs/third-party-inventory-inputs.json → 归一化已裁排除项",
     "第三方清单未校验：公开树尚未 npm install，装完请跑 node scripts/generate-third-party-inventory.mjs",
     "docs/open-source/README.public.md → README.md",
     "docs/open-source/README.public.zh-CN.md → README.zh-CN.md"
