@@ -148,6 +148,19 @@ the repository records their source, but this review did not independently verif
 exact upstream revision or modification state. This is not evidence about any other
 skill directory.
 
+### Bundled fonts
+
+The renderer bundles latin woff2 subsets of three font families, self-hosted under
+`src/renderer/src/assets/fonts/`:
+
+| Family | License | License file |
+|---|---|---|
+| Geist, Geist Mono | SIL Open Font License 1.1 | `src/renderer/src/assets/fonts/LICENSE-Geist.txt` |
+| Instrument Serif | SIL Open Font License 1.1 | `src/renderer/src/assets/fonts/LICENSE-InstrumentSerif.txt` |
+
+OFL-1.1 permits bundling and redistribution with software provided the license text
+accompanies the fonts; the license files ship in the same directory as the font files.
+
 ## Pending or excluded repository material
 
 The following material is outside this draft clearance. It must not be included in a
@@ -161,13 +174,24 @@ licenses.
 | `resources/skills/*` other than the five directories named in `resources/SKILLS-NOTICE.md` | **EXCLUDED FROM CLEARANCE** | Classify first-party versus third-party authorship and retain the applicable license/provenance record for every distributed skill. |
 | `resources/skills-legacy/**` | **EXCLUDED FROM CLEARANCE** | Resolve authorship, upstream source, modifications, and redistribution terms; otherwise omit. |
 | `resources/system-agents/**/skills/**` | **EXCLUDED FROM CLEARANCE** | Resolve authorship and redistribution terms for agent-specific skills; otherwise omit. |
-| `resources/icon.icns`, `resources/icon.svg`, `resources/tray/**`, `resources/brand/**` | **EXCLUDED FROM CLEARANCE** | Confirm ownership and decide which trademarks and brand assets may be redistributed. |
-| `openpipal-extension/icons/**` | **EXCLUDED FROM CLEARANCE** | Confirm ownership and redistribution scope for extension artwork. |
-| `src/renderer/src/assets/agent-avatars/**` | **EXCLUDED FROM CLEARANCE** | Establish creator/source and redistribution permission for each avatar. |
 
-No license conclusion is made here for Anthropic prompt archives, DC Runtime, custom or
-legacy skills, or OpenPipal brand assets. The absence of a third-party notice is not
-evidence that an item is first-party or cleared.
+No license conclusion is made here for Anthropic prompt archives, DC Runtime, or custom
+and legacy skills. The absence of a third-party notice is not evidence that an item is
+first-party or cleared.
+
+### Resolved 2026-08-14 — brand assets and artwork confirmed first-party
+
+On 2026-08-14 the project owner confirmed full copyright ownership of, and approved
+redistribution for, the following materials previously listed above as unresolved:
+
+| Material | Resolution |
+|---|---|
+| `resources/icon.icns`, `resources/icon.svg`, `resources/tray/**`, `resources/brand/**` | First-party artwork; owner confirms copyright and approves redistribution. `resources/brand/**` still stays out of the release tree as process material by policy, independent of this clearance. |
+| `openpipal-extension/icons/**` | First-party artwork; owner confirms copyright and approves redistribution. |
+| `src/renderer/src/assets/agent-avatars/**` | First-party artwork; owner confirms copyright and approves redistribution. |
+
+This resolution records the owner's own declaration; it is not a third-party license
+finding and licenses nothing beyond the paths listed.
 
 ## Before any public release
 

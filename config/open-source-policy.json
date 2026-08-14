@@ -375,5 +375,36 @@
     }
   ],
   "classificationOnly": true,
-  "classificationNote": "本策略只描述「哪些路径可以进入发行树」，不承载任何人的批准。校验器相应只检查分类的完整性与一致性：每条路径都被规则覆盖、exclude 与 blocked-replacement 的材料没漏进去、规则重叠已显式声明、策略确实是对着它声称的基线写的。是否发布由人在发行前对着清单确认，不写进这个文件——原因见 docs/claude/mechanism-registry.md。"
+  "classificationNote": "本策略只描述「哪些路径可以进入发行树」，不承载任何人的批准。校验器相应只检查分类的完整性与一致性：每条路径都被规则覆盖、exclude 与 blocked-replacement 的材料没漏进去、规则重叠已显式声明、策略确实是对着它声称的基线写的。是否发布由人在发行前对着清单确认，不写进这个文件——原因见 docs/claude/mechanism-registry.md。",
+  "ledgerBindingNote": "台账不变量：THIRD_PARTY_NOTICES.md 判 EXCLUDED FROM CLEARANCE 的材料不得出现在发行树里。台账行里的散文限定语（\"except for…\"、\"other than the five…\"）解析器不解读——那类行会自然产生非空交集，必须在下面写一条带理由的显式豁免。豁免对不上台账行、或它豁免的路径已不在树里，一律报 LEDGER_EXCEPTION_STALE：留着会让下一个人以为某件事被处理过。",
+  "ledgerExceptions": [
+    {
+      "rowContains": "resources/dc-runtime/**",
+      "reason": "台账行自己就写了 \"except for the separately evidenced React file match above\"。这两个文件是 React 18.3.1 UMD 逐字节匹配（MIT），NOTICE 已记 SHA-256。待办：vendor/ 目录内应补 React MIT 许可全文，MIT 要求许可随附。",
+      "allow": [
+        "resources/dc-runtime/vendor/react.production.min.js",
+        "resources/dc-runtime/vendor/react-dom.production.min.js"
+      ]
+    },
+    {
+      "rowContains": "resources/skills/*",
+      "reason": "台账行写的是 \"other than the five directories named in resources/SKILLS-NOTICE.md\"——那五个是 openai/skills 的 Apache-2.0 官方版本，各带 LICENSE.txt，SKILLS-NOTICE.md 已署名。tool-installer 不在台账的豁免措辞里，但审计确认是第一方（满篇 OpenPipal 专有路径与中文 UI 指引），**这是台账本身的缺口，应在下一轮修订 NOTICE 时补上第一方声明**。resources/SKILLS-NOTICE.md 本身被收进来是解析器的已知不精确：它在台账行里是个指针引用，不是被排除的材料，但解析器只认反引号不认语义。待办：14 个带 \"Copyright (c) OpenAI\" 文件头的文件需在 NOTICE 里显式留存（Apache-2.0 §4(c)）。",
+      "allow": [
+        "resources/SKILLS-NOTICE.md",
+        "resources/skills/doc/**",
+        "resources/skills/pdf/**",
+        "resources/skills/skill-creator/**",
+        "resources/skills/slides/**",
+        "resources/skills/spreadsheet/**",
+        "resources/skills/tool-installer/**"
+      ]
+    },
+    {
+      "rowContains": "resources/system-agents/**/skills/**",
+      "reason": "evolver 的三个技能经审计确认是第一方：内容全部是 OpenPipal 自己的记忆/工作空间流程，extract-memory 主体为中文。台账当时按目录整组判 EXCLUDED，没有逐份核过。待办：修订 NOTICE，把第一方作者归属声明补上，否则每轮审计都会再撞一次。",
+      "allow": [
+        "resources/system-agents/evolver/skills/**"
+      ]
+    }
+  ]
 }

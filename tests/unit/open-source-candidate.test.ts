@@ -7,6 +7,20 @@ import { describe, expect, it } from 'vitest'
 
 const verifier = path.resolve('scripts/verify-open-source-candidate.mjs')
 const POLICY_PATH = 'config/open-source-policy.json'
+const LEDGER_PATH = 'THIRD_PARTY_NOTICES.md'
+
+/**
+ * fixture 台账。必须至少有一行 EXCLUDED——校验器在解析不出任何 EXCLUDED 行时会失败
+ * （台账改版 = 检查静默落空 = 假绿），所以空台账过不了，这里也不该给空的。
+ */
+const LEDGER_FIXTURE = [
+  '# Third-party notices (fixture)',
+  '',
+  '| Material | Status | Required resolution |',
+  '|---|---|---|',
+  '| `vendor/**` | **EXCLUDED FROM CLEARANCE** | fixture row |',
+  ''
+].join('\n')
 
 type Rule = {
   id: string
@@ -25,6 +39,7 @@ type Policy = {
   reviewedBaselineCommit: string
   pathSetSha256: string
   rules: Rule[]
+  ledgerExceptions?: Array<{ rowContains: string; reason: string; allow: string[] }>
 }
 
 type VerificationError = {
@@ -85,7 +100,7 @@ function policyKeepRule(): Rule {
     id: 'candidate-policy',
     scope: 'candidate',
     action: 'conditional-keep',
-    patterns: [POLICY_PATH]
+    patterns: [POLICY_PATH, LEDGER_PATH]
   }
 }
 
@@ -108,6 +123,7 @@ function policyFor(baseline: string, paths: string[], rules?: Rule[]): Policy {
 }
 
 function commitPolicy(repo: string, policy: Policy, message = 'candidate policy'): { commit: string; raw: string } {
+  if (!fs.existsSync(path.join(repo, LEDGER_PATH))) write(repo, LEDGER_PATH, LEDGER_FIXTURE)
   const raw = `${JSON.stringify(policy, null, 2)}\n`
   write(repo, POLICY_PATH, raw)
   return { commit: commitAll(repo, message), raw }
@@ -339,4 +355,70 @@ describe('open-source candidate verifier', () => {
     expect(result.report.errors.map(error => error.code)).toContain('EVIDENCE_HASH_MISMATCH')
   })
 
+
+  // ---- 台账不变量 ----
+  //
+  // 分类检查能证明「每条路径都被某条规则覆盖」，证明不了「这条规则归对了类」。
+  // 三次真实漏出（第三方技能误判、Clio 原件、品牌资产）的共同根因是：结论早就写在
+  // THIRD_PARTY_NOTICES.md 里，只是没有任何代码在比对。这组用例锁住那条比对。
+
+  it('fails when material the ledger excludes is present in the tree', () => {
+    const repo = createRepo({ 'README.md': 'fixture\n', 'vendor/libthing.js': '// third party\n' })
+    const baseline = git(repo, 'rev-parse', 'HEAD')
+    const candidate = commitPolicy(repo, policyFor(baseline, trackedPaths(repo, baseline))).commit
+
+    const result = run(repo, candidate)
+
+    expect(result.status).toBe(1)
+    const ledgerError = result.report.errors.find(error => error.code === 'LEDGER_EXCLUDED_PATH_PRESENT')
+    expect(ledgerError?.paths).toEqual(['vendor/libthing.js'])
+    // 分类是干净的——这条路径被规则覆盖着、也不是 exclude。台账检查抓的正是分类抓不到的那一类。
+    expect(result.report.errors.map(error => error.code)).not.toContain('UNCLASSIFIED_BASELINE_PATH')
+    expect(result.report.errors.map(error => error.code)).not.toContain('EXCLUDED_PATH_PRESENT')
+  })
+
+  it('accepts ledger-excluded material only when the policy carries a matching exception', () => {
+    const repo = createRepo({ 'README.md': 'fixture\n', 'vendor/libthing.js': '// third party\n' })
+    const baseline = git(repo, 'rev-parse', 'HEAD')
+    const policy = policyFor(baseline, trackedPaths(repo, baseline))
+    policy.ledgerExceptions = [
+      { rowContains: 'vendor/**', reason: 'MIT, 许可全文随附', allow: ['vendor/libthing.js'] }
+    ]
+    const candidate = commitPolicy(repo, policy).commit
+
+    const result = run(repo, candidate)
+
+    expect(result.status).toBe(0)
+    expect(result.report.verdict).toBe('PASS')
+    expect(result.report.ledgerBinding).toEqual({ path: LEDGER_PATH, excludedRows: 1, exceptions: 1 })
+  })
+
+  it('rejects a stale exception that no longer matches any ledger row', () => {
+    const repo = createRepo()
+    const baseline = git(repo, 'rev-parse', 'HEAD')
+    const policy = policyFor(baseline, trackedPaths(repo, baseline))
+    policy.ledgerExceptions = [
+      { rowContains: 'resources/gone/**', reason: '已经不在台账里了', allow: ['resources/gone/**'] }
+    ]
+    const candidate = commitPolicy(repo, policy).commit
+
+    const result = run(repo, candidate)
+
+    // 悬空豁免留着会让下一个人以为某件事被处理过——比没写还糟。
+    expect(result.status).toBe(1)
+    expect(result.report.errors.map(error => error.code)).toContain('LEDGER_EXCEPTION_STALE')
+  })
+
+  it('fails closed when the ledger yields no excluded rows at all', () => {
+    const repo = createRepo()
+    const baseline = git(repo, 'rev-parse', 'HEAD')
+    write(repo, LEDGER_PATH, '# Third-party notices\n\n没有任何 EXCLUDED 行。\n')
+    const candidate = commitPolicy(repo, policyFor(baseline, trackedPaths(repo, baseline))).commit
+
+    const result = run(repo, candidate)
+
+    // 台账改版或被清空时，「交集为空」是假绿。这里必须响。
+    expect(result.status).toBe(1)
+    expect(result.report.errors.map(error => error.code)).toContain('LEDGER_NO_EXCLUSIONS_PARSED')
+  })
 })

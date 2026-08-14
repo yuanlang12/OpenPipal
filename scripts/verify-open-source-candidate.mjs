@@ -33,6 +33,8 @@ const FULL_COMMIT = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
 const SHA256 = /^[0-9a-f]{64}$/
 const MAX_PATH_SAMPLES = 20
 const POLICY_PATH = 'config/open-source-policy.json'
+const LEDGER_PATH = 'THIRD_PARTY_NOTICES.md'
+const LEDGER_EXCLUDED_MARK = 'EXCLUDED FROM CLEARANCE'
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -154,6 +156,40 @@ function finishErrors(groups) {
       const rightKey = `${right.code}\u0000${right.ruleId || ''}\u0000${right.detail || ''}`
       return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
     })
+}
+
+/**
+ * 从 THIRD_PARTY_NOTICES.md 的表格里取出判为 EXCLUDED 的行。
+ *
+ * 台账是人写的散文，解析器不假装读得懂它。只做一件确定的事：把「Material」格里反引号
+ * 包起来、看着像路径的东西当 glob 收走。行里的散文限定语（"except for…"、"other than
+ * the five…"）**故意不解析**——那类行会自然产生非空交集，从而强制策略侧写一条带理由的
+ * 显式豁免。把读不懂的地方推到人必须落笔的位置，比猜一个语义安全。
+ */
+function parseLedgerExclusions(markdown) {
+  const rows = []
+  for (const line of markdown.split('\n')) {
+    if (!line.startsWith('|') || !line.includes(LEDGER_EXCLUDED_MARK)) continue
+    const cells = line.split('|').slice(1, -1)
+    if (cells.length < 2) continue
+    const material = cells[0].trim()
+    const globs = [...material.matchAll(/`([^`]+)`/g)]
+      .map(match => match[1].trim())
+      .filter(value => value.includes('/'))
+    if (globs.length > 0) rows.push({ material, globs })
+  }
+  return rows
+}
+
+/**
+ * 台账写的是目录意图，发行树是文件清单：`resources/skills/*` 作为 glob 只匹配直接子项，
+ * 而 git 树里没有目录条目，于是它一个文件都匹配不到、检查静默落空。所以每个 glob 同时
+ * 按自身与其子树两种形态求值。
+ */
+function ledgerGlobMatchers(glob) {
+  const matchers = [globToRegExp(glob)]
+  if (!glob.endsWith('**')) matchers.push(globToRegExp(glob.replace(/\/*$/, '') + '/**'))
+  return matchers
 }
 
 function validatePolicy(policy, errors) {
@@ -346,6 +382,56 @@ export function verifyOpenSourceCandidate({ repo = '.', commit }) {
     }
   }
 
+  // ---- 台账不变量：NOTICE 判 EXCLUDED 的材料不得出现在发行树里 ----
+  //
+  // 三次漏出（openai 技能误判、Clio 原件、品牌资产）的共同根因不是"没人想明白"，而是
+  // 想明白的结论只写在 Markdown 里，没有任何代码在比对。分类检查能证明"每条路径都被
+  // 某条规则覆盖"，证明不了"这条规则归对了类"——fail-closed 只在没人管时生效，管错了
+  // 它不响。这一条把台账接进机器，专治后者。
+  let ledgerRows = []
+  const ledgerExceptions = Array.isArray(policy?.ledgerExceptions) ? policy.ledgerExceptions : []
+  const usedExceptions = new Set()
+  if (exactCandidate && candidateRead) {
+    let ledgerText = null
+    try {
+      ledgerText = readBlob(repo, immutableCommit, LEDGER_PATH).toString('utf8')
+    } catch {
+      addGroupedError(groupedErrors, 'LEDGER_UNREADABLE', { detail: LEDGER_PATH })
+    }
+    if (ledgerText !== null) {
+      ledgerRows = parseLedgerExclusions(ledgerText)
+      // 解析不出任何 EXCLUDED 行 = 台账改版或被清空。此时"交集为空"是假绿，必须失败。
+      if (ledgerRows.length === 0) addGroupedError(groupedErrors, 'LEDGER_NO_EXCLUSIONS_PARSED')
+      for (const row of ledgerRows) {
+        const matchers = row.globs.flatMap(ledgerGlobMatchers)
+        const hits = candidatePaths.filter(candidatePath => matchers.some(re => re.test(candidatePath)))
+        if (hits.length === 0) continue
+        const exception = ledgerExceptions.find(entry =>
+          typeof entry?.rowContains === 'string' && row.material.includes(entry.rowContains)
+        )
+        const allowed = exception && Array.isArray(exception.allow)
+          ? exception.allow.flatMap(ledgerGlobMatchers)
+          : []
+        const uncovered = hits.filter(hit => !allowed.some(re => re.test(hit)))
+        if (exception) usedExceptions.add(exception)
+        if (uncovered.length > 0) {
+          addGroupedError(groupedErrors, 'LEDGER_EXCLUDED_PATH_PRESENT', {
+            detail: row.globs.join(','),
+            paths: uncovered,
+            count: uncovered.length
+          })
+        }
+      }
+      // 悬空豁免：对不上任何 EXCLUDED 行，或它豁免的路径已经不在树里了。留着会让下一个人
+      // 以为某件事被处理过。
+      for (const entry of ledgerExceptions) {
+        if (!usedExceptions.has(entry)) {
+          addGroupedError(groupedErrors, 'LEDGER_EXCEPTION_STALE', { detail: String(entry?.rowContains || '') })
+        }
+      }
+    }
+  }
+
   const errors = finishErrors(groupedErrors)
   return {
     schemaVersion: 1,
@@ -358,6 +444,11 @@ export function verifyOpenSourceCandidate({ repo = '.', commit }) {
     policyBinding: {
       path: POLICY_PATH,
       sha256: policySha256
+    },
+    ledgerBinding: {
+      path: LEDGER_PATH,
+      excludedRows: ledgerRows.length,
+      exceptions: ledgerExceptions.length
     },
     pathSetBinding: {
       expected: typeof policy?.pathSetSha256 === 'string' ? policy.pathSetSha256 : null,
