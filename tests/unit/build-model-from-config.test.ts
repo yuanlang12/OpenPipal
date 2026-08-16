@@ -239,3 +239,93 @@ describe('buildModelFromConfig — 已知 provider 下未知 model id 不再静�
     expect(model.id).not.toBe(firstKnownId)
   })
 })
+
+/**
+ * 认领层交还给 Pi 目录（2026-08-15）。
+ *
+ * 历史实现有两个断点：
+ * 1. PROVIDER_MAP 是一张 11 条的允许名单（且全是恒等映射），Pi 目录里却有 39 个 provider。
+ *    名单外的 provider 会先试 `openrouter/{provider}/{model}`，命中就 return OpenRouter 的条目
+ *    ——条目自带 baseUrl=openrouter.ai，下游取的就是 model.baseUrl。于是"设置页选 DeepSeek +
+ *    填 api.deepseek.com + 填 DeepSeek 的 key"把请求发去了 OpenRouter（目录里恰好有
+ *    deepseek/deepseek-chat，正是下拉里的第一个模型）。拿 A 家的 key 敲 B 家的门。
+ * 2. 自定义端点即使填的是官方地址+官方模型名，也一律合成条目，协议/上下文/思考档位全靠猜。
+ */
+describe('buildModelFromConfig — Pi 认识的 provider id 一律直接认', () => {
+  it('前提复核：openrouter 目录里确有 deepseek/deepseek-chat（否则下面这条测试证明不了什么）', () => {
+    const or = piGetModels('openrouter' as any)
+    expect(or.some((m: any) => m.id === 'deepseek/deepseek-chat')).toBe(true)
+  })
+
+  it('provider=deepseek（旧名单外）→ 端点必须留在 DeepSeek，绝不能被换成 openrouter.ai', () => {
+    const mc: ModelConfig = { provider: 'deepseek', baseUrl: 'https://api.deepseek.com', apiKey: 'sk-user-deepseek', model: 'deepseek-chat' }
+    const model = buildModelFromConfig(mc)
+    expect(model.baseUrl).toBe('https://api.deepseek.com')
+    expect(model.baseUrl).not.toContain('openrouter')
+    expect(model.id).toBe('deepseek-chat')
+    expect(model.provider).toBe('deepseek')   // 走的是 Pi 原生 deepseek provider，不是合成条目
+  })
+
+  it('provider=openrouter + OpenRouter 的模型 id → 照旧命中 Pi 的 openrouter 条目', () => {
+    const mc: ModelConfig = { provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or', model: 'deepseek/deepseek-chat' }
+    const model = buildModelFromConfig(mc)
+    expect(model.id).toBe('deepseek/deepseek-chat')
+    expect(model.baseUrl).toBe('https://openrouter.ai/api/v1')
+  })
+
+  it('Pi 不认识的 provider（siliconflow）→ 仍走自定义兼容模型，端点是用户填的', () => {
+    const mc: ModelConfig = { provider: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1', apiKey: 'sk-sf', model: 'Qwen/Qwen2.5-72B-Instruct' }
+    const model = buildModelFromConfig(mc)
+    expect(model.baseUrl).toBe('https://api.siliconflow.cn/v1')
+    expect(model.api).toBe('openai-completions')
+  })
+})
+
+describe('buildModelFromConfig — 自定义端点的双证据认领', () => {
+  const goConfig = (overrides: Partial<ModelConfig> = {}): ModelConfig => ({
+    provider: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', apiKey: 'sk-zen', model: 'grok-4.5', ...overrides
+  })
+
+  it('官方地址 + 官方模型名 → 认领 Pi 条目，拿到猜不出来的元数据（协议 + off:null）', () => {
+    const model = buildModelFromConfig(goConfig())
+    expect(model.provider).toBe('opencode-go')
+    expect(model.api).toBe('openai-responses')          // 合成条目只会给 openai-completions
+    expect(model.thinkingLevelMap?.off).toBeNull()      // "这个模型不能关思考"——1210 的机器可读版
+  })
+
+  it('同域不同路径不能认错家：/zen/v1 是 opencode，/zen/go/v1 才是 opencode-go', () => {
+    const model = buildModelFromConfig(goConfig({ baseUrl: 'https://opencode.ai/zen/v1' }))
+    expect(model.provider).toBe('opencode')
+  })
+
+  it('地址对但模型名不在该 provider 目录里 → 不认领（单证据不够），回落自定义兼容', () => {
+    const model = buildModelFromConfig(goConfig({ model: 'not-a-real-model-9999' }))
+    expect(model.api).toBe('openai-completions')
+    expect(model.id).toBe('not-a-real-model-9999')
+    expect(model.baseUrl).toBe('https://opencode.ai/zen/go/v1')
+  })
+
+  it('用户显式声明了协议（apiFormat=anthropic）→ 尊重用户，不认领', () => {
+    const model = buildModelFromConfig(goConfig({ apiFormat: 'anthropic' }))
+    expect(model.api).toBe('anthropic-messages')
+  })
+
+  it('认领后用户显式填过的能力位仍然覆盖 Pi（他面对的是自己的网关）', () => {
+    const model = buildModelFromConfig(goConfig({ supportsImages: false, contextWindow: 128_000, supportsThinking: false }))
+    expect(model.provider).toBe('opencode-go')
+    expect(model.input).toEqual(['text'])
+    expect(model.contextWindow).toBe(128_000)
+    expect(model.reasoning).toBe(false)
+  })
+
+  it('尾斜杠 / 大小写差异不影响认领（端点归一化）', () => {
+    const model = buildModelFromConfig(goConfig({ baseUrl: 'https://OpenCode.ai/zen/go/v1/' }))
+    expect(model.provider).toBe('opencode-go')
+  })
+
+  it('无关的第三方网关 → 认领不了，行为逐字节不变', () => {
+    const model = buildModelFromConfig(goConfig({ baseUrl: 'https://gateway.example.com/v1', model: 'grok-4.5' }))
+    expect(model.api).toBe('openai-completions')
+    expect(model.baseUrl).toBe('https://gateway.example.com/v1')
+  })
+})

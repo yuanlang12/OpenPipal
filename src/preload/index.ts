@@ -248,6 +248,7 @@ const api = {
   testConnection: (config: any): Promise<any> => ipcRenderer.invoke('config:test-connection', config),
   detectContextWindow: (config: any): Promise<{ window: number; source: string } | null> =>
     ipcRenderer.invoke('config:detect-context-window', config),
+  listRemoteModels: (config: any): Promise<any> => ipcRenderer.invoke('config:list-remote-models', config),
   testThinkingSupport: (config: any): Promise<{ detected: boolean; error?: string }> => ipcRenderer.invoke('config:test-thinking', config),
   getProviders: (): Promise<any> => ipcRenderer.invoke('config:get-providers'),
   hasApiKey: (): Promise<{ hasKey: boolean }> => ipcRenderer.invoke('config:has-key'),
@@ -278,6 +279,14 @@ const api = {
   updateModelPreset: (id: string, name: string, config: any): Promise<any> => ipcRenderer.invoke('config:update-preset', id, name, config),
   isCustomConfig: (): Promise<{ isCustom: boolean }> => ipcRenderer.invoke('config:is-custom'),
   clearModelConfig: (): Promise<any> => ipcRenderer.invoke('config:clear-model'),
+  // 搜索服务（web_search）—— 出口是展示口径：apiKey 恒掩码，builtin 标记内置回退
+  getSearchConfig: (): Promise<{ provider: 'tavily'; apiKey: string; builtin: boolean; configured: boolean }> =>
+    ipcRenderer.invoke('config:get-search'),
+  saveSearchConfig: (config: { provider: 'tavily'; apiKey: string }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('config:save-search', config),
+  clearSearchConfig: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('config:clear-search'),
+  testSearchConnection: (apiKey?: string): Promise<{ ok: boolean; errorKey?: string; errorParams?: Record<string, string> }> =>
+    ipcRenderer.invoke('config:test-search', apiKey),
   // 冷启动引导
   getOnboardingStatus: (): Promise<{ completed: boolean }> => ipcRenderer.invoke('onboarding:status'),
   completeOnboarding: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('onboarding:complete'),
@@ -628,7 +637,7 @@ const api = {
     ipcRenderer.invoke('artifact:load', ref, conversationId),
   loadCompiledArtifact: (conversationId: string, artifactId: string): Promise<string | null> =>
     ipcRenderer.invoke('artifact:load-compiled', conversationId, artifactId),
-  exportDcArtifacts: (projectName: string, artifacts: { title: string; content: string }[]): Promise<{ ok: boolean; dir?: string; files?: string[]; error?: string }> =>
+  exportDcArtifacts: (projectName: string, artifacts: { title: string; content: string; artifactId?: string }[]): Promise<{ ok: boolean; dir?: string; files?: string[]; error?: string }> =>
     ipcRenderer.invoke('artifact:export-dc', projectName, artifacts),
   exportArtifactPdf: (title: string, content: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('artifact:export-pdf', title, content),
@@ -644,7 +653,7 @@ const api = {
     id?: string
     filename?: string
     projectName?: string
-    artifacts?: { title: string; content: string }[]
+    artifacts?: { title: string; content: string; artifactId?: string }[]
     dsName?: string
     durationSec?: number
     fps?: number

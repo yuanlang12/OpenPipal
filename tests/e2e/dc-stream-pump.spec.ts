@@ -14,7 +14,7 @@
  *   artifactId='streaming' tab → ArtifactTab（streaming=true）→ HtmlPreview。
  *   收尾发 'artifact' 事件 → finalizeStreaming（streaming=false）。
  *
- * 注意:iframe 内渲染需要网络(unpkg React 18.3.1),断网环境本测试会超时。
+ * 注意:React 由宿主内联 vendor UMD 供给(inlineDcRuntime),断网可跑,不再依赖 unpkg。
  */
 
 import { test, expect, Page } from '@playwright/test'

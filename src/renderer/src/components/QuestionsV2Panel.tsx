@@ -8,8 +8,9 @@
  * - freeform：自由文本
  * - multi-chip：紧凑多选 chip
  *
- * 所有 text-options / svg-options / multi-chip 自动附加“交给 AI 判断”与“其他”，
- * 减轻 agent 写 prompt 负担（与 Anthropic questions_v2 约定一致）
+ * 选择题自动附加“其他”。**不再逐题摆“交给 AI 判断”按钮**——那让代选看起来像第 N 个选项，
+ * 用户每题都要处理一次。改成一条面板级规则：**没选的题就是交给 AI 判断**（提交时统一填
+ * aiDecisionAnswer）。allowAiDecision:false 的题是例外：它必须由本人裁决，标「必答」且拦提交。
  */
 
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent as ReactDragEvent } from 'react'
@@ -18,7 +19,7 @@ import { extractPastedImages } from '../utils/pasteImages'
 import { shouldOfferAiDecision } from '../chat/questionChoices'
 import type { FileAttachmentData } from '../types'
 import { useTranslation } from 'react-i18next'
-import { sanitizeQuestionsSvg } from '../../../shared/safe-svg'
+import { questionsPreviewImageUrl } from '../../../shared/safe-svg'
 
 interface QuestionBase {
   id: string
@@ -31,7 +32,7 @@ interface QuestionBase {
   attachHint?: string
 }
 interface TextOptionsQuestion extends QuestionBase { kind: 'text-options'; options: string[]; multi?: boolean; default?: string }
-interface SvgOption { value: string; label?: string; svg: string }
+interface SvgOption { value: string; label?: string; svg?: string }
 interface SvgOptionsQuestion extends QuestionBase { kind: 'svg-options'; options: SvgOption[]; default?: string }
 interface SliderQuestion extends QuestionBase { kind: 'slider'; min: number; max: number; step?: number; default?: number }
 interface FreeformQuestion extends QuestionBase { kind: 'freeform'; placeholder?: string }
@@ -47,20 +48,13 @@ interface Props {
   streaming?: boolean
 }
 
-const DECIDE_FOR_ME = '__decide_for_me__'
 const OTHER = '__other__'
 
 /**
- * Render static SVG as an image document, not as markup in the privileged host
- * DOM. The main process already reduces the SVG to a small static profile; the
- * image boundary is independent defense against parser differentials.
+ * 预览图一律以 <img> 呈现（img 里的 SVG 不执行脚本、不发请求），绝不把模型给的标记插进
+ * 宿主 DOM。主进程已经把预览收敛成静态白名单 SVG 或合法 data:image/* URI；这里再过一遍
+ * 同一支 questionsPreviewImageUrl，是针对解析器差异的独立防线。
  */
-const svgImageUrl = (svg: string): string | null => {
-  const sanitized = sanitizeQuestionsSvg(svg)
-  return sanitized
-    ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(sanitized)}`
-    : null
-}
 
 /** 图片扩展名判定 —— 与 InputBar.isImageFile 同一组扩展 */
 const isImageFile = (name: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name)
@@ -77,6 +71,8 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
   })
   // "Other" 自由输入的字符串（per question id）
   const [otherText, setOtherText] = useState<Record<string, string>>({})
+  // 预览图加载失败的选项（key = `${questionId}::${optionValue}`）→ 改渲染中性占位卡
+  const [brokenPreviews, setBrokenPreviews] = useState<Record<string, boolean>>({})
 
   // 附件仅按 Agent 明确声明的题内上传位分桶。没有 attach:true 就不出现上传入口，
   // 也不接管用户的粘贴行为；用户要主动补充无关材料时仍可用聊天输入框正常发送。
@@ -87,6 +83,9 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
   const [dragZone, setDragZone] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const fileInputZone = useRef<string | null>(null)
+  // 提交被必答题拦下后才亮红：进来就一片红是在指责还没开始答的人
+  const [showMissing, setShowMissing] = useState(false)
+  const questionRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   const attachQuestions = questions.filter((q: any) => q?.attach === true && typeof q?.id === 'string' && q.id)
   const attachQuestionIds = new Set(attachQuestions.map((q: any) => q.id))
@@ -186,9 +185,27 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
 
   const set = (id: string, v: any): void => setValues(prev => ({ ...prev, [id]: v }))
 
+  /** 作答判定：空数组 / 空串 / 未定义都算没答 */
+  const isAnswered = (q: any): boolean => {
+    const raw = values[q.id]
+    if (Array.isArray(raw)) return raw.length > 0
+    return raw !== undefined && raw !== null && raw !== ''
+  }
+  // 必答 = Agent 声明「本人裁决」（allowAiDecision:false，如写入/删除个人档案）。
+  // 其余题不答就是交给 AI —— 但这条豁免绝不能覆盖必答题，否则等于把确认权悄悄让渡出去。
+  const isRequired = (q: any): boolean => !shouldOfferAiDecision(q)
+  const missingRequired = questions.filter((q: any) => q?.id && isRequired(q) && !isAnswered(q))
+
   const handleSubmit = (): void => {
-    // 把 "Other" 文本 merge 进最终答案
+    if (missingRequired.length > 0) {
+      setShowMissing(true)
+      questionRefs.current[missingRequired[0].id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
+    // 把 "Other" 文本 merge 进最终答案；没答的题统一落成「交给 AI 判断」，
+    // 于是模型收到的答案表永远是全的（缺 key 与"用户跳过"分不清，会逼它反问）
     const final: Record<string, any> = {}
+    const delegated = new Set<string>() // 落成「交给 AI」的题：下面挂材料时不该再跟一句"你判断"
     for (const q of questions) {
       const raw = values[q.id]
       const otherVal = otherText[q.id]
@@ -196,11 +213,13 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
         final[q.id] = otherVal
       } else if (Array.isArray(raw)) {
         const mapped = raw.map((x: string) => x === OTHER ? otherVal : x).filter(Boolean)
-        final[q.id] = mapped
-      } else if (raw === DECIDE_FOR_ME) {
-        final[q.id] = t('chat.questions.aiDecisionAnswer')
+        if (mapped.length > 0) final[q.id] = mapped
+        else { final[q.id] = t('chat.questions.aiDecisionAnswer'); delegated.add(q.id) }
       } else if (raw !== undefined && raw !== '') {
         final[q.id] = raw
+      } else {
+        final[q.id] = t('chat.questions.aiDecisionAnswer')
+        delegated.add(q.id)
       }
     }
     // 附件平铺走 sendMessage 现有管线；归属关系写进对应题目的答案文本——模型收到的是
@@ -217,7 +236,8 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
       const note = t('chat.questions.attachedMaterials', {
         parts: parts.join(t('chat.questions.attachmentSeparator'))
       })
-      const cur = final[q.id]
+      // 传了材料就是答了——别再让"交给 AI 判断"跟在材料后面自相矛盾
+      const cur = delegated.has(q.id) ? undefined : final[q.id]
       final[q.id] = Array.isArray(cur) ? [...cur, note] : cur ? `${cur} ${note}` : note
       allImages.push(...imgs)
       allFiles.push(...files)
@@ -270,11 +290,11 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-surface-0 dark:bg-surface-50">
-      {/* 顶部栏 —— artifact 风格的 title bar */}
-      <div className="h-11 shrink-0 flex items-center justify-between px-4 border-b border-surface-100">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[15px]">✓</span>
-          <span className="text-sm font-medium text-surface-700 truncate">{t('chat.questions.confirmTitle')}</span>
+      {/* 顶栏 —— 只是身份标识：大标题在内容区，这里不必再喊一遍，收到 h-9 把空间还给问题 */}
+      <div className="h-9 shrink-0 flex items-center justify-between px-4 border-b border-surface-100">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[11px] text-surface-400">✓</span>
+          <span className="text-xs text-surface-500 truncate">{t('chat.questions.confirmTitle')}</span>
         </div>
         {onCancel && (
           <button
@@ -284,28 +304,67 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0 px-5 py-5 space-y-6">
+      {/* 内容列限宽：面板拉宽时正文不该跟着拉到一行上千像素——读一行要转头 */}
+      <div className="flex-1 overflow-y-auto min-h-0 px-5 py-5">
+        <div className="mx-auto w-full max-w-[680px]">
         {/* 标题 */}
-        <div>
-          <h1 className="text-lg font-semibold text-surface-800 mb-1">{title}</h1>
-          <p className="text-[11px] text-surface-400 leading-relaxed">
-            {hasAiDelegation
-              ? t('chat.questions.delegationDescription')
-              : t('chat.questions.personalDecisionDescription')}
-          </p>
+        <div className="mb-1">
+          <h1 className="text-lg font-semibold text-surface-800 mb-1.5">{title}</h1>
+          {/* 流式且一道题都还没到时不写这句：此刻两条文案哪条成立都还不知道，
+              先写「AI 不会替你决定」再被换掉，等于承诺打了个折 */}
+          {!(streaming && questions.length === 0) && (
+            <p className="text-xs text-surface-500 leading-relaxed">
+              {hasAiDelegation
+                ? t('chat.questions.delegationDescription')
+                : t('chat.questions.personalDecisionDescription')}
+            </p>
+          )}
         </div>
 
-        {/* Questions */}
-        {questions.map((q: Question, idx: number) => (
-          <div key={q.id || idx} className="space-y-2">
+        {/* 流式空档：标题已到、第一道题还没闭合时不留一片白 */}
+        {streaming && questions.length === 0 && (
+          <div data-testid="questions-skeleton" className="mt-6 space-y-6" aria-hidden="true">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="space-y-2.5 animate-pulse">
+                <div className="h-3 rounded bg-surface-100" style={{ width: `${42 - i * 6}%` }} />
+                <div className="flex gap-2">
+                  <div className="h-8 w-20 rounded-lg bg-surface-100" />
+                  <div className="h-8 w-24 rounded-lg bg-surface-100" />
+                  <div className="h-8 w-16 rounded-lg bg-surface-100" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Questions —— 细分隔线分组：只靠间距的话题一多就糊成一片 */}
+        <div className="divide-y divide-surface-100">
+        {questions.map((q: Question, idx: number) => {
+          const required = isRequired(q)
+          const missing = showMissing && required && !isAnswered(q)
+          return (
+          <div
+            key={q.id || idx}
+            ref={el => { if (q.id) questionRefs.current[q.id] = el }}
+            data-testid={missing ? 'question-missing' : undefined}
+            className={`py-5 first:pt-6 space-y-2.5 ${missing ? 'border-l-2 border-l-amber-400 -ml-3 pl-3' : ''}`}
+          >
             <div>
-              <div className="text-sm font-medium text-surface-700">{q.title}</div>
-              {q.subtitle && <div className="text-xs text-surface-400 mt-0.5">{q.subtitle}</div>}
+              <div className="text-sm font-medium text-surface-700 flex items-baseline gap-2">
+                <span className="text-[11px] tabular-nums text-surface-300 shrink-0">{idx + 1}</span>
+                <span className="min-w-0">{q.title}</span>
+                {required && (
+                  <span className="shrink-0 text-[10px] px-1.5 py-px rounded text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20">
+                    {t('chat.questions.requiredBadge')}
+                  </span>
+                )}
+              </div>
+              {q.subtitle && <div className="text-xs text-surface-400 mt-1 pl-[22px]">{q.subtitle}</div>}
             </div>
 
             {q.kind === 'text-options' && (
               <div className="flex flex-wrap gap-2">
-                {[...q.options, ...(shouldOfferAiDecision(q) ? [DECIDE_FOR_ME] : []), OTHER].map((opt: unknown) => {
+                {[...q.options, OTHER].map((opt: unknown) => {
                   // 双保险：normalizeQuestionsV2Items 应该已经把 options 元素收敛成字符串，
                   // 但弱模型/旧缓存数据仍可能穿透对象元素——渲染前再强转一次，防 React #31 崩溃。
                   const optStr = typeof opt === 'string' ? opt : String((opt as any)?.label ?? (opt as any)?.value ?? '')
@@ -314,11 +373,7 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
                   const selected = multi
                     ? Array.isArray(values[q.id]) && values[q.id].includes(optStr)
                     : values[q.id] === optStr
-                  const label = optStr === DECIDE_FOR_ME
-                    ? t('chat.questions.letAiDecide')
-                    : optStr === OTHER
-                      ? t('chat.questions.other')
-                      : optStr
+                  const label = optStr === OTHER ? t('chat.questions.other') : optStr
                   return (
                     <button
                       key={optStr}
@@ -356,7 +411,10 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
                   // 双保险：normalize 理应已经丢弃无 value 的元素，这里再兜一次防坏数据崩渲染
                   if (!opt?.value) return null
                   const selected = values[q.id] === opt.value
-                  const imageUrl = typeof opt.svg === 'string' ? svgImageUrl(opt.svg) : null
+                  const previewKey = `${q.id}::${opt.value}`
+                  // 规范化漏网的预览（解析器差异、超大图解码失败）在 onError 里降级，
+                  // 用户永远不该看到浏览器裂图图标。
+                  const imageUrl = brokenPreviews[previewKey] ? null : questionsPreviewImageUrl(opt.svg)
                   return (
                     <button
                       key={opt.value}
@@ -370,23 +428,26 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
                     >
                       <div className="w-full aspect-[80/56] rounded overflow-hidden">
                         {imageUrl
-                          ? <img src={imageUrl} alt="" draggable={false} className="w-full h-full object-contain" />
-                          : <div className="w-full h-full bg-surface-100" />}
+                          ? <img
+                              src={imageUrl}
+                              alt=""
+                              draggable={false}
+                              className="w-full h-full object-contain"
+                              onError={() => setBrokenPreviews(prev => ({ ...prev, [previewKey]: true }))}
+                            />
+                          : (
+                            <div className="w-full h-full bg-surface-100 dark:bg-surface-50 flex items-center justify-center px-2">
+                              <span className="text-[11px] leading-tight text-surface-400 text-center line-clamp-3 break-words">
+                                {opt.label || opt.value}
+                              </span>
+                            </div>
+                          )}
                       </div>
-                      {opt.label && <div className="text-[11px] text-surface-500 mt-1.5 truncate">{opt.label}</div>}
+                      {/* 无预览时选项名已经在占位卡里，不再重复一行 */}
+                      {imageUrl && opt.label && <div className="text-[11px] text-surface-500 mt-1.5 truncate">{opt.label}</div>}
                     </button>
                   )
                 })}
-                {shouldOfferAiDecision(q) && (
-                  <button
-                    onClick={() => set(q.id, DECIDE_FOR_ME)}
-                    className={`rounded-lg border-2 border-dashed p-2 text-[11px] transition-all flex items-center justify-center min-h-[56px] ${
-                      values[q.id] === DECIDE_FOR_ME
-                        ? 'border-brand-500 ring-2 ring-brand-200 text-brand-600'
-                        : 'border-surface-200 hover:border-brand-300 text-surface-500'
-                    }`}
-                  >{t('chat.questions.letAiDecide')}</button>
-                )}
               </div>
             )}
 
@@ -447,7 +508,9 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
               testid: 'question-attach-zone'
             })}
           </div>
-        ))}
+          )
+        })}
+        </div>
 
         {attachQuestions.length > 0 && (
           <input
@@ -459,10 +522,17 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
             onChange={handleFileInputChange}
           />
         )}
+        </div>
       </div>
 
       {/* 底部操作栏（位于 scroll 区之外，始终可见） */}
-      <div className="shrink-0 bg-surface-0 dark:bg-surface-50 border-t border-surface-100 px-5 py-3 flex justify-end gap-2">
+      <div className="shrink-0 bg-surface-0 dark:bg-surface-50 border-t border-surface-100 px-5 py-3">
+        <div className="mx-auto w-full max-w-[680px] flex flex-col gap-2">
+        {showMissing && missingRequired.length > 0 && (
+          <p data-testid="questions-required-notice" className="text-[11px] text-amber-600 dark:text-amber-400">
+            {t('chat.questions.requiredNotice', { count: missingRequired.length })}
+          </p>
+        )}
         {streaming ? (
           <div
             data-testid="questions-streaming"
@@ -477,6 +547,7 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
             className="w-full px-5 py-2 text-sm font-medium rounded-lg bg-brand-500 hover:bg-brand-600 text-ink-on-accent"
           >{t('chat.questions.submit')}</button>
         )}
+        </div>
       </div>
     </div>
   )

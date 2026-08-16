@@ -17,13 +17,14 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('静默看门狗', () => {
-  it('两个 Runtime 共享 60 秒默认值，且保留环境变量覆盖/关闭语义', () => {
-    expect(DEFAULT_MODEL_STALL_TIMEOUT_MS).toBe(60_000)
-    expect(resolveModelStallTimeoutMs(undefined)).toBe(60_000)
+  it('两个 Runtime 共享同一个默认值（5 分钟，对齐 pi），且保留环境变量覆盖/关闭语义', () => {
+    // pi-coding-agent/core/http-dispatcher.js: DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000
+    expect(DEFAULT_MODEL_STALL_TIMEOUT_MS).toBe(300_000)
+    expect(resolveModelStallTimeoutMs(undefined)).toBe(300_000)
     expect(resolveModelStallTimeoutMs('75000')).toBe(75_000)
     expect(resolveModelStallTimeoutMs('0')).toBe(0)
     expect(resolveModelStallTimeoutMs('-1')).toBe(0)
-    expect(resolveModelStallTimeoutMs('invalid')).toBe(60_000)
+    expect(resolveModelStallTimeoutMs('invalid')).toBe(300_000)
   })
 
   it('超时无事件 → 触发', () => {

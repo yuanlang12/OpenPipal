@@ -244,12 +244,12 @@ function createQuestionsV2Tool(): AgentTool {
    —— 80×56 viewBox，主色铺底，accent 和中性色小块展示
 
 2) 圆角/形状偏好：
-   svg: '<svg viewBox="0 0 80 56"><rect x="8" y="12" width="64" height="32" rx="16" fill="#2A2A2A"/></svg>'  (full)
-   svg: '<svg viewBox="0 0 80 56"><rect x="8" y="12" width="64" height="32" rx="4" fill="#2A2A2A"/></svg>'   (subtle)
-   svg: '<svg viewBox="0 0 80 56"><rect x="8" y="12" width="64" height="32" fill="#2A2A2A"/></svg>'          (sharp)
+   svg: '<svg viewBox="0 0 80 56" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="12" width="64" height="32" rx="16" fill="#2A2A2A"/></svg>'  (full)
+   svg: '<svg viewBox="0 0 80 56" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="12" width="64" height="32" rx="4" fill="#2A2A2A"/></svg>'   (subtle)
+   svg: '<svg viewBox="0 0 80 56" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="12" width="64" height="32" fill="#2A2A2A"/></svg>'          (sharp)
 
 3) 字体配对预览：
-   svg: '<svg viewBox="0 0 80 56"><text x="8" y="26" font-family="Space Grotesk" font-size="18" font-weight="600">Aa</text><text x="8" y="48" font-family="serif" font-size="12">Body text</text></svg>'
+   svg: '<svg viewBox="0 0 80 56" xmlns="http://www.w3.org/2000/svg"><text x="8" y="26" font-family="Space Grotesk" font-size="18" font-weight="600">Aa</text><text x="8" y="48" font-family="serif" font-size="12">Body text</text></svg>'
 
 4) 布局/密度/阴影风格等——同理，用几何形状代表
 
@@ -257,7 +257,8 @@ function createQuestionsV2Tool(): AgentTool {
 - 问题 ≥ 4 个
 - **每当问题涉及颜色、圆角、形状、字体、视觉密度、阴影、动效风格，必须用 svg-options，不是 text-options**
 - 目标/受众/信息层级等纯概念问题才用 text-options / multi-chip / freeform
-- 前端自动为 option 类问题附加“交给 AI 判断”与“其他”——你不需要在 options 里重复写它们
+- 前端自动为 option 类问题附加“其他”。**不要在 options 里写“随便/你决定/交给 AI”这类兜底项**——面板顶部已经写死一条规则：用户没选的题就是交给你判断，提交时会填成“请 AI 根据已有信息判断”
+- 必须由用户本人裁决的题（写入/保存/删除个人档案这类）设 allowAiDecision: false —— 它会被标成「必答」并拦住提交，不受上面那条豁免
 - 某道题的最准答案是一份原件时（校本模板、上节课教案、学生作业、参考截图、品牌素材），给该题加 attach: true，可配 attachHint 一句引导语——上传位直接长在这道题下方，用户传的文件会标注归属这道题回来。不要为"请传文件"单独占一道题位`,
     parameters: Type.Object({
       title: Type.Optional(Type.String({ description: '可选的面板顶部标题，如 "关于音乐 App 首页设计的几个问题"；不传时 UI 使用本地化默认标题' })),
@@ -589,8 +590,12 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
       const html = fileMode ? raw : inlineDcForHeadless(raw, file ? path.dirname(file) : undefined)
       const { BrowserWindow, nativeImage } = require('electron')
       const win = new BrowserWindow({
-        show: false, width: 1280, height: 800,
-        webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+        // 900 而不是 800：动画产物的播放条展开成剪辑轨后占 85px，800 高会把 720p 舞台
+        // 压到 scale 0.99——自检帧没有尺寸断言，但给模型看的画面不该无谓地缩一档。
+        show: false, width: 1280, height: 900,
+        // backgroundThrottling:false 与逐帧导出窗口同因：隐藏窗口默认节流 rAF/timer，
+        // 动画多帧自检要等双 rAF 落地（见下方 settleAt），被节流就只能干等超时。
+        webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
       })
       const problems: string[] = []
       // 多帧自检要 reload 页面（每帧重放启动告警），reload 阶段不再计入 problems——只收首轮加载的真问题
@@ -636,8 +641,8 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
         // 页面文本摘要：截图 read 链路已证实全断（photon resize 在主进程恒断）+ 当前主模型不支持
         // 图片输入——弱模型全靠这段文本核对文案/品牌名/数据，"渲染干净"只代表无 JS 错误。
         summary = await win.webContents.executeJavaScript(PAGE_TEXT_SUMMARY_JS).catch(() => null)
-        // 动画多帧自检（W2 条款6）：仅当产物含 data-om-exportable-video-with-duration-secs（官方 animations
-        // 的 seek 监听挂在该 <svg> 本体）时触发——无此属性→duration=0→整段跳过，非动画产物零回归。
+        // 动画多帧自检（W2 条款6）：仅当产物含 data-om-exportable-video-with-duration-secs（运行时的
+        // seek 监听挂在该画布元素本体）时触发——无此属性→duration=0→整段跳过，非动画产物零回归。
         const duration: number = await win.webContents
           .executeJavaScript(
             `(function(){var el=document.querySelector('[data-om-exportable-video-with-duration-secs]');if(!el)return 0;var d=parseFloat(el.getAttribute('data-om-exportable-video-with-duration-secs'));return isFinite(d)&&d>0?d:0;})()`
@@ -646,19 +651,39 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
         if (typeof duration === 'number' && duration > 0) {
           // 隐藏窗口只有 load 后的“首个合成帧”可靠（在位 seek 到旧帧上不重合成 → 假等值帧，见 W2#11）。
           // 改法：让 Stage 在**首帧**即定格到目标时间，逐帧重载后截首帧。Stage 初始时间读自
-          // localStorage[persistKey+':t']（animations.jsx:442）——
+          // localStorage[persistKey+':t']（运行时契约 C7）——
           //   · 文件模式：origin 有 localStorage，直接预置每个 <persistKey>:t = time 再 reload
           //   · data 模式：opaque origin 无 localStorage，注入 stub 让运行时初值读到 time
           collectConsole = false // reload 会重放启动告警，后续不再计入问题清单
-          const bootWait = async () => {
+          /**
+           * 重载后等画布出现，然后**显式派一次 seek**（运行时契约 C5：语义已含暂停 + 钉到该时刻）
+           * 再截图。以前这里是 400ms 盲等：慢机器上 React 还没提交就截 → 空白帧；快机器上
+           * autoplay 已经把播放头推走 → 采到的其实是 t+0.4s 左右。seek 是确定性的，两头都治。
+           * 双 rAF 与导出链同一配方；rAF 在被节流的隐藏窗口里可能不回调，故整体设超时兜底。
+           */
+          const settleAt = async (time: number) => {
+            let ready = false
             for (let i = 0; i < 40; i++) {
-              const ready = await win.webContents
+              ready = await win.webContents
                 .executeJavaScript(`!!document.querySelector('[data-om-exportable-video-with-duration-secs]')`)
                 .catch(() => false)
               if (ready) break
               await new Promise((r) => setTimeout(r, 150))
             }
-            await new Promise((r) => setTimeout(r, 400)) // React commit + paint settle
+            if (!ready) {
+              await new Promise((r) => setTimeout(r, 400)) // 画布始终没出现：退回原来的盲等
+              return
+            }
+            const seeked = await win.webContents
+              .executeJavaScript(
+                `new Promise(function(resolve){var el=document.querySelector('[data-om-exportable-video-with-duration-secs]');` +
+                  `if(!el){resolve(false);return}` +
+                  `el.dispatchEvent(new CustomEvent('data-om-seek-to-time-frame',{detail:{time:${time}}}));` +
+                  `requestAnimationFrame(function(){requestAnimationFrame(function(){resolve(true)})});` +
+                  `setTimeout(function(){resolve(true)},1500)})`
+              )
+              .catch(() => false)
+            if (!seeked) await new Promise((r) => setTimeout(r, 400))
           }
           const candidates: Array<{ pct: number; time: number; buf: Buffer }> = []
           for (const pct of [10, 50, 90]) {
@@ -676,7 +701,7 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
                 const framed = html.replace(/<head([^>]*)>/i, (m) => `${m}${stub}`)
                 await win.loadURL('data:text/html;base64,' + Buffer.from(framed, 'utf8').toString('base64'))
               }
-              await bootWait()
+              await settleAt(time)
               candidates.push({ pct, time, buf: (await win.webContents.capturePage()).toPNG() })
             } catch {
               // A failed optional frame must not hide the successful base render.

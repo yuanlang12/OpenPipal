@@ -10,10 +10,11 @@ import { DesignSystemView } from '../../artifacts/DesignSystemView'
 import { Markdown } from '../../shared/Markdown'
 import { QuestionsV2Panel } from '../../QuestionsV2Panel'
 import { useState, useRef, useEffect, useMemo, lazy, Suspense, type ChangeEvent } from 'react'
-import { Eye, Code2, Loader2, FileText, Download, Share2, Circle, CircleDot, CheckCircle2, ListTodo } from 'lucide-react'
+import { Eye, Code2, Loader2, FileText, Download, Share2, Circle, CircleDot, CheckCircle2, ListTodo, Film, Keyboard, MessageSquare } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toDisplayError, renderDisplayError } from '../../../utils/mainError'
-import { isDcHtml, looksLikeAnimationDc, looksLikeDeckDc } from '../../artifacts/dcRuntime'
+import { isDcHtml, looksLikeAnimationDc, looksLikeDeckDc, isSceneSourceArtifact } from '../../artifacts/dcRuntime'
+import { renderInputsFingerprint } from '../../../chat/selfCheck'
 import { getArtifactExportOptions } from './artifactExportOptions'
 
 // 六种 artifact 类型里只有 canvas 需要画布引擎——懒加载，首次打开 canvas artifact 才拉取该 chunk
@@ -168,8 +169,66 @@ function CodeStreamingCard({ content, language, title }: { content: string; lang
   )
 }
 
+/**
+ * 等待中的舞台 —— 产物壳子常驻，真画面渲出来之前它站在这儿（2026-08-15 所有者裁决：
+ * "产物壳子总是存在，别的内容的文件不用单独打开；壳子可以是 Tips 介绍我们的功能点"）。
+ * 出现在两处：素材（场景 jsx）流式期间，以及素材流结束、交付物还没到的空档。
+ * 刻意不放进度条动画——这块区域会挂几十秒，安静一点。
+ */
+function StagePlaceholder({ progress }: { progress?: string }) {
+  const { t } = useTranslation()
+  const tips: Array<[typeof Film, string]> = [
+    [Keyboard, t('artifacts.shell.stage.tips.playback')],
+    [Download, t('artifacts.shell.stage.tips.export')],
+    [MessageSquare, t('artifacts.shell.stage.tips.edit')]
+  ]
+  return (
+    <div data-testid="artifact-stage-placeholder" className="flex-1 min-h-0 overflow-auto flex flex-col items-center justify-center p-6">
+      <div className="w-full max-w-sm flex flex-col gap-4">
+        <div className="rounded-lg border border-surface-150 dark:border-surface-100 bg-surface-50 dark:bg-surface-50/60 aspect-video flex flex-col items-center justify-center gap-2">
+          <Film size={22} className="text-surface-300" />
+          <span className="text-[12px] text-surface-500">{t('artifacts.shell.stage.title')}</span>
+          {progress && (
+            <span className="flex items-center gap-1.5 text-[11px] text-surface-400">
+              <Loader2 size={11} className="animate-spin text-brand-500" /> {progress}
+            </span>
+          )}
+        </div>
+        <ul className="flex flex-col gap-2">
+          {tips.map(([Icon, text], i) => (
+            <li key={i} className="flex items-start gap-2 text-[11px] leading-relaxed text-surface-400">
+              <Icon size={12} className="mt-0.5 shrink-0 text-surface-300" />
+              <span>{text}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
 // jsx 场景形状识别：动画引擎的标志性 API/组件，或 language 显式标注为 jsx
 const SCENE_SHAPE_RE = /\b(useSprite|useTime)\s*\(|<Stage[\s>]/
+
+/** 页面开头的标志：有这些就是文档，交给 HtmlPreview 没问题 */
+const PAGE_HEAD_RE = /<!DOCTYPE|<html[\s>]|<x-dc[\s>]|<svg[\s>]/i
+/** 源码开头的标志：注释 / import / 顶层声明 —— 逐行看首个非空行就够 */
+const CODE_HEAD_RE = /^\s*(?:\/\/|\/\*|import\s|export\s|const\s|let\s|var\s|function\s)/
+
+/**
+ * 流式期"这是源码，还不是页面"的判据。
+ *
+ * 为什么不能只看 type：`create_artifact` 的参数是流式 JSON，宿主的增量提取器按**键在 JSON 里
+ * 出现的顺序**吐字段。模型（实测 glm-5.3）把 content 写在 type/title 前面时，整段生成期间
+ * type 都还没到 → 走 `data.type || 'html'` 的默认值 → 半截 jsx 被 HtmlPreview 当网页渲染，
+ * 屏幕上是一片流动的源码正文加几个被浏览器解析出来的黑色 path（真机截图实锤）。
+ * 所以判据只能落在**内容形状**上：开头像页面就当页面，像源码就先挂舞台。
+ */
+function looksLikeSourceStream(content: string): boolean {
+  const head = content.slice(0, 600)
+  if (PAGE_HEAD_RE.test(head)) return false
+  return CODE_HEAD_RE.test(head) || SCENE_SHAPE_RE.test(head)
+}
 
 /** 解析 `Object.assign(window, {...})` 花括号内的逗号分隔标识符；`Key: Value` 重命名形式取左键名 */
 function parseAssignEntries(inner: string): string[] {
@@ -311,6 +370,13 @@ export function ArtifactTab({ artifactId }: { artifactId: string }) {
     return { data: a || null, isStreaming: false }
   }, [artifactId, artifacts, streaming])
 
+  // 整套渲染输入的指纹（薄壳 + 它引用的场景 jsx）——模型只改场景时薄壳 content 不变，
+  // 没有这个信号 HtmlPreview 会一直停在旧画面
+  const siblingRev = useMemo(
+    () => (isStreaming ? undefined : renderInputsFingerprint(data as { id: string; content?: string } | null, artifacts) ?? undefined),
+    [data, artifacts, isStreaming]
+  )
+
   useEffect(() => {
     if (viewMode === 'code' && codeRef.current) {
       codeRef.current.scrollTop = codeRef.current.scrollHeight
@@ -318,6 +384,8 @@ export function ArtifactTab({ artifactId }: { artifactId: string }) {
   }, [data?.content, viewMode])
 
   if (!data) {
+    // 素材流已结束、真交付物还没到 —— 这个 tab 是等待中的舞台，不是"产物被清除"
+    if (artifactId === 'streaming') return <StagePlaceholder />
     return (
       <div className="flex-1 flex items-center justify-center text-surface-400 text-xs">
         {t('artifacts.shell.cleared')}
@@ -467,7 +535,7 @@ export function ArtifactTab({ artifactId }: { artifactId: string }) {
         req.projectName = titleBase
         req.artifacts = useArtifactStore.getState().artifacts
           .filter(a => (a.type === 'html' || !a.type) && isDcHtml(a.content || ''))
-          .map(a => ({ title: a.title || a.id, content: a.content || '' }))
+          .map(a => ({ title: a.title || a.id, content: a.content || '', artifactId: a.id }))
       } else if (fmt === 'ds-zip') {
         try { req.dsName = JSON.parse(data.content || '{}')?.name } catch { /* ignore */ }
       } else if (fmt === 'source') {
@@ -631,10 +699,20 @@ export function ArtifactTab({ artifactId }: { artifactId: string }) {
             switch (type) {
               case 'html':
               case 'svg':
+                // 要按页面渲之前先看一眼内容形状：流式期 type 可能还没到（默认成了 html），
+                // 拿 HTML 渲染器去渲半截 jsx 会在屏幕上摊一屏源码正文（见 looksLikeSourceStream）。
+                // 只挡这一条分支——type=code 的普通源码照旧走生成进度卡。
+                if (isStreaming && looksLikeSourceStream(content)) {
+                  return <StagePlaceholder progress={t('artifacts.shell.stage.progress', {
+                    lines: content.split('\n').length,
+                    size: (new TextEncoder().encode(content).length / 1024).toFixed(1)
+                  })} />
+                }
                 return (
                   <HtmlPreview
                     content={content}
                     streaming={isStreaming}
+                    siblingRev={siblingRev}
                     onContentEdit={(newContent) => handleTweakEdit(data.id, newContent)}
                     toolbarHost={previewToolbarHost}
                   />
@@ -643,6 +721,14 @@ export function ArtifactTab({ artifactId }: { artifactId: string }) {
                 const language = (data as any).language as string | undefined
                 // 流式期间原始代码不可读也不必看——用生成进度卡代替全屏滚代码
                 if (isStreaming) {
+                  // 场景 jsx 是装进薄壳消费的素材：这个 tab 承载的是"这一轮的舞台"，
+                  // 别让半成品源码占着它（配套桥接里的素材不单独开 tab）
+                  if (isSceneSourceArtifact({ type, title: data.title, language })) {
+                    return <StagePlaceholder progress={t('artifacts.shell.stage.progress', {
+                      lines: content.split('\n').length,
+                      size: (new TextEncoder().encode(content).length / 1024).toFixed(1)
+                    })} />
+                  }
                   return <CodeStreamingCard content={content} language={language} title={data.title} />
                 }
                 // 完成态：动画场景 jsx（useSprite/useTime/<Stage> 或 language=jsx）尝试合成薄壳直接渲染预览，

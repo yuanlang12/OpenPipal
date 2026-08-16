@@ -9,7 +9,7 @@ import { compactSubagentCardData } from './tool-content-compactor'
 import { capToolResultText } from './context-window-policy'
 import type { AgentEvent as OpenPipalAgentEvent } from './agent-runtime/events'
 import { tMain } from './main-i18n'
-import { sanitizeQuestionsSvg } from '../shared/safe-svg'
+import { sanitizeQuestionsPreview } from '../shared/safe-svg'
 
 export type { AgentEvent as OpenPipalAgentEvent } from './agent-runtime/events'
 
@@ -112,6 +112,11 @@ function sanitizeTextOptions(rawOptions: any): string[] {
  * svg-options 的 options 元素规范化：每个元素必须收敛成含字符串 value 的对象。
  * 字符串元素 → 包装成 {value, label}；对象缺 value 但有 label → 补 value=label；
  * 都没有则丢弃该选项（svg-options 的默认值没有意义，不能兜底猜一个）。
+ *
+ * 预览图单独判生死：模型给的 svg 字段只有「能离线渲染」的两种形态算数——静态 SVG 白名单
+ * 之后仍成立的内联标记，或形状合法的 data:image/* URI。外链（http(s)：产物沙箱断网 + CSP）、
+ * 坏 base64、畸形/不闭合 SVG 一律判为无预览。**丢的只是预览，不是选项**——选项文字照常
+ * 可选，渲染层给中性占位卡，用户不该看到浏览器裂图。
  */
 function sanitizeSvgOptions(rawOptions: any): Record<string, any>[] {
   if (!Array.isArray(rawOptions)) return []
@@ -125,10 +130,10 @@ function sanitizeSvgOptions(rawOptions: any): Record<string, any>[] {
     if (o && typeof o === 'object' && !Array.isArray(o)) {
       const value = typeof o.value === 'string' && o.value.trim() ? o.value.trim() : undefined
       const label = typeof o.label === 'string' && o.label.trim() ? o.label.trim() : undefined
-      const svg = sanitizeQuestionsSvg(o.svg)
-      if (!svg) continue
-      if (value) { out.push({ value, ...(label ? { label } : {}), svg }); continue }
-      if (label) { out.push({ value: label, label, svg }); continue }
+      const preview = sanitizeQuestionsPreview(o.svg)
+      const svg = preview ? { svg: preview } : {}
+      if (value) { out.push({ value, ...(label ? { label } : {}), ...svg }); continue }
+      if (label) { out.push({ value: label, label, ...svg }); continue }
     }
   }
   return out

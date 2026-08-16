@@ -89,6 +89,63 @@ async function emitQuestions(page: Page, questions: unknown[]): Promise<void> {
   }, questions)
 }
 
+const UX_ARTIFACTS = 'tests/artifacts/questions-panel'
+
+test.describe('问卷面板：代选规则与版式', () => {
+  test('不再逐题摆「交给 AI 判断」；必答题拦提交；未答题落成 AI 判断', async ({ page }) => {
+    await setupChat(page)
+    await emitQuestions(page, [
+      { id: 'tone', kind: 'text-options', title: '讲解语气', subtitle: '影响旁白与字幕的口吻', options: ['活泼', '沉稳'] },
+      { id: 'palette', kind: 'svg-options', title: '色板', options: [
+        { value: 'green', label: '深绿', svg: '<svg viewBox="0 0 80 56"><rect width="80" height="56" fill="#0F3D2E"/></svg>' },
+        { value: 'cream', label: '奶油', svg: '<svg viewBox="0 0 80 56"><rect width="80" height="56" fill="#F5F1E8"/></svg>' }
+      ] },
+      { id: 'pace', kind: 'slider', title: '节奏', min: 1, max: 5, step: 1, default: 3 },
+      { id: 'notes', kind: 'freeform', title: '还有什么要补充的', placeholder: '可以留空' },
+      { id: 'topics', kind: 'multi-chip', title: '想覆盖的点', options: ['从众', '匿名', '情绪'] },
+      { id: 'memo', kind: 'text-options', title: '是否把这条偏好写进你的档案', options: ['记下来', '不要记录'], allowAiDecision: false }
+    ])
+
+    // 规则改造：选项区只剩真选项 + 其他；代选变成面板级的一句话
+    // （本 harness 没 mock getLocaleState，UI 走 en——断言用英文串，模型给的选项文本仍是中文）
+    await expect(page.getByText('Let AI decide', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('You do not have to answer every question', { exact: false })).toBeVisible()
+    await expect(page.getByText('Required', { exact: true })).toHaveCount(1)
+
+    await page.screenshot({ path: `${UX_ARTIFACTS}/panel-wide.png`, fullPage: true })
+
+    // 必答题没答 → 拦下，不发任何消息
+    await page.getByRole('button', { name: 'Submit and continue' }).click()
+    await expect(page.getByTestId('questions-required-notice')).toBeVisible()
+    await expect(page.getByTestId('question-missing')).toHaveCount(1)
+    // 提示要能定位：被拦下的那道题必须被滚进视野，而不是只在底部亮一行字
+    await expect(page.getByTestId('question-missing')).toBeInViewport({ timeout: 3000 })
+    expect(await page.evaluate(() =>
+      (window as any).__mockCalls.filter((c: any) => c.method === 'sendChat').length)).toBe(0)
+    await page.screenshot({ path: `${UX_ARTIFACTS}/panel-required-blocked.png`, fullPage: true })
+
+    // 答掉必答题 → 放行；其余没答的题统一落成「请 AI 根据已有信息判断」
+    await page.getByRole('button', { name: '不要记录' }).click()
+    await page.getByRole('button', { name: 'Submit and continue' }).click()
+    await expect.poll(() => page.evaluate(() =>
+      (window as any).__mockCalls.filter((c: any) => c.method === 'sendChat').length)).toBeGreaterThan(0)
+    const sent = await page.evaluate(() =>
+      JSON.stringify((window as any).__mockCalls.find((c: any) => c.method === 'sendChat')))
+    expect(sent).toContain('Let AI decide from the available information')
+    expect(sent).toContain('不要记录')
+  })
+
+  test('流式空档给骨架占位，不是一片白', async ({ page }) => {
+    await setupChat(page)
+    await page.evaluate(() => (window as any).__mockBus.emit('questions-v2-delta', '', {
+      id: 'q-stream', title: '《乌合之众》儿童讲解动画 · 几个关键问题', questions: []
+    }))
+    await expect(page.getByTestId('questions-skeleton')).toBeVisible()
+    await expect(page.getByTestId('questions-streaming')).toBeVisible()
+    await page.screenshot({ path: `${UX_ARTIFACTS}/panel-streaming.png`, fullPage: true })
+  })
+})
+
 test.describe('questions_v2 生命周期与动态附件', () => {
   test('模型 SVG 只保留静态图形，事件、脚本和外部资源不会进入主界面', async ({ page }) => {
     await setupChat(page)

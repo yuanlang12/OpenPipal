@@ -1,18 +1,19 @@
 /**
  * DC 动画导出 MP4 —— 确定性逐帧导出（不做实时录屏）。
  *
- * 核心机制：resources/dc-runtime/animations.jsx 的 Stage 组件内置了官方视频导出协议——
- * 画布 svg 带 data-om-exportable-video-with-duration-secs 属性标记可截图元素，并监听
- * 'data-om-seek-to-time-frame' CustomEvent（挂在该 svg 元素本身，detail.time 为秒）：收到后
+ * 核心机制：resources/dc-runtime 的动画运行时（Stage 组件）内置了视频导出协议——画布元素带
+ * data-om-exportable-video-with-duration-secs 属性标记可截图元素，并监听
+ * 'data-om-seek-to-time-frame' CustomEvent（挂在该元素本身，detail.time 为秒）：收到后
  * 暂停播放并把播放头精确定位到该时间戳。导出器逐帧 dispatch 这个事件驱动 React 渲染到精确的
- * t=i/fps，再用 CDP Page.captureScreenshot 对该 svg 元素做 clip 截图（只截画布本身，不含底部
+ * t=i/fps，再用 CDP Page.captureScreenshot 对该元素做 clip 截图（只截画布本身，不含底部
  * 播放条/黑色 letterbox），彻底避开 capturePage() 截整个隐藏窗口带来的播放条+黑边问题。
+ * 选择器只认协议属性、不限定标签名（自研运行时的画布是普通元素，旧产物的 svg 画布同样命中）。
  *
- * 舞台真实尺寸以从导出 svg 读到的 width/height 属性（引擎从 Stage props 写入，不是解析
+ * 舞台真实尺寸以从画布元素读到的 width/height 属性（引擎从 Stage props 写入，不是解析
  * content 猜出来的）为唯一真值。拿到真值后用 CDP Emulation.setDeviceMetricsOverride 把
- * 视口仿真到 stageWidth x (stageHeight+44)（44 = 播放条预留高度），与隐藏窗口的物理尺寸
- * 解耦——舞台大于当前屏幕分辨率时 macOS 会 clamp 隐藏窗口的实际尺寸，若仍靠物理窗口撑视口，
- * 引擎的自适应缩放 scale = min(w/width, (h-44)/height) 会被压到 <1，画布缩小后再被 clip
+ * 视口仿真到 stageWidth x (stageHeight+160)（160 = 播放条/剪辑轨的下沿预算，见 setViewport），
+ * 与隐藏窗口的物理尺寸解耦——舞台大于当前屏幕分辨率时 macOS 会 clamp 隐藏窗口的实际尺寸，
+ * 若仍靠物理窗口撑视口，引擎的自适应缩放会被压到 <1，画布缩小后再被 clip
  * 截图放大就会糊。override 后轮询等引擎 ResizeObserver 结算到 scale≈1（±2px 容差），
  * 超时直接中止导出而不是带着错误缩放值继续跑完整条流水线却不报错。
  *
@@ -22,7 +23,7 @@
  * 装配复用 dc-export.ts 的 assembleOfflineDc（headless 内联 + React vendor 内联，断网可开，
  * 杜绝 unpkg CDN 的网络不确定性）。
  *
- * 时长同样以 DOM 为唯一真值：导出 svg 的 data-om-exportable-video-with-duration-secs 属性
+ * 时长同样以 DOM 为唯一真值：画布元素的 data-om-exportable-video-with-duration-secs 属性
  * 是引擎已经解析好的真实秒数（哪怕源码写的是 duration={DURATION} 变量引用，也已经被引擎求值成
  * 具体数字写在这里）——不再靠源码正则猜 duration={N}/"N"/:N（猜不到变量引用，会静默落错误兜底）。
  * opts.durationSec 变成可选、仅用于向后兼容显式截取场景（如自动化冒烟测试固定跑 N 秒）；不传时
@@ -62,7 +63,7 @@ function resolveFfmpegBin(): string {
 /**
  * Stage 尺寸 heuristic：content 里第一个 width=/height=（HTML 属性 "N"/'N' 或 JSX 花括号 {N} 皆可）。
  * ⚠️ 不可信——仅用于创建隐藏窗口的初值猜测（正则会无声匹配到非像素值，例如
- * `width="100%"` 的 "100"）。真正的舞台尺寸以导出后从 DOM 读到的 svg width/height
+ * `width="100%"` 的 "100"）。真正的舞台尺寸以导出后从 DOM 读到的画布 width/height
  * 属性为准（见 readDomStageSize），后续视口/clip/ffmpeg 归一一律用 DOM 值。
  */
 function parseStageSize(content: string): { width: number; height: number } {
@@ -77,28 +78,33 @@ function parseStageSize(content: string): { width: number; height: number } {
   return { width, height }
 }
 
-export const SVG_SELECTOR = "document.querySelector('svg[data-om-exportable-video-with-duration-secs]')"
+/**
+ * 导出目标画布的定位式。**只认协议属性，不限定标签名**——自研运行时的画布是普通元素，
+ * foreignObject 那套（字体不继承、尺寸怪癖）在"对活页面做像素捕获"的路线上零收益。
+ * 属性名不动（协议标识符照搬），所以旧产物里的 svg 画布同样命中这条选择器。
+ */
+export const CANVAS_SELECTOR = "document.querySelector('[data-om-exportable-video-with-duration-secs]')"
 
-/** 轮询等导出目标 svg 出现（引擎 React 挂载完成的标志），超时报中文错误。 */
-export async function waitForSvgReady(dbg: Electron.Debugger, timeoutMs: number): Promise<void> {
-  const ready = await pollUntil(dbg, `!!${SVG_SELECTOR}`, timeoutMs)
+/** 轮询等导出目标画布出现（引擎 React 挂载完成的标志），超时报中文错误。 */
+export async function waitForCanvasReady(dbg: Electron.Debugger, timeoutMs: number): Promise<void> {
+  const ready = await pollUntil(dbg, `!!${CANVAS_SELECTOR}`, timeoutMs)
   if (!ready) throw new Error(tMain('artifacts.shell.export.errors.canvasNotReady'))
 }
 
-/** 轮询等引擎完成字体内联（data-om-fonts-inlined）；超时不阻塞，直接放行继续导出。 */
+/** 轮询等引擎置位字体就绪（data-om-fonts-inlined）；超时不阻塞，直接放行继续导出。 */
 export async function waitForFontsInlined(dbg: Electron.Debugger, timeoutMs: number): Promise<void> {
-  await pollUntil(dbg, `!!(${SVG_SELECTOR}?.getAttribute('data-om-fonts-inlined'))`, timeoutMs)
+  await pollUntil(dbg, `!!(${CANVAS_SELECTOR}?.getAttribute('data-om-fonts-inlined'))`, timeoutMs)
 }
 
 /**
- * 舞台真实尺寸的唯一来源：导出 svg 元素上引擎从 Stage props 写入的 width/height 数字属性
+ * 舞台真实尺寸的唯一来源：画布元素上引擎从 Stage props 写入的 width/height 数字属性
  * （非 CSS 尺寸，不受当前缩放影响）。parseStageSize 的正则解析只是创建隐藏窗口的初值猜测，
  * 不可信——读不到或非正数一律返回 null，交给调用方判定为致命错误而不是静默用错误值继续。
  */
 export async function readDomStageSize(dbg: Electron.Debugger): Promise<{ width: number; height: number } | null> {
   const raw = await evalChecked(
     dbg,
-    `(() => { const el = ${SVG_SELECTOR}; if (!el) return null; return { width: el.getAttribute('width'), height: el.getAttribute('height') }; })()`
+    `(() => { const el = ${CANVAS_SELECTOR}; if (!el) return null; return { width: el.getAttribute('width'), height: el.getAttribute('height') }; })()`
   )
   if (!raw) return null
   const width = Math.round(parseFloat(raw.width))
@@ -108,15 +114,15 @@ export async function readDomStageSize(dbg: Electron.Debugger): Promise<{ width:
 }
 
 /**
- * 视频时长的唯一来源：导出 svg 元素上 data-om-exportable-video-with-duration-secs 属性——引擎
- * （animations.jsx Stage 组件）已经把 duration prop 解析成具体秒数字符串写在这里，哪怕源码写的是
+ * 视频时长的唯一来源：画布元素上 data-om-exportable-video-with-duration-secs 属性——引擎
+ * （Stage 组件）已经把 duration prop 解析成具体秒数字符串写在这里，哪怕源码写的是
  * duration={DURATION} 变量引用也已被引擎求值，比源码正则猜测可靠。允许小数秒（不 round——时长
  * 语义是精确截取到某个时间点，不是取整）。读不到或非正数一律返回 null。
  */
 export async function readDomDurationSec(dbg: Electron.Debugger): Promise<number | null> {
   const raw = await evalChecked(
     dbg,
-    `(() => { const el = ${SVG_SELECTOR}; return el ? el.getAttribute('data-om-exportable-video-with-duration-secs') : null; })()`
+    `(() => { const el = ${CANVAS_SELECTOR}; return el ? el.getAttribute('data-om-exportable-video-with-duration-secs') : null; })()`
   )
   if (raw == null) return null
   const n = parseFloat(raw)
@@ -136,10 +142,14 @@ export async function setViewport(dbg: Electron.Debugger, stageWidth: number, st
   await setDeviceMetricsOverride(
     dbg,
     stageWidth,
-    // +60：播放条实际渲染 45px（44 预留 + 1px borderTop）+ 余量。只给 +44 时自适应
-    // 结果 719/720=0.9986，贴着守卫 ±2px 容差的边缘；给足余量后 scale 精确 =1
-    // （宽度比恰为 1 封顶 min()），远离边界。
-    stageHeight + 60,
+    // +160：给播放条留的下沿预算。曾经是 +60（播放条 45px = 44 + 1px borderTop + 余量），
+    // 2026-08-15 播放条升级成剪辑台后，展开态是「控制行 44 + 轨道行 40」= 84px
+    // （1px 上边框走 border-box，含在 44 里），
+    // 60 已经不够——不够的后果不是难看而是**导出中止**：视口被啃到 stageHeight 以下，
+    // 引擎自适应把画布压成 scale<1，waitForAutofitSettled 的 ±2px 断言直接判失败。
+    // 预留多给不花任何代价（画布 scale 封顶 1、截图按画布矩形 clip，多出来的只是 letterbox），
+    // 所以直接给到远离边界的 160，而不是贴着 85 再算余量。
+    stageHeight + 160,
     // 2 = 2x 超采样抗锯齿。实测（240 帧对照：dsf2+png 24.3s / dsf1+png 25.5s /
     // dsf1+jpeg 25.3s）每帧 ~105ms 是固定延迟主导（双 rAF + CDP 往返 + 合成器读回），
     // 与像素量/编码格式无关——降采样不省时间，超采样画质等于白拿，保留 2。
@@ -149,7 +159,7 @@ export async function setViewport(dbg: Electron.Debugger, stageWidth: number, st
 
 /**
  * 轮询等引擎 autofit 在视口 override 后结算（override 触发 ResizeObserver 重算，需要时间）：
- * 反复量 svg 的 getBoundingClientRect，直到实测尺寸收敛到舞台尺寸（±2px 容差）。
+ * 反复量画布元素的 getBoundingClientRect，直到实测尺寸收敛到舞台尺寸（±2px 容差）。
  * 返回 settled=false 时调用方必须中止导出——这是跨步骤不变量断言，防止"错误的一致性"
  * （视口/clip/ffmpeg 全部忠实执行同一个错误缩放值，却因为没有报错而被误当作导出成功）。
  */
@@ -167,7 +177,7 @@ export async function waitForAutofitSettled(
     // 下次真机故障不用再猜是滚动条、缩放还是溢出。
     const m = await evalChecked(
       dbg,
-      `(() => { const el = ${SVG_SELECTOR}; const r = el.getBoundingClientRect(); const d = document.documentElement;
+      `(() => { const el = ${CANVAS_SELECTOR}; const r = el.getBoundingClientRect(); const d = document.documentElement;
         return { x: r.x, y: r.y, width: r.width, height: r.height,
                  env: 'inner ' + window.innerWidth + 'x' + window.innerHeight + ' client ' + d.clientWidth + 'x' + d.clientHeight + ' scroll ' + d.scrollWidth + 'x' + d.scrollHeight }; })()`
     )
@@ -212,11 +222,11 @@ export async function exportArtifactMp4(
       show: false,
       useContentSize: true,
       width,
-      // +44：Stage 组件为播放条预留的高度。这里的 width/height 只是 parseStageSize 的
+      // +160：Stage 组件为播放条/剪辑轨预留的高度。这里的 width/height 只是 parseStageSize 的
       // heuristic 初值——用来开一个大致合适的隐藏窗口。真实舞台尺寸稍后从 DOM 读出，
       // 再用 CDP Emulation.setDeviceMetricsOverride 仿真视口，与本窗口的物理尺寸解耦，
       // 不受 macOS 屏幕 clamp 影响，无需在这里保证精确。
-      height: height + 44,
+      height: height + 160,
       webPreferences: {
         sandbox: true,
         contextIsolation: true,
@@ -236,8 +246,8 @@ export async function exportArtifactMp4(
     }
     await dbg.sendCommand('Page.enable')
 
-    // 等导出目标 svg 出现，再等一次双 rAF 让 React effects（seek 事件监听器等）挂载稳定。
-    await waitForSvgReady(dbg, 8000)
+    // 等导出目标画布出现，再等一次双 rAF 让 React effects（字体置位等）落定。
+    await waitForCanvasReady(dbg, 8000)
     await evalChecked(
       dbg,
       `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`,
@@ -282,15 +292,15 @@ export async function exportArtifactMp4(
 
     for (let i = 0; i < totalFrames; i++) {
       const t = (i / fps).toFixed(6)
-      // seek 事件挂在 svg 元素本身（canvasRef），必须 dispatch 到同一个元素，打到
+      // seek 事件挂在画布元素本身（canvasRef），必须 dispatch 到同一个元素，打到
       // window/document 上收不到。双 rAF 确保 React 提交 + 合成绘制完成后才 resolve，
       // 这样第 i 帧就是精确的 t=i/fps 秒，不存在相位漂移。
       await evalChecked(
         dbg,
         `(() => new Promise((resolve, reject) => {
           try {
-            const el = ${SVG_SELECTOR};
-            if (!el) { reject(new Error('svg missing')); return; }
+            const el = ${CANVAS_SELECTOR};
+            if (!el) { reject(new Error('canvas missing')); return; }
             el.dispatchEvent(new CustomEvent('data-om-seek-to-time-frame', { detail: { time: ${t} } }));
             requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
           } catch (e) { reject(e); }

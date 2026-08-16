@@ -34,7 +34,8 @@ async function fetchJson(url: string, apiKey?: string): Promise<any | null> {
   }
 }
 
-function pickWindow(info: any): number {
+/** 各家网关自定义的窗口字段（远端模型列举复用同一份名单，见 remote-model-list.ts） */
+export function pickWindow(info: any): number {
   if (!info || typeof info !== 'object') return 0
   const w = info.max_input_tokens || info.context_length || info.max_model_len || info.context_window
   return typeof w === 'number' && w > 0 ? w : 0

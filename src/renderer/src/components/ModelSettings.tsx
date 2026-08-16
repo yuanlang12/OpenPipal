@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Eye, EyeOff, Check, X, Plus, Trash2, Edit2, Brain, ChevronLeft, ChevronDown } from 'lucide-react'
+import { Eye, EyeOff, Check, X, Plus, Trash2, Edit2, Brain, ChevronLeft, ChevronDown, Search, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toDisplayError, renderDisplayError, type DisplayError } from '../utils/mainError'
 import { displayModelEntryName } from '../utils/modelDisplay'
+import { AnchoredMenu } from './shared/AnchoredMenu'
 
 interface ThinkingBudgets {
   low: number
@@ -184,14 +185,23 @@ type ContextDetectionState =
   | { kind: 'detected'; window: number; source: string }
   | { kind: 'unavailable' }
 
-const PROVIDER_PRESETS: Record<string, { name: string; baseUrl: string; models: string[] }> = {
-  openai: { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
-  deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'] },
-  openrouter: { name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', models: ['anthropic/claude-sonnet-4', 'google/gemini-2.5-flash'] },
-  siliconflow: { name: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', models: ['Qwen/Qwen2.5-72B-Instruct'] },
-  zai: { name: 'Z.AI (GLM)', baseUrl: 'https://api.z.ai/api/coding/paas/v4', models: ['glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-4.7'] },
-  custom: { name: '', baseUrl: '', models: [] }
+/** 目录条目：主进程直接从 Pi 的模型目录算出来（getProviders），这里不再手抄一份 */
+interface CatalogModelEntry {
+  id: string
+  name?: string
+  reasoning?: boolean
+  image?: boolean
+  contextWindow?: number
+  /** 只有"从服务商获取"回来的条目才有：true = Pi 目录也认识它 */
+  known?: boolean
 }
+interface CatalogProviderEntry { name: string; baseUrl: string; models: CatalogModelEntry[] }
+
+/** 目录里没有"自定义"这一项——它不是一个服务商，是"目录里找不到时自己填" */
+const CUSTOM_PROVIDER_ENTRY: CatalogProviderEntry = { name: '', baseUrl: '', models: [] }
+
+/** 下拉里最多列多少个模型：openrouter 一家就有 300+，全量渲染既慢又没法看 */
+const MODEL_SUGGESTION_LIMIT = 60
 
 const CONTEXT_WINDOW_PRESETS = [
   { value: 32_768, compact: '32K' },
@@ -298,8 +308,21 @@ export function ModelSettings() {
   const [autoCorrected, setAutoCorrected] = useState(false)
   const [thinkingStatus, setThinkingStatus] = useState<ThinkingTestStatus>('idle')
   const [thinkingError, setThinkingError] = useState<DisplayError | null>(null)
-  const [modelSuggestions, setModelSuggestions] = useState<string[]>([])
   const [showModelDropdown, setShowModelDropdown] = useState(false)
+  const [showProviderMenu, setShowProviderMenu] = useState(false)
+  const [providerQuery, setProviderQuery] = useState('')
+  // 服务商本人给的模型清单，连同"它是替哪套配置问来的"一起存。配置一变，这份答案自然
+  // 就不新鲜了（派生判断，不需要 effect 去清）；迟到的响应也因为带着旧 key 而自动作废。
+  const [remote, setRemote] = useState<{ key: string; models?: CatalogModelEntry[]; error?: DisplayError } | null>(null)
+  const [remoteLoading, setRemoteLoading] = useState(false)
+  // 服务商 + 模型目录（来自 Pi）。空对象 = 还没加载出来，此时只剩"自定义"可选，不阻塞填写。
+  const [catalog, setCatalog] = useState<Record<string, CatalogProviderEntry>>({})
+  // 目录服务商的地址默认只读——点开"高级"才允许改成镜像/代理
+  const [endpointUnlocked, setEndpointUnlocked] = useState(false)
+  const catalogEntry = provider === 'custom' ? undefined : catalog[provider]
+  const endpointLocked = !!catalogEntry && !endpointUnlocked
+  const remoteFresh = remote?.key === `${provider}|${baseUrl}|${apiKey}` ? remote : null
+  const modelSuggestions = remoteFresh?.models ?? catalogEntry?.models ?? []
   const qwenThinkingSelected = thinkingFormat === 'qwen' || (thinkingFormat === 'auto' && /qwen/i.test(model))
   // Pi 原生目录已为官方 Token Plan / DashScope 的 Qwen3.8 定义 reasoning_effort。
   // 这类模型不能再套 Qwen3.7 的 token 预算编辑器，避免同一请求发两种协议字段。
@@ -309,7 +332,7 @@ export function ModelSettings() {
   const thinkingBudgetInvalid = !nativeQwen38 && thinkingBudgetMode === 'custom' && !parseThinkingBudgets(thinkingBudgetDraft)
 
   const modelInputRef = useRef<HTMLInputElement>(null)
-  const modelDropdownRef = useRef<HTMLDivElement>(null)
+  const providerButtonRef = useRef<HTMLButtonElement>(null)
 
   const loadPresets = useCallback(async () => {
     const models = await window.api.getAvailableModels?.()
@@ -318,30 +341,76 @@ export function ModelSettings() {
     if (provs) setProviders(provs)
   }, [])
 
+  // 目录只在挂载时取一次：它来自 Pi 的静态表，一个会话内不会变
+  useEffect(() => {
+    window.api.getProviders?.()
+      .then((entries: Record<string, CatalogProviderEntry>) => { if (entries) setCatalog(entries) })
+      .catch(() => { /* 取不到就只剩"自定义"，不挡用户填写 */ })
+  }, [])
+
   useEffect(() => { loadPresets() }, [])
 
-  useEffect(() => {
-    const preset = PROVIDER_PRESETS[provider]
-    if (preset) setModelSuggestions(preset.models)
-  }, [provider])
+  /** 服务商按名字和 id 一起筛：用户可能记得 "opencode" 也可能记得 "OpenCode Zen" */
+  const providerLabelOf = (key: string): string =>
+    key === 'custom' ? t('settings.model.providers.customName') : (catalog[key]?.name || key)
+  const providerQ = providerQuery.trim().toLowerCase()
+  const filteredProviders = Object.entries({ ...catalog, custom: CUSTOM_PROVIDER_ENTRY })
+    .filter(([key, entry]) => (key + entry.name).toLowerCase().includes(providerQ))
 
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node) &&
-          modelInputRef.current && !modelInputRef.current.contains(e.target as Node)) {
-        setShowModelDropdown(false)
-      }
+  /**
+   * 向服务商本人要清单。/models 是 OpenAI 兼容协议的事实标准，但大量网关没实现——
+   * 失败不是错误路径，退回目录 + 手填即可，所以这里只留一行提示不拦任何操作。
+   */
+  const handleFetchRemoteModels = async (config?: ModelConfig): Promise<void> => {
+    const cfg = config ?? buildFormModelConfig()
+    // key 用真正发出去的那套配置算：测试连接补过 /v1 时，答案属于补过的地址
+    const key = `${cfg.provider}|${cfg.baseUrl}|${cfg.apiKey}`
+    setRemoteLoading(true)
+    const result = await window.api.listRemoteModels?.(cfg).catch(() => null)
+    setRemoteLoading(false)
+    setRemote(result?.models?.length
+      ? { key, models: result.models }
+      : { key, error: toDisplayError(result, 'settings.model.errors.remoteModelsFailed') })
+  }
+
+  /**
+   * 输入即筛选。目录里 openrouter 一家就有 300+ 个模型，不筛没法用；
+   * 已经填了完整模型名时不再列它自己（那条建议没有信息量）。
+   */
+  const filteredSuggestions = (() => {
+    const query = model.trim().toLowerCase()
+    const pool = query
+      ? modelSuggestions.filter(entry => entry.id.toLowerCase().includes(query))
+      : modelSuggestions
+    if (pool.length === 1 && pool[0].id.toLowerCase() === query) return []
+    return pool.slice(0, MODEL_SUGGESTION_LIMIT)
+  })()
+
+  /**
+   * 从目录选中一个模型：能力位一并回填。
+   * 这是目录路径最大的收益——填错 supportsImages 会让网关吃 400，
+   * 目录里既然写着，就别再问用户一遍。
+   */
+  const pickCatalogModel = (entry: CatalogModelEntry): void => {
+    setModel(entry.id)
+    setShowModelDropdown(false)
+    if (entry.reasoning !== undefined) setSupportsThinking(entry.reasoning)
+    if (entry.image !== undefined) setSupportsImages(entry.image)
+    if (entry.contextWindow) {
+      setContextWindow(String(entry.contextWindow))
+      setContextWindowChoice(getContextWindowChoice(String(entry.contextWindow)))
     }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
+    setConnectionStatus('idle')
+  }
 
   const handleProviderChange = (p: string) => {
     setProvider(p)
-    const preset = PROVIDER_PRESETS[p]
-    if (preset && p !== 'custom') {
-      setBaseUrl(preset.baseUrl)
-      if (preset.models.length > 0) setModel(preset.models[0])
+    setEndpointUnlocked(false)
+    const entry = catalog[p]
+    if (entry && p !== 'custom') {
+      setBaseUrl(entry.baseUrl)
+      // 不再自动填第一个模型：目录里一家可能有几百个，随手挑一个既无意义又像是"已经选好了"
+      setModel('')
     }
     if (p === 'zai') {
       setSupportsThinking(true)
@@ -384,6 +453,12 @@ export function ModelSettings() {
         setBaseUrl(result.correctedBaseUrl)
         setAutoCorrected(true)
       }
+      // 连通的这一刻是唯一能确定"这把 key 真的能用"的时机，顺手把清单取回来；
+      // 地址被自动补 /v1 时用补过的那个问，否则又会打到错的端点上
+      void handleFetchRemoteModels({
+        ...config,
+        ...(result.correctedBaseUrl ? { baseUrl: result.correctedBaseUrl } : {})
+      })
       setTimeout(() => setConnectionStatus(s => s === 'success' ? 'idle' : s), 3000)
     } else {
       setConnectionStatus('error')
@@ -453,8 +528,14 @@ export function ModelSettings() {
     if (!preset) return
     const rawConfig: ModelConfig = preset.rawConfig || preset.config
     setEditingId(id)
-    setProvider(preset.config.provider || 'custom')
+    const savedProvider = preset.config.provider || 'custom'
+    setProvider(savedProvider)
     setBaseUrl(preset.config.baseUrl || '')
+    // 存的地址跟目录里的官方地址不一致 = 用户当初就是奔着镜像/代理去的，直接展开高级，
+    // 别让它显示成一个不可改的"官方地址"
+    setEndpointUnlocked(
+      !!catalog[savedProvider] && (preset.config.baseUrl || '') !== catalog[savedProvider].baseUrl
+    )
     setApiKey(preset.config.apiKey || '')
     setModel(preset.config.model || '')
     setSupportsThinking(!!preset.config.supportsThinking)
@@ -519,6 +600,7 @@ export function ModelSettings() {
 
   const resetForm = () => {
     setProvider('custom')
+    setEndpointUnlocked(false)
     setBaseUrl('')
     setApiKey('')
     setModel('')
@@ -539,6 +621,8 @@ export function ModelSettings() {
     setConnectionErrorOverride(null)
     setThinkingStatus('idle')
     setThinkingError(null)
+    setShowProviderMenu(false)
+    setShowModelDropdown(false)
   }
 
   // 按服务商分组：服务商实体顺序在前，providerId 悬空的进"未分组"尾部
@@ -645,14 +729,63 @@ export function ModelSettings() {
           {/* Provider */}
           <div>
             <label className="block text-[11px] text-surface-400 mb-1">{t('settings.model.form.providerLabel')}</label>
-            <select value={provider} onChange={e => handleProviderChange(e.target.value)}
-              className="w-full text-[13px] text-surface-700 bg-surface-50 border border-surface-100 rounded-md px-2.5 py-1.5 outline-none focus:border-brand-400 transition-colors">
-              {Object.entries(PROVIDER_PRESETS).map(([key, p]) => (
-                <option key={key} value={key}>
-                  {key === 'custom' ? t('settings.model.providers.customName') : p.name}
-                </option>
+            {/* 不用原生 <select>：目录接进来后这里有 30+ 家，macOS 会把系统菜单按选中项
+                对齐到触发框、整体顶出窗口顶部，且不受任何 CSS 控制 */}
+            <button
+              type="button"
+              ref={providerButtonRef}
+              data-testid="model-provider-trigger"
+              aria-haspopup="listbox"
+              aria-expanded={showProviderMenu}
+              onClick={() => { setProviderQuery(''); setShowProviderMenu(o => !o) }}
+              className="w-full flex items-center justify-between gap-2 text-[13px] text-surface-700 bg-surface-50 border border-surface-100 rounded-md px-2.5 py-1.5 outline-none hover:border-surface-200 focus:border-brand-400 transition-colors"
+            >
+              <span className="truncate">{providerLabelOf(provider)}</span>
+              <ChevronDown className="w-3.5 h-3.5 shrink-0 text-surface-400" />
+            </button>
+            {/* 条件挂载而不是把 open 交给浮层自己判：children 是普通 props，
+                菜单关着时也会被整个求值一遍再扔掉 */}
+            {showProviderMenu && (
+            <AnchoredMenu
+              anchorRef={providerButtonRef}
+              open
+              onClose={() => setShowProviderMenu(false)}
+              testId="model-provider-menu"
+            >
+              <div className="sticky top-0 bg-surface-0 dark:bg-surface-50 p-1.5 border-b border-surface-100">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-surface-300" />
+                  <input
+                    autoFocus
+                    value={providerQuery}
+                    onChange={e => setProviderQuery(e.target.value)}
+                    placeholder={t('settings.model.form.providerSearchPlaceholder')}
+                    data-testid="model-provider-search"
+                    className="w-full text-[12px] text-surface-700 bg-surface-50 dark:bg-surface-100 border border-surface-100 rounded-md pl-6 pr-2 py-1 outline-none focus:border-brand-400"
+                  />
+                </div>
+              </div>
+              {filteredProviders.map(([key, p]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="option"
+                  data-menu-item
+                  aria-selected={key === provider}
+                  data-testid={`model-provider-option-${key}`}
+                  onClick={() => { handleProviderChange(key); setShowProviderMenu(false) }}
+                  className={`w-full text-left px-2.5 py-1.5 hover:bg-surface-50 dark:hover:bg-surface-100 transition-colors ${key === provider ? 'bg-brand-50 dark:bg-brand-900/20' : ''}`}
+                >
+                  <span className={`block text-[13px] truncate ${key === provider ? 'text-brand-600' : 'text-surface-600'}`}>
+                    {providerLabelOf(key)}
+                  </span>
+                  <span className="block text-[10px] text-surface-400 truncate">
+                    {key === 'custom' ? t('settings.model.form.providerCustomHint') : `${p.models.length} · ${hostOf(p.baseUrl)}`}
+                  </span>
+                </button>
               ))}
-            </select>
+            </AnchoredMenu>
+            )}
           </div>
 
           {/* 接口格式：只有自定义 provider 才需要选——内置服务商协议是固定的 */}
@@ -695,15 +828,44 @@ export function ModelSettings() {
           <div>
             <label className="block text-[11px] text-surface-400 mb-1">{t('settings.model.form.baseUrlLabel')}</label>
             <input type="text" value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
+              readOnly={endpointLocked}
+              data-testid="model-base-url"
               placeholder={provider === 'custom' && apiFormat === 'anthropic' ? 'https://your-gateway.com' : 'https://api.openai.com/v1'}
-              className="w-full text-[13px] text-surface-700 bg-surface-50 border border-surface-100 rounded-md px-2.5 py-1.5 outline-none focus:border-brand-400 transition-colors" />
-            <span className="block text-[10.5px] text-surface-400 mt-1">
-              {provider === 'custom' && apiFormat === 'anthropic'
-                ? t('settings.model.form.baseUrlHelpAnthropic')
-                : provider === 'custom' && apiFormat === 'openai-responses'
-                  ? t('settings.model.form.baseUrlHelpResponses')
-                  : t('settings.model.form.baseUrlHelpDefault')}
-            </span>
+              className={`w-full text-[13px] border border-surface-100 rounded-md px-2.5 py-1.5 outline-none transition-colors ${
+                endpointLocked
+                  ? 'text-surface-400 bg-surface-100/60 cursor-default'
+                  : 'text-surface-700 bg-surface-50 focus:border-brand-400'
+              }`} />
+            {catalogEntry ? (
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[10.5px] text-surface-400">
+                  {endpointUnlocked
+                    ? t('settings.model.form.endpointOverridden')
+                    : t('settings.model.form.endpointFromCatalog')}
+                </span>
+                <button
+                  type="button"
+                  data-testid="model-endpoint-advanced"
+                  onClick={() => {
+                    // 收进"高级"：镜像/代理是少数场景，但不给入口的话这类用户只能退回自定义、
+                    // 白白丢掉目录里的协议与能力位
+                    if (endpointUnlocked) setBaseUrl(catalogEntry.baseUrl)
+                    setEndpointUnlocked(u => !u)
+                  }}
+                  className="text-[10.5px] text-brand-600 hover:text-brand-700 transition-colors"
+                >
+                  {endpointUnlocked ? t('settings.model.form.endpointRestore') : t('settings.model.form.endpointEdit')}
+                </button>
+              </div>
+            ) : (
+              <span className="block text-[10.5px] text-surface-400 mt-1">
+                {apiFormat === 'anthropic'
+                  ? t('settings.model.form.baseUrlHelpAnthropic')
+                  : apiFormat === 'openai-responses'
+                    ? t('settings.model.form.baseUrlHelpResponses')
+                    : t('settings.model.form.baseUrlHelpDefault')}
+              </span>
+            )}
           </div>
 
           {/* API Key */}
@@ -724,21 +886,65 @@ export function ModelSettings() {
           </div>
 
           {/* Model */}
-          <div className="relative">
+          <div>
             <label className="block text-[11px] text-surface-400 mb-1">{t('settings.model.form.modelLabel')}</label>
             <input ref={modelInputRef} type="text" value={model} onChange={e => setModel(e.target.value)}
               onFocus={() => { if (modelSuggestions.length > 0) setShowModelDropdown(true) }}
               placeholder={t('settings.model.form.modelPlaceholder')}
               className="w-full text-[13px] text-surface-700 bg-surface-50 border border-surface-100 rounded-md px-2.5 py-1.5 outline-none focus:border-brand-400 transition-colors" />
-            {showModelDropdown && modelSuggestions.length > 0 && (
-              <div ref={modelDropdownRef} className="op-menu absolute z-10 left-0 right-0 mt-1 overflow-hidden">
-                {modelSuggestions.map(m => (
-                  <button key={m} onClick={() => { setModel(m); setShowModelDropdown(false) }}
-                    className={`w-full text-left text-[13px] px-2.5 py-1.5 hover:bg-surface-50 dark:hover:bg-surface-100 transition-colors ${m === model ? 'text-brand-600 bg-brand-50' : 'text-surface-600'}`}>
-                    {m}
-                  </button>
-                ))}
-              </div>
+            {showModelDropdown && filteredSuggestions.length > 0 && (
+            <AnchoredMenu
+              anchorRef={modelInputRef}
+              open
+              onClose={() => setShowModelDropdown(false)}
+              testId="model-suggestions"
+            >
+              {filteredSuggestions.map(entry => (
+                <button key={entry.id} type="button" onClick={() => pickCatalogModel(entry)}
+                  role="option" data-menu-item aria-selected={entry.id === model}
+                  data-testid={`model-suggestion-${entry.id}`}
+                  className={`w-full text-left px-2.5 py-1.5 hover:bg-surface-50 dark:hover:bg-surface-100 transition-colors ${entry.id === model ? 'bg-brand-50' : ''}`}>
+                  <span className={`block text-[13px] truncate ${entry.id === model ? 'text-brand-600' : 'text-surface-600'}`}>{entry.id}</span>
+                  {(entry.contextWindow || entry.reasoning || entry.known === false) && (
+                    <span className="block text-[10px] text-surface-400 mt-0.5">
+                      {[
+                        entry.contextWindow ? `${Math.round(entry.contextWindow / 1000)}K` : null,
+                        entry.reasoning ? t('settings.model.form.capabilityThinking') : null,
+                        entry.image ? t('settings.model.form.capabilityImage') : null,
+                        entry.known === false ? t('settings.model.form.modelUnknownBadge') : null
+                      ].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </AnchoredMenu>
+            )}
+            <div className="flex items-center gap-2 mt-1">
+              {modelSuggestions.length > 0 && (
+                <span className="text-[10.5px] text-surface-400">
+                  {remoteFresh?.models
+                    ? t('settings.model.form.modelRemoteHint', { count: modelSuggestions.length })
+                    : t('settings.model.form.modelSearchHint', { count: modelSuggestions.length })}
+                </span>
+              )}
+              {/* 手动入口：改了 key / 地址想重新问一次，不必先走一遍测试连接 */}
+              <button
+                type="button"
+                data-testid="model-fetch-remote"
+                disabled={!baseUrl.trim() || remoteLoading}
+                onClick={() => handleFetchRemoteModels()}
+                className="flex items-center gap-1 text-[10.5px] text-brand-600 hover:text-brand-700 disabled:text-surface-300 transition-colors"
+              >
+                <RefreshCw className={`w-3 h-3 ${remoteLoading ? 'animate-spin' : ''}`} />
+                {remoteLoading
+                  ? t('settings.model.form.modelFetching')
+                  : t('settings.model.form.modelFetchRemote')}
+              </button>
+            </div>
+            {remoteFresh?.error && (
+              <span className="block text-[10.5px] text-surface-400 mt-1" data-testid="model-fetch-remote-error">
+                {renderDisplayError(t, remoteFresh.error)}
+              </span>
             )}
           </div>
 

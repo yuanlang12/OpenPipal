@@ -14,9 +14,10 @@ import {
   isGlm52Model,
   resolveQwenThinkingControl,
   resolveQwenThinkingBudgets,
+  resolveThinkingFormat,
   type ModelConfig
 } from '../../src/main/config-manager'
-import { clampThinkingLevel } from '@earendil-works/pi-ai/compat'
+import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/compat'
 
 const base = { provider: 'custom' as const, baseUrl: 'https://x/v1', apiKey: 'k', supportsThinking: true }
 
@@ -202,5 +203,84 @@ describe('openai 方言 compat 位', () => {
       model: 'qwen3.7-plus'
     } as ModelConfig)
     expect(model.compat?.supportsReasoningEffort ?? false).toBe(false)
+  })
+})
+
+/**
+ * 认不出的自定义端点该说哪种方言（2026-08-15 真机：grok-4.6 经第三方网关被判成 qwen，
+ * 关思考发出 enable_thinking:false → 网关 [1210] "always engages in thinking and cannot be disabled"）。
+ */
+describe('自定义端点的思考方言默认', () => {
+  it('grok 走 openai 方言：关思考时不发字段（qwen 方言会发 enable_thinking:false 打 400）', () => {
+    const grok = { ...base, model: 'grok-4.6' } as ModelConfig
+    expect(resolveThinkingFormat(grok)).toBe('openai')
+    expect(supportsEffortDial(grok)).toBe(true) // 档位随之解锁，不再只有一个开关
+    expect(resolveThinkingFormat({ ...base, model: 'x-ai/grok-4-fast' } as ModelConfig)).toBe('openai')
+  })
+
+  it('档位表去 Pi 目录借同名模型的，不再硬编码——grok-4.5 四家 provider 的表完全一致', () => {
+    const model = buildModelFromConfig({ ...base, model: 'grok-4.5' } as ModelConfig) as any
+    // Pi 的生成数据（出处 models.dev）：不能关思考，合法档位 low/medium/high
+    expect(model.thinkingLevelMap?.off).toBeNull()
+    expect(model.thinkingLevelMap?.max).toBeNull()
+    expect(clampThinkingLevel(model, 'medium')).toBe('medium')  // 旧硬编码表会挪成 high
+    expect(getSupportedThinkingLevels(model)).not.toContain('off')
+  })
+
+  it('Pi 目录里没有的模型 id（grok-4.6）→ 不借表，也不猜；关思考时照样不发禁用字段', () => {
+    const model = buildModelFromConfig({ ...base, model: 'grok-4.6' } as ModelConfig) as any
+    expect(model.thinkingLevelMap).toBeUndefined()
+    // pi 的 openai 分支：off 不是字符串就什么都不发（openai-completions.js:661），不会撞 1210
+    expect(model.compat?.supportsReasoningEffort).toBe(true)
+  })
+
+  it('认不出来时说标准 OpenAI 方言，不再猜 qwen——猜错的代价是硬 400 而不是降级', () => {
+    expect(resolveThinkingFormat({ ...base, model: 'some-gateway-model-v3' } as ModelConfig)).toBe('openai')
+    // 逃生舱口：真是 qwen 但模型 id 不含 qwen 字样时，设置里显式选方言仍然一票否决
+    expect(resolveThinkingFormat({
+      ...base, model: 'some-gateway-model-v3', thinkingFormat: 'qwen'
+    } as ModelConfig)).toBe('qwen')
+  })
+
+  it('既有判定不受影响：qwen / glm / deepseek / openrouter 各归各位', () => {
+    expect(resolveThinkingFormat({ ...base, model: 'qwen3.8-plus' } as ModelConfig)).toBe('qwen')
+    expect(resolveThinkingFormat({ ...base, model: 'glm-5.3' } as ModelConfig)).toBe('zai')
+    expect(resolveThinkingFormat({ ...base, model: 'deepseek-v3.2' } as ModelConfig)).toBe('deepseek')
+    expect(resolveThinkingFormat({
+      ...base, provider: 'openrouter', model: 'z-ai/glm-5.3'
+    } as unknown as ModelConfig)).toBe('openai')
+  })
+})
+
+/**
+ * 档位菜单显隐先问 Pi（2026-08-15）。
+ *
+ * 从前 UI 问的是我们自己的方言 if 链，请求路径问的是 Pi 的 thinkingLevelMap——两个神谕，
+ * 会打架。现在：能认领到 Pi 目录条目、且档位确实由 Pi 生成字段时，以 Pi 为准。
+ */
+describe('档位显隐以 Pi 目录为准', () => {
+  const key = { apiKey: 'sk-test', supportsThinking: true }
+
+  it('gpt-5-pro 在 Pi 目录里只有一个档位（high）→ 不该给用户画三档', () => {
+    const mc = { provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5-pro', ...key } as ModelConfig
+    const model = buildModelFromConfig(mc) as any
+    expect(getSupportedThinkingLevels(model).filter((l: string) => l !== 'off')).toEqual(['high'])
+    expect(supportsEffortDial(mc)).toBe(false)   // 旧规则按 provider==='openai' 无条件 true
+  })
+
+  it('同一 provider 下档位齐全的模型仍然亮（不是把 openai 一刀切关掉）', () => {
+    const mc = { provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5', ...key } as ModelConfig
+    expect(getSupportedThinkingLevels(buildModelFromConfig(mc) as any).length).toBeGreaterThan(2)
+    expect(supportsEffortDial(mc)).toBe(true)
+  })
+
+  it('自定义端点被双证据认领后，档位也由 Pi 回答', () => {
+    const mc = { provider: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'grok-4.5', ...key } as ModelConfig
+    expect(supportsEffortDial(mc)).toBe(true)
+  })
+
+  it('认领不到的合成条目仍走方言推导（Pi 手里只有我们喂的模板，问它等于问自己）', () => {
+    const mc = { provider: 'custom', baseUrl: 'https://gateway.example.com/v1', model: 'mystery-v3', ...key } as ModelConfig
+    expect(supportsEffortDial(mc)).toBe(true)   // 兜底 openai 方言 → 有 reasoning_effort
   })
 })

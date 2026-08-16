@@ -6,8 +6,10 @@
  * ——流里的东西会滚走、流式一结束就消失，而自检恰恰是用户最该看见的一步（真渲染发生在
  * 主进程 show:false 的隐藏窗口里，此前用户只看得到一行转圈）。
  *
- * 生命周期：自检开始 → 出现；自检结束 → **不自动关闭**，收结论继续挂着；只有用户点 ✕ 才关。
- * 切会话清空（别把上一个会话的稿子挂在这儿）。
+ * 生命周期：自检开始 → 出现；自检结束 → **不自动关闭**，收结论继续挂着（用户要看得见这一步）。
+ * 关闭有三条路，都走同一个 close()：用户点 ✕；切会话（别把上一个会话的稿子挂在这儿）；
+ * **用户在本会话又发了一条消息**（2026-08-14 所有者裁决：人一开口提修改，旧画面就没有留存
+ * 价值了；合盖收起态同样关）。
  *
  * 渲染走 dcRuntime 的同一组装配函数（isDcHtml/inlineDcRuntime/inlineDcArtifactSiblings），
  * 与 HtmlPreview 同源；这里刻意不带 bridge/tweak/sidecar——它是缩略画面，不是可交互预览。
@@ -26,6 +28,7 @@ import { stripDcSuffix } from '../utils/format'
 import {
   SELF_CHECK_TOOL, FRAME_SPEC, FrameKind,
   pickFrame, parseSelfCheckVerdict, resolveSelfCheckTarget, latestSelfCheckResult, isVisualArtifactType,
+  renderInputsFingerprint,
   type SelfCheckVerdict,
 } from '../chat/selfCheck'
 
@@ -37,8 +40,10 @@ interface SelfCheckState {
   artifactId: string | null
   phase: 'running' | 'done'
   verdict: SelfCheckVerdict | null
+  /** 结论对应的那一版内容指纹——当前内容与之不符 = 结论说的是旧版本，徽标降级为"已过时" */
+  verdictFp: string | null
   begin: (artifactId: string) => void
-  finish: (verdict: SelfCheckVerdict | null) => void
+  finish: (verdict: SelfCheckVerdict | null, fp: string | null) => void
   close: () => void
   toggleCollapsed: () => void
 }
@@ -49,9 +54,10 @@ export const useSelfCheckStore = create<SelfCheckState>((set) => ({
   artifactId: null,
   phase: 'running',
   verdict: null,
-  begin: (artifactId) => set({ open: true, collapsed: false, artifactId, phase: 'running', verdict: null }),
-  finish: (verdict) => set(s => (s.open ? { phase: 'done', verdict } : s)),
-  close: () => set({ open: false, artifactId: null, verdict: null }),
+  verdictFp: null,
+  begin: (artifactId) => set({ open: true, collapsed: false, artifactId, phase: 'running', verdict: null, verdictFp: null }),
+  finish: (verdict, fp) => set(s => (s.open ? { phase: 'done', verdict, verdictFp: fp } : s)),
+  close: () => set({ open: false, artifactId: null, verdict: null, verdictFp: null }),
   toggleCollapsed: () => set(s => ({ collapsed: !s.collapsed }))
 }))
 
@@ -113,7 +119,7 @@ export function SelfCheckPreview(): JSX.Element | null {
   const toolStatus = useLiveStreamStore(s => s.toolStatus)
   const conversationId = useChatStore(s => s.activeConversationId)
   const artifacts = useArtifactStore(s => s.artifacts)
-  const { open, collapsed, artifactId, phase, verdict } = useSelfCheckStore()
+  const { open, collapsed, artifactId, phase, verdict, verdictFp } = useSelfCheckStore()
   const [doc, setDoc] = useState<string | null>(null)
   const runningRef = useRef(false)
 
@@ -132,7 +138,15 @@ export function SelfCheckPreview(): JSX.Element | null {
     if (runningRef.current) {
       runningRef.current = false
       const text = latestSelfCheckResult(useChatStore.getState().messages)
-      store.finish(text ? parseSelfCheckVerdict(text) : null)
+      // 指纹取"结论落下这一刻"的整套渲染输入（薄壳 + 它引用的场景 jsx）——之后 AI 再改任一份，
+      // 组件里比对不一致即降级"已过时"
+      const targetId = useSelfCheckStore.getState().artifactId
+      const list = useArtifactStore.getState().artifacts
+      const target = targetId ? list.find(a => a.id === targetId) : null
+      store.finish(
+        text ? parseSelfCheckVerdict(text) : null,
+        renderInputsFingerprint(target, list)
+      )
     }
   }, [toolStatus])
 
@@ -141,9 +155,32 @@ export function SelfCheckPreview(): JSX.Element | null {
     useSelfCheckStore.getState().close()
   }, [conversationId])
 
+  // 用户在本会话又发了一条消息 = 他已经开口提修改，旧自检画面没有留存价值了 → 自动关闭。
+  // 走与 ✕ 完全相同的销毁路径（合盖收起态同样关，close 不看 collapsed）。
+  // 判据取"最后一条 user 消息的 id 变了"：所有发送入口（回车/点击/语音/重发）都必然经过它，
+  // 比在某个具体按钮上挂钩子更不容易漏。选择器返回标量，流式每个 chunk 都不会触发重渲染。
+  // 首次观测只记不关——挂载与会话水合那一刻的"从无到有"不是用户发言。
+  const lastUserMsgId = useChatStore(s => {
+    for (let i = s.messages.length - 1; i >= 0; i--) if (s.messages[i].role === 'user') return s.messages[i].id
+    return null
+  })
+  const seenUserMsgRef = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    if (seenUserMsgRef.current !== undefined && seenUserMsgRef.current !== lastUserMsgId) {
+      useSelfCheckStore.getState().close()
+    }
+    seenUserMsgRef.current = lastUserMsgId
+  }, [lastUserMsgId])
+
   const artifact = useMemo(
     () => (artifactId ? artifacts.find(a => a.id === artifactId) || null : null),
     [artifactId, artifacts]
+  )
+
+  // 当前渲染输入指纹：与 finish 时记录的不一致 = 结论描述的是旧版本（AI 修完没复检的常见形态）
+  const currentFp = useMemo(
+    () => renderInputsFingerprint(artifact, artifacts),
+    [artifact, artifacts]
   )
 
   // 装配：与 HtmlPreview 同一组 dcRuntime 函数（缩略画面不带 bridge/sidecar/tweak）
@@ -164,7 +201,9 @@ export function SelfCheckPreview(): JSX.Element | null {
     }
     void build()
     return () => { cancelled = true }
-  }, [open, artifact?.id, artifact?.content, conversationId])
+    // 依赖挂 currentFp 而不是 artifact.content：场景 jsx 被改时薄壳内容一个字节没变，
+    // 只盯 content 的话这张缩略图会一直画着旧画面（与"已过时"徽标是同一个坑）
+  }, [open, artifact?.id, currentFp, conversationId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 第二道闸：解析阶段已经挑过可视类型，这里再挡一次（id 复用/类型后改都不至于把 JSON 塞进屏幕）
   if (!open || !artifact || !isVisualArtifactType(artifact.type)) return null
@@ -192,6 +231,12 @@ export function SelfCheckPreview(): JSX.Element | null {
             <>
               <Loader2 size={13} className="animate-spin text-brand-500 shrink-0" />
               <span className="text-surface-600">{t('artifacts.selfCheck.checking')}</span>
+            </>
+          ) : verdict && verdictFp && currentFp && currentFp !== verdictFp ? (
+            <>
+              {/* 结论已过时：只声称"变了"，不猜"修好了"——证据式呈现，绿黄都不装 */}
+              <Circle data-testid="self-check-stale-icon" size={13} className="text-surface-400 shrink-0" />
+              <span className="text-surface-600">{t('artifacts.selfCheck.stale')}</span>
             </>
           ) : verdict?.ok === false ? (
             <>

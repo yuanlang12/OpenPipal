@@ -2,10 +2,12 @@
  * code 产物"生成卡" + jsx 场景合成预览 E2E — workspace 预览优化验收
  *
  * 覆盖:
- *   T1 流式 code 产物 —— ArtifactTab 渲染 CodeStreamingCard（进度卡），不出现 CodePreview
+ *   T1 流式普通 code（.py）—— ArtifactTab 渲染 CodeStreamingCard（进度卡），不出现 CodePreview
  *      的全屏源码视图（复制按钮等标志性元素不可见）
- *   T2 完成态场景 jsx（纯 JS、无需 Babel 编译的最小场景）—— 合成动画薄壳直接渲染预览，
- *      frameLocator 里看到场景渲出的文案
+ *   T1b 流式场景 jsx —— 素材不占舞台：渲染"等待中的舞台"（tips 占位）而不是源码进度卡
+ *   T2 完成态场景 jsx（纯 JS、无需 Babel 编译的最小场景）—— 用户从 Outputs 点开后，
+ *      合成动画薄壳直接渲染预览，frameLocator 里看到场景渲出的文案
+ *      （素材不再自动开 tab，见 useArtifactWorkspaceBridge 的交付物/素材分治）
  *   T3 完成态普通 code（python）—— 行为不变，仍走 CodePreview
  *
  * Mock 策略同 dc-render.spec.ts / dc-scene-sibling.spec.ts：精简 window.api，
@@ -116,13 +118,13 @@ async function emitArtifact(
 }
 
 test.describe('code 产物预览优化', () => {
-  test('T1 流式 code 产物 → 生成卡可见，不出现全屏源码视图', async ({ page }) => {
+  test('T1 流式普通 code → 生成卡可见，不出现全屏源码视图', async ({ page }) => {
     await setup(page)
     const partial = Array.from({ length: 12 }, (_, i) => `const line${i} = ${i};`).join('\n')
     // 首个 delta 只建壳（chatStore onArtifactDelta：streamingArtifact 为空时走 startStreaming，
     // 不带 content）；第二个 delta 才真正走 updateStreaming 把内容写进去
-    await emitArtifactDelta(page, { id: 'code-streaming-1', title: 'Demo场景.jsx', artifactType: 'code', content: partial })
-    await emitArtifactDelta(page, { id: 'code-streaming-1', title: 'Demo场景.jsx', artifactType: 'code', content: partial })
+    await emitArtifactDelta(page, { id: 'code-streaming-1', title: 'demo.py', artifactType: 'code', content: partial })
+    await emitArtifactDelta(page, { id: 'code-streaming-1', title: 'demo.py', artifactType: 'code', content: partial })
 
     await expect(page.getByTestId('code-streaming-card')).toBeVisible({ timeout: 5000 })
     // 进度文案 + 尾部代码片段都在卡片里
@@ -134,7 +136,37 @@ test.describe('code 产物预览优化', () => {
     await page.screenshot({ path: `${ARTIFACTS_DIR}/t1-streaming-card.png`, fullPage: true })
   })
 
-  test('T2 完成态场景 jsx → 合成薄壳渲染出场景内容', async ({ page }) => {
+  test('T1b 流式场景 jsx → 等待中的舞台（tips 占位），不是源码进度卡', async ({ page }) => {
+    await setup(page)
+    const partial = Array.from({ length: 12 }, (_, i) => `const line${i} = ${i};`).join('\n')
+    await emitArtifactDelta(page, { id: 'scene-streaming-1', title: 'Demo场景.jsx', artifactType: 'code', content: partial })
+    await emitArtifactDelta(page, { id: 'scene-streaming-1', title: 'Demo场景.jsx', artifactType: 'code', content: partial })
+
+    const stage = page.getByTestId('artifact-stage-placeholder')
+    await expect(stage).toBeVisible({ timeout: 5000 })
+    await expect(stage).toContainText('正在生成场景素材')
+    await expect(stage).toContainText('播放条支持')
+    await expect(page.getByTestId('code-streaming-card')).toHaveCount(0)
+
+    await page.screenshot({ path: `${ARTIFACTS_DIR}/t1b-stage-placeholder.png`, fullPage: true })
+  })
+
+  test('T1c 流式 jsx 但 type/title 还没到 → 仍是舞台，不把源码当网页渲染', async ({ page }) => {
+    await setup(page)
+    // 真机形态（glm-5.3）：create_artifact 的流式 JSON 先吐 content，type/title 最后才到，
+    // 于是整段生成期 type 都是默认的 html —— 半截 jsx 被 HtmlPreview 当网页渲了一屏源码正文
+    const jsx = '// 中国历史简史 · 动画提案场景\nconst { Stage, Sprite, useTime } = window;\n'
+      + 'function Beat({ start, end, children }) { return null }\n'
+    await emitArtifactDelta(page, { id: 'scene-untyped', content: jsx } as any)
+    await emitArtifactDelta(page, { id: 'scene-untyped', content: jsx } as any)
+
+    await expect(page.getByTestId('artifact-stage-placeholder')).toBeVisible({ timeout: 5000 })
+    // HtmlPreview 的 iframe 一个都不该出现（它才是把源码渲成正文的那一位）
+    await expect(page.locator(DC_IFRAME)).toHaveCount(0)
+    await expect(page.getByText('中国历史简史', { exact: false })).toHaveCount(0)
+  })
+
+  test('T2 完成态场景 jsx → 从 Outputs 点开后合成薄壳渲染出场景内容', async ({ page }) => {
     await setup(page)
     await emitArtifact(page, {
       id: 'artifact-scene1',
@@ -142,6 +174,13 @@ test.describe('code 产物预览优化', () => {
       title: 'Demo场景.jsx',
       language: 'jsx',
       content: SCENE_SRC
+    })
+
+    // 素材不自动开 tab（桥接的交付物/素材分治）；这里模拟用户从 Outputs 点开它看源码渲染
+    await page.evaluate(() => {
+      ;(window as any).__workspaceStore.getState().openTab({
+        kind: 'artifact', title: 'Demo场景.jsx', artifactId: 'artifact-scene1'
+      })
     })
 
     const frame = page.frameLocator(DC_IFRAME)
@@ -168,5 +207,30 @@ test.describe('code 产物预览优化', () => {
     await expect(page.getByTestId('code-streaming-card')).toHaveCount(0)
 
     await page.screenshot({ path: `${ARTIFACTS_DIR}/t3-plain-code.png`, fullPage: true })
+  })
+
+  test('T4 交付物/素材分治：场景 jsx 不自动开 tab；薄壳到场回收素材 tab', async ({ page }) => {
+    await setup(page)
+    const artifactTabs = (): Promise<string[]> => page.evaluate(() =>
+      (window as any).__workspaceStore.getState().tabs
+        .filter((t: any) => t.kind === 'artifact')
+        .map((t: any) => t.artifactId))
+
+    await emitArtifact(page, { id: 'artifact-scene9', type: 'code', title: '幕一.jsx', language: 'jsx', content: SCENE_SRC })
+    expect(await artifactTabs()).toEqual([])
+
+    // 用户从 Outputs 手点开源码是他自己的决定；薄壳到场后这份素材归薄壳统一呈现，tab 收回
+    await page.evaluate(() => (window as any).__workspaceStore.getState().openTab({
+      kind: 'artifact', title: '幕一.jsx', artifactId: 'artifact-scene9'
+    }))
+    expect(await artifactTabs()).toEqual(['artifact-scene9'])
+
+    await emitArtifact(page, {
+      id: 'shell9',
+      type: 'html',
+      title: '动画.dc.html',
+      content: '<x-dc><x-import component-from-global-scope="Demo" from="./animations.jsx ./artifact-scene9.jsx"></x-import></x-dc>'
+    })
+    await expect.poll(artifactTabs).toEqual(['shell9'])
   })
 })

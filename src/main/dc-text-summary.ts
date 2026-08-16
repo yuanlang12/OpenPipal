@@ -7,13 +7,17 @@
  * e2e 直接在 playwright 页面里 evaluate 复用（同 overlap-lint.ts 的做法）。
  */
 
+/** 跳过页（data-deck-skip）在摘要里的标注前缀——模型据此区分"这页被有意跳过"与"我漏写了" */
+export const SKIP_MARK = '[跳过页·不进导出]'
+
 /**
  * 注入被渲染页面执行的文本摘要脚本：返回 { frames: Array<{ label: string | null; text: string }> }。
  * - 有 [data-screen-label] 结构（canvas 多方向 / deck 多页）→ 按 frame 分组，一个 frame 一条。
  * - 否则 → 单条，label 为 null（调用方按 body 兜底截取更长的正文）。
- * 范围锁定 #dc-root（support.js 渲染挂载点）：原始 <x-dc> 源码仍留在 DOM 里（只是被
- * `x-dc{display:none!important}` 隐藏），不锁定范围会连隐藏的原始拷贝也一起选中，
- * 造成重复 frame / 重复正文。
+ * - deck（幻灯舞台）走组件的 readPages 作用域，让**每一页**都有正文（见下方注释）。
+ * 范围锁定 #dc-root（support.js 渲染挂载点）：自研运行时首帧后会把原始 <x-dc> 源子树
+ * 收进 <template data-dc-source>（查询不到、不渲染），锁定范围因此不再是硬性必需——
+ * 但保留它兜住"挂载到收起之间"那一帧与任何异常路径，宁可双保险。
  */
 export const PAGE_TEXT_SUMMARY_JS = `(function(){
   var MAX_FRAMES = 60;
@@ -47,15 +51,29 @@ export const PAGE_TEXT_SUMMARY_JS = `(function(){
   var scopeRoot = dcRoot || document.body;
   if (!scopeRoot) return { frames: [] };
 
-  var screens = scopeRoot.querySelectorAll('[data-screen-label]');
-  if (screens.length > 0) {
+  function collect() {
+    var screens = scopeRoot.querySelectorAll('[data-screen-label]');
     var frames = [];
     for (var i = 0; i < screens.length && frames.length < MAX_FRAMES; i++) {
       var el = screens[i];
       var label = el.getAttribute('data-screen-label') || ('#' + (i + 1));
-      frames.push({ label: label, text: elText(el) });
+      var text = elText(el);
+      // 跳过页（data-deck-skip）：不进翻页、不进打印、不进任何导出。它的正文允许是空的，
+      // 但必须**标出来**——不标的话模型会把"这一屏没内容"当成自己漏写了，回头去补一页
+      // 根本不该存在的稿。标记进 text 不进 label：label 是交接包对账 reference/ 文件名的键。
+      if (el.hasAttribute('data-deck-skip')) text = '${SKIP_MARK}' + (text ? ' ' + text : '');
+      frames.push({ label: label, text: text });
     }
-    return { frames: frames };
+    return frames;
+  }
+
+  if (scopeRoot.querySelectorAll('[data-screen-label]').length > 0) {
+    // deck 特例：幻灯舞台用 visibility 隐藏非当前页，而 innerText 对隐藏元素恒返回空串——
+    // 摘要于是"屏名齐全、只有当前页有正文"，模型自检只看得见第一页（"弱模型单次生成即可
+    // 交付"的直接障碍）。组件为此提供 readPages(fn)：同步放开可见性门跑一遍 fn 再收回，
+    // 不翻页、无帧边界所以不闪。没有这个方法（老产物内联的是老组件）就照旧走，不回退。
+    var deck = scopeRoot.querySelector('deck-stage');
+    return { frames: deck && typeof deck.readPages === 'function' ? deck.readPages(collect) : collect() };
   }
 
   return { frames: [{ label: null, text: elText(scopeRoot) }] };

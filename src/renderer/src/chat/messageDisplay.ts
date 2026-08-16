@@ -37,9 +37,12 @@ export function formatMessageContentForDisplay(
     const rawBody = display.slice(offset + ERROR_PREFIX.length)
     // Runtime 自有的哨兵在这里翻译；网关原文（外部内容）仍逐字保留
     const stallSeconds = parseModelStallNotice(rawBody)
+    // 默认阈值已是 5 分钟（对齐 pi）；"300 秒没有任何响应"读起来像机器在说话，整分钟用分钟说
     const body = stallSeconds === null
       ? rawBody
-      : ` ${t('runtimeChrome.errors.modelStall', { seconds: stallSeconds })}`
+      : stallSeconds >= 120 && stallSeconds % 60 === 0
+        ? ` ${t('runtimeChrome.errors.modelStallMinutes', { minutes: stallSeconds / 60 })}`
+        : ` ${t('runtimeChrome.errors.modelStall', { seconds: stallSeconds })}`
     display = `${display.slice(0, offset)}[${t('chat.message.errorPrefix')}]${body}`
   }
   return display

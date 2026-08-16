@@ -136,6 +136,15 @@ export interface ModelProvider {
   builtin?: boolean
 }
 
+/**
+ * 搜索服务配置（web_search 工具的取 key 路径）。
+ * v1 服务商固定 Tavily —— 端点在 web-search.ts 里写死，这里只承载凭证。
+ */
+export interface SearchConfig {
+  provider: 'tavily'
+  apiKey: string
+}
+
 export interface VoiceConfig {
   /** openai (兼容 302.ai) | azure */
   provider: string
@@ -176,6 +185,7 @@ export interface OpenPipalConfig {
   configVersion?: number
   autoMemoryEnabled?: boolean      // 自动记忆提取（默认 true）
   lastExportDir?: string           // 产物导出目录（默认 ~/Downloads；用户在导出弹窗改过就记住）
+  searchConfig?: SearchConfig      // web_search 的搜索服务配置（缺省回退 .env 内置 key）
   voiceConfig?: VoiceConfig        // P2: 语音通话服务配置
   voiceConfigDoubao?: VoiceConfig  // 豆包同声传译2.0:仅 interpreter 角色语音走它(与 voiceConfig 并存,不互踩)
   /**
@@ -201,32 +211,115 @@ export interface OpenPipalConfig {
 }
 
 // 预设服务商
-export const PROVIDERS: Record<string, { name: string; baseUrl: string; models: string[] }> = {
-  openai: {
-    name: 'OpenAI',
-    baseUrl: 'https://api.openai.com/v1',
-    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo']
-  },
-  deepseek: {
-    name: 'DeepSeek',
-    baseUrl: 'https://api.deepseek.com',
-    models: ['deepseek-chat', 'deepseek-reasoner']
-  },
-  openrouter: {
-    name: 'OpenRouter',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    models: ['anthropic/claude-sonnet-4', 'google/gemini-2.5-flash', 'openai/gpt-4o']
-  },
+/** 目录里的一个模型：给设置页做选择器用，字段都是 Pi 目录里现成的 */
+export interface CatalogModelEntry {
+  id: string
+  name?: string
+  reasoning?: boolean
+  image?: boolean
+  contextWindow?: number
+}
+
+export interface CatalogProviderEntry {
+  name: string
+  baseUrl: string
+  /** Pi 目录里这家用的协议（model.api）。apiFormat 只在 provider==='custom' 时有值，
+      目录服务商的协议得从这里取——否则 anthropic 一家会被当成 OpenAI 兼容去打。 */
+  api?: string
+  models: CatalogModelEntry[]
+}
+
+/**
+ * 设置页选择器选不了的协议：这两类不是"填个 key 就能用"，需要 AWS/GCP 整套凭证。
+ * 不进选择器不等于不支持——buildModelFromConfig 那条路不受影响。
+ */
+const CATALOG_EXCLUDED_APIS = new Set(['bedrock-converse-stream', 'google-vertex'])
+
+/** 排在前面的常用服务商。其余按字母序跟在后面——1000+ 个模型不能指望用户翻。 */
+const CATALOG_FEATURED_ORDER = [
+  'openai', 'anthropic', 'google', 'deepseek', 'openrouter', 'zai',
+  'moonshotai', 'qwen-token-plan', 'qwen-token-plan-cn', 'xai', 'groq', 'mistral'
+]
+
+/**
+ * Pi 目录之外我们历史上提供过的服务商。Pi 不认识它们（没有条目可认领），
+ * 选中后仍走自定义兼容路径；留在这里只是别让老用户的选项凭空消失。
+ */
+const CATALOG_EXTRA_PROVIDERS: Record<string, CatalogProviderEntry> = {
   siliconflow: {
     name: 'SiliconFlow',
     baseUrl: 'https://api.siliconflow.cn/v1',
-    models: ['Qwen/Qwen2.5-72B-Instruct', 'deepseek-ai/DeepSeek-V3']
-  },
-  zai: {
-    name: 'Z.AI (GLM)',
-    baseUrl: 'https://api.z.ai/api/coding/paas/v4',
-    models: ['glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-4.7']
+    models: [
+      { id: 'Qwen/Qwen2.5-72B-Instruct' },
+      { id: 'deepseek-ai/DeepSeek-V3' }
+    ]
   }
+}
+
+let providerCatalog: Record<string, CatalogProviderEntry> | null = null
+
+/**
+ * 服务商 + 模型目录 —— 直接来自 Pi，不再手抄。
+ *
+ * 从前这里是一张 5 条的硬编码表（每家 2-4 个模型名），而 Pi 的目录有 39 个 provider、
+ * 1200+ 个模型，且每条都带协议/地址/上下文/能力位。手抄表的代价不只是少：用户想用的模型
+ * 不在表里就只能走"自定义"，于是协议和能力位全靠他自己猜、猜错了才在报错里发现。
+ *
+ * 过滤规则全部有依据，不靠拍脑袋：
+ *  · 协议我们跑不了的（bedrock / vertex：要整套云凭证，不是一个 key）
+ *  · 没有 baseUrl 的（Azure：地址是每个租户自己的资源名，目录给不出）
+ *  · baseUrl 里带 {占位符} 的（Cloudflare AI Gateway：要账号/网关 id）
+ *  · provider 没声明 apiKey 鉴权的（openai-codex 只有 OAuth，填 key 也用不了）
+ */
+export function getProviders(): Record<string, CatalogProviderEntry> {
+  if (providerCatalog) return providerCatalog
+
+  const catalog: Record<string, CatalogProviderEntry> = {}
+  try {
+    const authById = new Map<string, { apiKey?: unknown; name?: string }>()
+    for (const provider of builtinProviders()) {
+      authById.set(provider.id, { apiKey: (provider as any).auth?.apiKey, name: provider.name })
+    }
+
+    for (const providerId of piGetProviders() as unknown as string[]) {
+      const meta = authById.get(providerId)
+      if (meta && !meta.apiKey) continue
+
+      const models: CatalogModelEntry[] = []
+      let baseUrl = ''
+      let api = ''
+      for (const model of piGetModels(providerId as any) as any[]) {
+        if (!model?.id || !model.baseUrl) continue
+        if (CATALOG_EXCLUDED_APIS.has(model.api)) continue
+        if (/[{}]/.test(model.baseUrl)) continue
+        if (!baseUrl) baseUrl = model.baseUrl
+        if (!api) api = model.api
+        models.push({
+          id: model.id,
+          name: model.name,
+          reasoning: !!model.reasoning,
+          image: Array.isArray(model.input) ? model.input.includes('image') : undefined,
+          contextWindow: model.contextWindow
+        })
+      }
+      if (models.length === 0) continue
+      catalog[providerId] = { name: meta?.name || providerId, baseUrl, api, models }
+    }
+  } catch (err: any) {
+    console.warn('[Config] 读取 Pi 模型目录失败，服务商选择器只剩历史条目:', err?.message)
+  }
+
+  const ordered: Record<string, CatalogProviderEntry> = {}
+  const rest = Object.keys(catalog).filter((id) => !CATALOG_FEATURED_ORDER.includes(id)).sort()
+  for (const id of [...CATALOG_FEATURED_ORDER.filter((id) => catalog[id]), ...rest]) {
+    ordered[id] = catalog[id]
+  }
+  for (const [id, entry] of Object.entries(CATALOG_EXTRA_PROVIDERS)) {
+    if (!ordered[id]) ordered[id] = entry
+  }
+
+  providerCatalog = ordered
+  return ordered
 }
 
 function ensureDir(): void {
@@ -473,8 +566,65 @@ export function saveModelConfig(modelConfig: ModelConfig): void {
 /**
  * 获取服务商列表
  */
-export function getProviders() {
-  return PROVIDERS
+// ─── 搜索服务（web_search）配置 ──────────────────────────────────────────────
+
+/**
+ * 获取当前生效的搜索服务配置
+ * 优先级：config.json > .env（内置）
+ * 每次调用现读 config，用户在设置页保存后下一次搜索即生效，不需重启。
+ */
+export function getEffectiveSearchConfig(): SearchConfig {
+  const config = loadConfig()
+  if (config.searchConfig?.apiKey) {
+    return { provider: 'tavily', apiKey: config.searchConfig.apiKey }
+  }
+  return { provider: 'tavily', apiKey: process.env.TAVILY_API_KEY || '' }
+}
+
+/** 是否在用内置（.env）搜索凭证——没有用户自配 key 且内置 key 存在。 */
+export function isBuiltinSearchCredential(): boolean {
+  const config = loadConfig()
+  if (config.searchConfig?.apiKey) return false
+  return !!process.env.TAVILY_API_KEY
+}
+
+/**
+ * 展示口径的生效搜索配置——IPC 出口统一走这里：key 恒掩码，
+ * 内置凭证打 builtin 标记（红线：内置 key 明文不出主进程）。
+ * configured=false 表示用户没配、内置也为空 —— 设置页据此提示"未配置"。
+ */
+export function getEffectiveSearchConfigForDisplay(): SearchConfig & { builtin: boolean; configured: boolean } {
+  const sc = getEffectiveSearchConfig()
+  return {
+    provider: sc.provider,
+    apiKey: maskApiKey(sc.apiKey),
+    builtin: isBuiltinSearchCredential(),
+    configured: !!sc.apiKey
+  }
+}
+
+/**
+ * 保存搜索服务配置。
+ * patch 语义：空 apiKey = 保留原值（设置页只回显掩码，用户不改 key 时提交空串）；
+ * 原本也没有值时不写空壳，生效配置继续回退内置。
+ */
+export function saveSearchConfig(searchConfig: SearchConfig): void {
+  const config = loadConfig()
+  const apiKey = (searchConfig.apiKey || '').trim() || config.searchConfig?.apiKey || ''
+  if (!apiKey) return
+  config.searchConfig = { provider: 'tavily', apiKey }
+  saveConfig(config)
+  console.log('[Config] 搜索服务配置已更新: tavily')
+}
+
+/**
+ * 清除用户自定义搜索配置，回退到内置
+ */
+export function clearSearchConfig(): void {
+  const config = loadConfig()
+  delete config.searchConfig
+  saveConfig(config)
+  console.log('[Config] 已清除自定义搜索配置，回退到内置')
 }
 
 // ─── Voice (Realtime) 配置 ───────────────────────────────────────────────────
@@ -610,9 +760,21 @@ export function resolveThinkingFormat(mc: ModelConfig): ResolvedThinkingFormat {
   if (mc.provider === 'zai' || /^(?:z-ai\/|zai\/)?glm(?:[-_.]|$)/i.test(model)) return 'zai'
   if (mc.provider === 'deepseek' || /deepseek/i.test(model)) return 'deepseek'
   if (/qwen/i.test(model)) return 'qwen'
+  // grok 系（xAI 直连或经网关）：标准 reasoning_effort 方言。**必须在下面的兜底之前**——
+  // 2026-08-15 真机：grok-4.6 经第三方网关被兜底判成 qwen，于是关思考时发出 qwen 的
+  // enable_thinking:false（pi-ai openai-completions.js:576），网关回
+  // "[1210] This model always engages in thinking and cannot be disabled"。
+  // grok-4 系强制思考，"关"这个状态本身不合法；openai 方言在关思考时是**不发字段**（同文件 473），
+  // 正好对上。
+  if (mc.provider === 'xai' || /(^|[-_/])grok/i.test(model)) return 'openai'
 
-  // 历史兼容：OpenPipal 过去对所有 custom+thinking 端点都使用 qwen 方言。
-  return 'qwen'
+  // 认不出来时发标准 OpenAI 方言（reasoning_effort），不再猜 qwen。
+  // 曾经的兜底是 'qwen'（历史兼容：OpenPipal 早期只接过 qwen 兼容端点）。它有两个坏处：
+  //   · 猜错的代价是硬 400（qwen 专有字段打到非 qwen 网关），而不是降级
+  //   · qwen 端点其实已被上面的 /qwen/i 命中，落到这里的本来就是"没有任何证据说它是 qwen"
+  // "OpenAI 兼容端点默认说 OpenAI 方言"是这一层唯一站得住的默认。真是 qwen 又用了不含 qwen
+  // 字样的模型 id，在设置里把思考格式显式选成 qwen 即可（thinkingFormat 是可配项，auto 只是默认）。
+  return 'openai'
 }
 
 function usesOpenAICompletions(mc: ModelConfig): boolean {
@@ -637,6 +799,17 @@ export function isGlm52Model(model: string | undefined): boolean {
  */
 export function supportsEffortDial(mc: ModelConfig): boolean {
   if (!mc.supportsThinking) return false
+
+  // 先问 Pi。它的目录里写着这个模型到底有哪几档（thinkingLevelMap 判 null 的会被
+  // getSupportedThinkingLevels 过滤掉），而下面那串方言推导是我们自己的旁证推理。
+  // 两个神谕并存就会打架：2026-08-15 那次"关思考报错 + 设置里没有思考深度"就是两边同时答错。
+  // 有 Pi 的条目就以 Pi 为准；合成条目（Pi 不认识的端点/模型）才轮到方言推导——
+  // 那时 Pi 手里也只有我们喂给它的模板，问它等于问自己。
+  const catalogModel = piCatalogModelFor(mc)
+  if (catalogModel && piDrivesEffortField(catalogModel)) {
+    return getSupportedThinkingLevels(catalogModel).filter((level) => level !== 'off').length > 1
+  }
+
   if (mc.provider === 'custom' && mc.apiFormat === 'anthropic') return true
   if (mc.provider === 'anthropic' || mc.provider === 'openai') return true
   if (!usesOpenAICompletions(mc)) return false
@@ -645,6 +818,18 @@ export function supportsEffortDial(mc: ModelConfig): boolean {
   if (format === 'zai') return isGlm52Model(mc.model)
   if (format === 'qwen') return resolveQwenThinkingControl(mc) !== 'toggle'
   return false
+}
+
+/**
+ * 档位这件事，是不是真的由 Pi 生成字段？
+ *
+ * 只有此时 Pi 的 thinkingLevelMap 才是对"有哪几档"这个问题的回答。Qwen3.7 那条路的档位是
+ * 我们在 adaptModelRequestPayload 里注入的 thinking_budget——Pi 的档位表讲的是
+ * reasoning_effort，两回事，问它等于答非所问（实测：会把"纯开关"的第三方 Qwen 网关误判成有档位）。
+ */
+function piDrivesEffortField(model: Model<any>): boolean {
+  if ((model as any).api !== 'openai-completions') return true          // anthropic / responses / google：pi 自己映射档位
+  return !!(model as any).compat?.supportsReasoningEffort
 }
 
 function validThinkingBudgets(value: unknown): value is ThinkingBudgets {
@@ -969,7 +1154,8 @@ export function clearModelConfig(): void {
 // --- Pi 模型配置 ---
 
 import type { Model, Context, ThinkingLevel } from '@earendil-works/pi-ai/compat'
-import { getModel as piGetModel, getModels as piGetModels, getProviders as piGetProviders, completeSimple, extractDiagnosticError } from '@earendil-works/pi-ai/compat'
+import { getModel as piGetModel, getModels as piGetModels, getProviders as piGetProviders, getSupportedThinkingLevels, completeSimple, extractDiagnosticError } from '@earendil-works/pi-ai/compat'
+import { builtinProviders } from '@earendil-works/pi-ai/providers/all'
 import { Type } from 'typebox'
 import { getDataRoot } from './data-root'
 
@@ -1099,6 +1285,42 @@ function createZaiCompatModel(mc: ModelConfig): Model<any> {
  * 创建自定义 OpenAI 兼容模型（用于非标准 provider）。
  * 基于 groq 的模型模板（使用 openai-completions API），覆盖 baseUrl 和 id。
  */
+/**
+ * 借 Pi 目录里同名模型的 thinkingLevelMap —— 只借"档位表"这一项。
+ *
+ * 它是**模型内在属性**（这个模型认哪几档、能不能关思考），跟端点无关；baseUrl/协议属于端点，
+ * 那两个必须听用户的网关。同一个 model id 在多个 provider 下出现且表不一致时（1220 条里有 75 个
+ * 这种，多半是某家把档位降级了）就不借——认不准就不认。
+ *
+ * 出处：2026-08-15 grok 事故。硬编码一张从错误话术猜来的表，跟 Pi 的生成数据是矛盾的。
+ * 借表之后 grok-4.5 拿到的是 off:null（不能关思考）+ low/medium/high，四个 provider 完全一致。
+ */
+let piLevelMapIndex: Map<string, Record<string, unknown> | null> | null = null
+
+function borrowThinkingLevelMap(modelId: string | undefined): Record<string, unknown> | undefined {
+  const id = (modelId || '').trim()
+  if (!id) return undefined
+  if (!piLevelMapIndex) {
+    const index = new Map<string, Record<string, unknown> | null>()
+    try {
+      for (const provider of piGetProviders() as unknown as string[]) {
+        for (const model of piGetModels(provider as any) as any[]) {
+          if (!model?.id || !model.thinkingLevelMap) continue
+          const seen = index.get(model.id)
+          if (seen === null) continue                                   // 已判定为不一致
+          if (seen && JSON.stringify(seen) !== JSON.stringify(model.thinkingLevelMap)) {
+            index.set(model.id, null)
+            continue
+          }
+          index.set(model.id, model.thinkingLevelMap)
+        }
+      }
+    } catch { /* 目录读不出来就不借 */ }
+    piLevelMapIndex = index
+  }
+  return piLevelMapIndex.get(id) || undefined
+}
+
 function createCustomCompatModel(mc: ModelConfig): Model<any> {
   const thinkingFormat = resolveThinkingFormat(mc)
   if (thinkingFormat === 'zai') {
@@ -1131,6 +1353,11 @@ function createCustomCompatModel(mc: ModelConfig): Model<any> {
     //（groq 模板缺省不带）——否则档位菜单选了也发不出去，成为无实效的 UI 谎言。
     if (thinkingFormat === 'openai') compat.supportsReasoningEffort = true
   }
+  // 档位表不猜，去 Pi 目录借同名模型的（见 borrowThinkingLevelMap）。
+  // 上一版这里是硬编码的 grok 表 { medium: null, max: 'max' }，取值来自网关错误话术
+  //（"please use low, high, or max"）——而 Pi 从 models.dev 生成的数据说的是
+  // low/medium/high 合法、max 不合法，两者矛盾，且 Pi 那份有出处。
+  const borrowedLevels = mc.supportsThinking ? borrowThinkingLevelMap(mc.model) : undefined
   // 图片能力按声明走：默认支持（Qwen-VL/GPT-4o 等多模态端点），显式 false = 纯文本模型，
   // 让 pi-ai 的 downgradeUnsupportedImages 把历史图片降级为占位文本而不是发给网关吃 400
   return {
@@ -1139,6 +1366,7 @@ function createCustomCompatModel(mc: ModelConfig): Model<any> {
     baseUrl: mc.baseUrl,
     reasoning: !!mc.supportsThinking,  // Pi 内部条件之一：model.reasoning 必须为真
     compat,
+    ...(borrowedLevels ? { thinkingLevelMap: borrowedLevels } : {}),
     input: mc.supportsImages === false ? ['text'] : ['text', 'image']
   }
 }
@@ -1237,6 +1465,96 @@ function createCustomResponsesModel(mc: ModelConfig): Model<any> {
  * 3. 对于未映射的 provider，尝试通过 openrouter
  * 4. 兜底：创建自定义 OpenAI 兼容模型（使用用户配置的 baseUrl）
  */
+/**
+ * 我们的 provider 字符串 → Pi provider id。
+ *
+ * PROVIDER_MAP 里那 11 条其实全是恒等映射，它真正的作用是"允许名单"——而 Pi 目录里有 39 个
+ * provider。名单外的（deepseek、opencode-go、moonshotai…）会掉进自定义兼容路径，协议/上下文/
+ * 思考档位全靠猜，甚至被误路到别人家的端点。所以名单改成兜底：**Pi 认识的 id 一律直接认**，
+ * PROVIDER_MAP 只留给"我们的叫法 ≠ Pi 的叫法"的别名（目前没有，保留给将来）。
+ */
+function resolvePiProvider(provider: string | undefined): string | undefined {
+  const name = (provider || '').trim()
+  if (!name || name === 'custom') return undefined
+  const alias = PROVIDER_MAP[name]
+  if (alias) return alias
+  try {
+    return (piGetProviders() as unknown as string[]).includes(name) ? name : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 端点归一化：去尾斜杠、小写、只保留 协议+host+path（查询串/片段不参与比对） */
+function normalizeEndpoint(baseUrl: string | undefined): string {
+  const trimmed = (baseUrl || '').trim().replace(/\/+$/, '')
+  try {
+    const u = new URL(trimmed)
+    return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`.toLowerCase()
+  } catch {
+    return trimmed.toLowerCase()
+  }
+}
+
+/**
+ * 归一化 baseUrl → Pi provider 的反向索引，取自 Pi 自己的目录（不手抄，Pi 升级即自动跟上）。
+ * 一址多 provider 的丢弃（qwen-token-plan 与 qwen-token-plan-individual 共址）：认不准就不认，
+ * 那条路上游本来就有 QWEN_TOKEN_PLAN_HOSTS 专门处理。
+ * 注意必须比对完整路径而非域名——opencode 与 opencode-go 同域不同路径
+ * （/zen/v1 与 /zen/go/v1），只认 host 会认错家。
+ */
+let piEndpointIndex: Map<string, string> | null = null
+
+function getPiEndpointIndex(): Map<string, string> {
+  if (piEndpointIndex) return piEndpointIndex
+  const index = new Map<string, string>()
+  const ambiguous = new Set<string>()
+  try {
+    for (const provider of piGetProviders() as unknown as string[]) {
+      for (const model of piGetModels(provider as any) as any[]) {
+        if (!model?.baseUrl) continue
+        const key = normalizeEndpoint(model.baseUrl)
+        const seen = index.get(key)
+        if (seen && seen !== provider) { ambiguous.add(key); continue }
+        index.set(key, provider)
+      }
+    }
+  } catch { /* 目录读不出来就当没有索引，退回自定义兼容路径 */ }
+  ambiguous.forEach((key) => index.delete(key))
+  piEndpointIndex = index
+  return index
+}
+
+/**
+ * 自定义端点的「双证据」认领：baseUrl 与 Pi 某个 provider 的官方地址完全一致，**且**该
+ * provider 目录里确有用户填的这个 model id。两条都对上才认——只对上地址不够（同址可能挂着
+ * 别人的模型），只对上模型名更不够（模型名满天飞）。认下来的收益是拿到 Pi 的真条目：
+ * 协议、上下文窗口、能力位、思考档位表全都不用猜（grok-4.5 的 thinkingLevelMap.off=null
+ * 就是"这个模型不能关思考"的机器可读表达，猜是猜不出来的）。
+ *
+ * 用户显式声明过的字段仍然覆盖 Pi——他面对的是自己的网关，是最后的证据源。
+ */
+function resolvePiCatalogModelForEndpoint(mc: ModelConfig): Model<any> | undefined {
+  if (mc.provider !== 'custom') return undefined
+  if (mc.apiFormat && mc.apiFormat !== 'openai') return undefined  // 显式声明了协议，尊重用户
+  const provider = getPiEndpointIndex().get(normalizeEndpoint(mc.baseUrl))
+  if (!provider) return undefined
+  const modelId = (mc.model || '').trim()
+  let model: Model<any> | undefined
+  try {
+    model = piGetModel(provider as any, modelId as any)
+  } catch {
+    return undefined
+  }
+  if (!model) return undefined
+  return {
+    ...model,
+    ...(mc.supportsThinking !== undefined ? { reasoning: mc.supportsThinking } : {}),
+    ...(mc.supportsImages === false ? { input: ['text'] } : {}),
+    ...(mc.contextWindow ? { contextWindow: mc.contextWindow } : {})
+  }
+}
+
 export function buildModelFromConfig(mc: ModelConfig): Model<any> {
   const nativeQwenModel = createNativeQwenModel(mc)
   if (nativeQwenModel) {
@@ -1244,7 +1562,7 @@ export function buildModelFromConfig(mc: ModelConfig): Model<any> {
     return nativeQwenModel
   }
 
-  const piProvider = PROVIDER_MAP[mc.provider]
+  const piProvider = resolvePiProvider(mc.provider)
 
   // 当前锁定的 Pi 0.74 尚未登记 GLM-5.2；用同 provider 模板补齐新版能力位。
   if (piProvider === 'zai' && !piGetModel('zai' as any, mc.model as any)) {
@@ -1284,19 +1602,18 @@ export function buildModelFromConfig(mc: ModelConfig): Model<any> {
     throw new Error(`Provider "${piProvider}" 在 Pi 内置模型表中没有任何模型，无法构造 "${mc.model}"`)
   }
 
-  // 未映射的 provider，尝试 openrouter（同样不允许 undefined 静默当作"映射成功"返回）
-  if (!piProvider && mc.provider !== 'custom') {
-    try {
-      const orModelId = `${mc.provider}/${mc.model}` as any
-      const model = piGetModel('openrouter', orModelId)
-      if (model) {
-        console.log(`[Config] Pi 通过 OpenRouter 映射: openrouter/${orModelId}`)
-        return model
-      }
-      console.warn(`[Config] OpenRouter 里没有 openrouter/${orModelId}，回落自定义兼容模型`)
-    } catch (err: any) {
-      console.warn(`[Config] OpenRouter 映射失败: ${err.message}`)
-    }
+  // 注：这里曾有一条"未映射的 provider 就试试 openrouter/{provider}/{model}"的借用分支。
+  // 它命中后直接 return OpenRouter 的条目——而条目自带 baseUrl=openrouter.ai，下游取的就是
+  // model.baseUrl，于是"选 DeepSeek + 填 api.deepseek.com + 填 DeepSeek 的 key"会把请求发去
+  // OpenRouter（openrouter 目录里恰好有 deepseek/deepseek-chat）。2026-08-15 实证。
+  // 现在 provider 只要是 Pi 目录里的 id 就直接认（上面那段），真正的 OpenRouter 用户
+  // provider 本来就是 'openrouter'，这条分支再无可达场景，整条删除。
+
+  // custom + 官方地址 + 官方模型名 → 认领 Pi 的真条目（双证据，见 resolvePiCatalogModelForEndpoint）
+  const catalogModel = resolvePiCatalogModelForEndpoint(mc)
+  if (catalogModel) {
+    console.log(`[Config] 自定义端点认领为 Pi 目录条目: ${catalogModel.provider}/${catalogModel.id}`)
+    return catalogModel
   }
 
   // 兜底：custom provider（或以上映射全部失败）——按 apiFormat 分流协议
@@ -1311,6 +1628,30 @@ export function buildModelFromConfig(mc: ModelConfig): Model<any> {
   // apiFormat undefined/'openai'（默认，逐字节不变）：OpenAI 兼容 completions 协议
   console.log(`[Config] Pi 使用自定义兼容模型: ${mc.baseUrl} / ${mc.model}`)
   return createCustomCompatModel(mc)
+}
+
+
+/**
+ * 这份配置有没有对应的 **Pi 目录条目**（而不是我们合成的）。
+ *
+ * 认领路径与 buildModelFromConfig 一一对应：原生 Qwen Token Plan / Pi 认识的 provider 且模型 id
+ * 精确命中 / 自定义端点的双证据认领。三条都不中就是合成条目——它的元数据是模板占位值，
+ * 拿去问 Pi「这个模型支持哪几档」只会得到我们自己喂进去的答案。
+ */
+function piCatalogModelFor(mc: ModelConfig): Model<any> | undefined {
+  const nativeQwen = createNativeQwenModel(mc)
+  if (nativeQwen) return nativeQwen
+
+  const piProvider = resolvePiProvider(mc.provider)
+  if (piProvider) {
+    try {
+      return piGetModel(piProvider as any, (mc.model || '').trim() as any) || undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  return resolvePiCatalogModelForEndpoint(mc)
 }
 
 /**

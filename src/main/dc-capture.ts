@@ -35,7 +35,7 @@ export async function evalChecked(
 
 /**
  * 轮询等一个布尔表达式在页面里变真，返回是否在超时前达成（不抛错——调用方按自己的语义决定超时后
- * 是致命错误还是放行继续）。dc-video-export.ts 的 waitForSvgReady/waitForFontsInlined 都是这个
+ * 是致命错误还是放行继续）。dc-video-export.ts 的 waitForCanvasReady/waitForFontsInlined 都是这个
  * 轮询循环的薄包装，行为通过它们自己的抛错/放行分支保留，不在这里做决定。
  */
 export async function pollUntil(

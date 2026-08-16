@@ -25,8 +25,19 @@ export interface StallWatchdog {
  * (including a thinking delta) renews the watchdog, while tool execution
  * disarms it. Keep the parsing here so legacy and pi-core cannot silently
  * drift to different default behavior.
+ *
+ * 取值对齐 pi 自己的编码 agent：`pi-coding-agent/core/http-dispatcher.js` 的
+ * DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000（可选 30s / 1min / 2min / 5min / 关闭），
+ * 作为 undici 的 bodyTimeout + headersTimeout 装在全局 dispatcher 上。
+ *
+ * 原值 60s 偏紧，而且我们这层比 pi 那层更容易误杀——两处口径不同：
+ *  · pi 数的是**字节**（socket 层）：SSE 心跳、任何一个 chunk 都续命
+ *  · 我们数的是**已解析的模型事件**：长上下文的预填充阶段（首 token 前）一个事件都没有，
+ *    大 context + 推理模型很容易超过 60s，连接其实活得好好的
+ * 所以在换成字节级口径之前，至少不该比 pi 的 5 分钟更激进。
+ * 真正"网关挂着连接不返错"的场景 5 分钟照样兜得住——那是无限期挂起，不是慢。
  */
-export const DEFAULT_MODEL_STALL_TIMEOUT_MS = 60_000
+export const DEFAULT_MODEL_STALL_TIMEOUT_MS = 300_000
 
 export function resolveModelStallTimeoutMs(raw: unknown): number {
   const configured = Number(raw)

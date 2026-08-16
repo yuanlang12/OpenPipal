@@ -10,6 +10,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { normalizeQuestionsPanelTitle, normalizeQuestionsV2Items } from '../../src/main/pi-event-adapter'
+import { questionsPreviewImageUrl } from '../../src/shared/safe-svg'
 
 describe('normalizeQuestionsPanelTitle', () => {
   it('uses an empty marker only for missing/blank defaults and preserves explicit model bytes', () => {
@@ -135,7 +136,11 @@ describe('normalizeQuestionsV2Items', () => {
     const result = normalizeQuestionsV2Items([
       { kind: 'svg-options', title: '选图标', options: [{ label: '圆角', svg: '<svg><rect width="10" height="10"/></svg>' }] }
     ])
-    expect(result[0].options).toEqual([{ label: '圆角', svg: '<svg><rect width="10" height="10"/></svg>', value: '圆角' }])
+    expect(result[0].options).toEqual([{
+      label: '圆角',
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>',
+      value: '圆角'
+    }])
   })
 
   it('svg-options 丢弃事件处理器、脚本、foreignObject 与主动 URL', () => {
@@ -156,7 +161,7 @@ describe('normalizeQuestionsV2Items', () => {
     expect(result[0].options[0]).toEqual({
       value: 'unsafe',
       label: '危险图形',
-      svg: '<svg viewBox="0 0 80 56"><rect width="80" height="56" fill="#123456"/></svg>'
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 56"><rect width="80" height="56" fill="#123456"/></svg>'
     })
     expect(result[0].options[0].svg).not.toMatch(/onload|script|foreignObject|iframe|javascript:|https:/i)
   })
@@ -170,13 +175,13 @@ describe('normalizeQuestionsV2Items', () => {
     expect(result[0].options).toEqual([{ value: 'green', label: '深绿', svg: safeSvg }])
   })
 
-  it('svg-options 没有可保留的 SVG 元素时丢弃该选项并安全降级', () => {
+  it('svg-options 没有可保留的 SVG 元素时只丢预览，选项文字仍在', () => {
     const result = normalizeQuestionsV2Items([
       { kind: 'svg-options', title: '危险图形', options: [{ value: 'x', svg: '<svg><script>alert(1)</script></svg>' }] }
     ])
 
-    expect(result[0].kind).toBe('text-options')
-    expect(result[0].options).toEqual(['是', '否'])
+    expect(result[0].kind).toBe('svg-options')
+    expect(result[0].options).toEqual([{ value: 'x' }])
   })
 
   it('svg-options 全部选项无效时降级为 text-options + 是/否', () => {
@@ -196,5 +201,76 @@ describe('normalizeQuestionsV2Items', () => {
     for (const opt of result[0].options) {
       expect(typeof opt).toBe('string')
     }
+  })
+})
+
+/**
+ * 选项预览裂图（真机实测）：风格选项 A 正常、B/C/D 只剩浏览器裂图图标。
+ *
+ * 实测复核（Chromium 里逐个 <img> 试 onload/onerror）：data:image/svg+xml 是按 XML 文档解析的，
+ * 缺 xmlns、文本里裸 & 、标签不闭合/交叉这三类模型常见写法都直接 ERROR；外链 https 在断网 +
+ * CSP 的产物沙箱里同样 ERROR。工具提示词里 4 个 SVG 模板只有第 1 个带 xmlns，正是 A 活 B/C/D
+ * 死的形状。规范化层的口径：能离线渲染的只有「白名单静态内联 SVG」和「形状合法的 data:image/*」，
+ * 其余判无预览；**丢的只是预览，选项文字永远保留**。
+ */
+describe('questions_v2 选项预览规范化（裂图防线）', () => {
+  const previewOf = (svg: unknown): any => normalizeQuestionsV2Items([
+    { kind: 'svg-options', title: '风格', options: [{ value: 'a', label: '风格 A', svg }] }
+  ])[0].options[0]
+
+  it('缺 xmlns 的内联 SVG 被补上命名空间（img 里才画得出来）', () => {
+    const preview = previewOf('<svg viewBox="0 0 80 56"><rect x="8" y="12" width="64" height="32" rx="4" fill="#2A2A2A"/></svg>')
+    expect(preview.svg).toBe('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 56"><rect x="8" y="12" width="64" height="32" rx="4" fill="#2A2A2A"/></svg>')
+  })
+
+  it('文本里的裸 & 被转义，HTML 式未闭合标签被自闭合（都会让 XML 解析失败）', () => {
+    const preview = previewOf('<svg viewBox="0 0 80 56"><rect width="80" height="56" fill="#0F3D2E"><text x="8" y="48">Aa & Bb</text></svg>')
+    expect(preview.svg).toContain('Aa &amp; Bb')
+    expect(preview.svg).toContain('<rect width="80" height="56" fill="#0F3D2E"/>')
+    expect(preview.svg?.endsWith('</svg>')).toBe(true)
+  })
+
+  it('标签交叉/悬空闭合的畸形 SVG 判无预览，选项文字保留', () => {
+    const preview = previewOf('<svg viewBox="0 0 80 56"><g><rect width="10" height="10"/></svg>')
+    expect(preview).toEqual({ value: 'a', label: '风格 A' })
+  })
+
+  it('http(s) 外链判无预览（产物沙箱断网 + CSP，外链必裂），选项文字保留', () => {
+    expect(previewOf('https://cdn.example.com/style-b.png')).toEqual({ value: 'a', label: '风格 A' })
+    expect(previewOf('http://example.com/c.svg')).toEqual({ value: 'a', label: '风格 A' })
+    expect(previewOf('//example.com/d.png')).toEqual({ value: 'a', label: '风格 A' })
+  })
+
+  it('坏 base64 / 非图片 data URI 判无预览，选项文字保留', () => {
+    expect(previewOf('data:image/png;base64,!!!not-base64!!!')).toEqual({ value: 'a', label: '风格 A' })
+    expect(previewOf('data:image/png;base64,QUJDR')).toEqual({ value: 'a', label: '风格 A' })
+    expect(previewOf('data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==')).toEqual({ value: 'a', label: '风格 A' })
+    expect(previewOf('data:image/svg+xml;base64,QUJD')).toEqual({ value: 'a', label: '风格 A' })
+  })
+
+  it('合法 data URI 保留：raster 原样透传，svg+xml 解码后仍过静态白名单', () => {
+    const rasterUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+    expect(previewOf(rasterUri).svg).toBe(rasterUri)
+
+    const svgSource = '<svg viewBox="0 0 80 56"><rect width="80" height="56" fill="#0F3D2E"/></svg>'
+    const base64Uri = `data:image/svg+xml;base64,${Buffer.from(svgSource, 'utf8').toString('base64')}`
+    expect(previewOf(base64Uri).svg).toBe('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 56"><rect width="80" height="56" fill="#0F3D2E"/></svg>')
+
+    const percentUri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgSource)}`
+    expect(previewOf(percentUri).svg).toContain('xmlns="http://www.w3.org/2000/svg"')
+  })
+
+  it('data URI 包装不是信任边界：内层脚本/外链同样被剥掉', () => {
+    const hostile = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script><image href="https://attacker.example/p.png"/><rect width="10" height="10"/></svg>'
+    const preview = previewOf(`data:image/svg+xml;base64,${Buffer.from(hostile, 'utf8').toString('base64')}`)
+    expect(preview.svg).not.toMatch(/onload|script|https:/i)
+    expect(preview.svg).toContain('<rect width="10" height="10"/>')
+  })
+
+  it('渲染层拿到的永远是 img 可用的 src（data: 开头），无预览时是 null', () => {
+    expect(questionsPreviewImageUrl('<svg viewBox="0 0 80 56"><rect width="80" height="56" fill="#0F3D2E"/></svg>'))
+      .toBe(`data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 56"><rect width="80" height="56" fill="#0F3D2E"/></svg>')}`)
+    expect(questionsPreviewImageUrl('https://cdn.example.com/a.png')).toBeNull()
+    expect(questionsPreviewImageUrl(undefined)).toBeNull()
   })
 })

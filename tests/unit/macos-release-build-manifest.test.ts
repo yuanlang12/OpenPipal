@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Arch } from 'electron-builder'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import {
   createReleaseBuildManifest,
   writeReleaseBuildManifest,
@@ -16,7 +17,9 @@ const HOOK_PATH = fileURLToPath(new URL(
   import.meta.url,
 ))
 const BUILD_MANIFEST_PATH = 'Contents/Resources/openpipal-release-build.json'
-const GIT_FIXTURE_TEST_TIMEOUT = 15_000
+// 30s 而不是 15s：建临时 git 仓 + 多次 git 子进程是 I/O 主导，同机开着
+// app / vite / playwright 时 15s 也会超——用超时当性能守卫只会制造假警报。
+const GIT_FIXTURE_TEST_TIMEOUT = 30_000
 const temporaryRoots: string[] = []
 
 afterEach(async () => {

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Sliders, MessageCircle, Settings, Mic, RotateCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../stores/chatStore'
-import { isDcHtml, inlineDcRuntime, inlineDcSiblings, inlineDcArtifactSiblings, inlineKnownScriptSiblings, inlineUploadedImages, editableDcProps, readDcPropOverrides, writeDcPropOverrides, DcPropMeta } from './dcRuntime'
+import { isDcHtml, inlineDcRuntime, inlineDcSiblings, inlineDcArtifactSiblings, inlineKnownScriptSiblings, inlineUploadedImages, editableDcProps, readDcPropOverrides, writeDcPropOverrides, writeDcEdl, scanKnownSiblingPreloads, KNOWN_SIBLING_COUNT, DcPropMeta } from './dcRuntime'
 import { DcTweaksPanel } from './DcTweaksPanel'
 import { ElementTweakPanel, TweakFields } from './ElementTweakPanel'
 import { useLocalSTT } from '../../hooks/useLocalSTT'
@@ -18,6 +18,12 @@ interface HtmlPreviewProps {
   onContentEdit?: (newContent: string) => void
   /** 工具组（Reload/Tweaks/Comment）的 portal 插槽——ArtifactTab 头行传入，与 分享/预览/源码 同行 */
   toolbarHost?: HTMLElement | null
+  /**
+   * 兄弟素材版本号。dc 薄壳的画面由「薄壳 + 它 from 引用的场景 jsx」共同决定，模型改 bug
+   * 十有八九只动场景——薄壳 content 一个字节不变，只盯 content 的话预览会一直停在旧画面。
+   * 调用方（ArtifactTab）把整套渲染输入的指纹传进来，变了就重新装配。
+   */
+  siblingRev?: string
 }
 
 // Comment(画笔)模式的光标：红色铅笔+白描边（明暗底都可见），笔尖热点 (2,22)。
@@ -71,6 +77,17 @@ const BRIDGE_SCRIPT_TEMPLATE = `<script>(function(){
       parent.postMessage({ __openpipal: true, type: 'complete:request', requestId: id, prompt: parsed.prompt, systemPrompt: systemPrompt }, '*');
     });
   }
+  // 流式预载的排队与冲刷（见下方 dc:preload 分支）
+  var _preQ = [];
+  var _preTimer = null;
+  function _flushPreload(){
+    if (typeof window.__dcUpdate !== 'function' || typeof window.__dcRootName !== 'function') return false;
+    while (_preQ.length) {
+      var p = _preQ.shift();
+      try { window.__dcUpdate(window.__dcRootName(), 'preload', p, true); } catch(_) {}
+    }
+    return true;
+  }
   window.addEventListener('message', function(e){
     var d = e.data;
     if (!d || !d.__openpipal) return;
@@ -106,6 +123,20 @@ const BRIDGE_SCRIPT_TEMPLATE = `<script>(function(){
         }
       } catch(_) {}
       _genericFitSchedule(); // 流入内容会加宽布局，resize 不触发——跟拍一次通用适配
+      return;
+    }
+    // dc: 流式预载——把已知运行时预制件在**流中**送进活文档（壳先起、内容依次进）。
+    // 兄弟件脚本原本只有挂载帧与终稿重建两个进文档的时机，deck 的 x-import 行几乎必然错过
+    // 挂载帧，整场生成只剩占位骨架。__dcUpdate 按 key 去重、以 script 形态注入执行。
+    // 排队重试：泵可能早于 support.js 就绪，而每个 key 父侧只送一次，丢了就永远补不回来。
+    if (d.type === 'dc:preload') {
+      _preQ.push({ key: d.key, code: d.code });
+      if (!_flushPreload() && !_preTimer) {
+        var _preDeadline = Date.now() + 15000;
+        _preTimer = setInterval(function(){
+          if (_flushPreload() || Date.now() > _preDeadline) { clearInterval(_preTimer); _preTimer = null; }
+        }, 32);
+      }
       return;
     }
     // dc canvas: 适配/手动缩放——补上"宿主接管 canvas 画板平移缩放"契约的宿主侧（技能承诺、
@@ -251,6 +282,19 @@ const BRIDGE_SCRIPT_TEMPLATE = `<script>(function(){
   window.addEventListener('load', function(){ _genericFit(); setTimeout(_genericFit, 800); setTimeout(_genericFit, 2500); });
   if (document.readyState !== 'loading') setTimeout(_genericFit, 0);
   else document.addEventListener('DOMContentLoaded', function(){ setTimeout(_genericFit, 0); });
+
+  // ---- 时间轴编辑落盘 ----
+  // 动画运行时在画布元素上派 data-om-edl-changed（不冒泡，与 seek 事件同款约定）。
+  // 捕获阶段的 document 监听照样收得到（bubbles 只影响冒泡阶段），转交宿主写回产物——
+  // 只留在 iframe 里的话，重载和导出都吃不到这次剪辑。
+  document.addEventListener('data-om-edl-changed', function(e){
+    try {
+      var edl = e && e.detail && e.detail.edl;
+      if (Object.prototype.toString.call(edl) === '[object Array]') {
+        parent.postMessage({ __openpipal: true, type: 'edl:changed', edl: edl }, '*');
+      }
+    } catch (err) { /* 事件形状不对就当没发生 */ }
+  }, true);
 
   // ---- Tweaks 协议 ----
   var _tweakHandler = null;
@@ -824,7 +868,7 @@ function recordStreamDebug(kind: string, tailSource: string, keySource: string):
   ;(window as any).__dcStreamDebug = dcStreamDebug
 }
 
-export function HtmlPreview({ content, streaming, onContentEdit, toolbarHost }: HtmlPreviewProps) {
+export function HtmlPreview({ content, streaming, onContentEdit, toolbarHost, siblingRev }: HtmlPreviewProps) {
   const { t } = useTranslation()
   const bridgeScript = useMemo(
     () => buildHtmlPreviewBridgeScript(BRIDGE_SCRIPT_TEMPLATE, {
@@ -904,6 +948,7 @@ export function HtmlPreview({ content, streaming, onContentEdit, toolbarHost }: 
   // 自己写回（overrides 持久化）产生的 content 回声——跳过 srcdoc 重载，保住 iframe 运行时状态
   const selfEditRef = useRef<string | null>(null)
   const bridgeScriptRef = useRef(bridgeScript)
+  const siblingRevRef = useRef(siblingRev)
   const [docHtml, setDocHtml] = useState(() => (streaming ? '' : assembleDocSync(content, bridgeScript)))
 
   // 「用户正在操作画布」判定：评论/圈画/微调等显式模式中，或 3s 内有过滚动缩放调参类交互
@@ -954,8 +999,11 @@ export function HtmlPreview({ content, streaming, onContentEdit, toolbarHost }: 
   useEffect(() => {
     const bridgeChanged = bridgeScriptRef.current !== bridgeScript
     bridgeScriptRef.current = bridgeScript
+    // 兄弟素材换版同样要重装：content 没变，但画面的另一半输入变了
+    const siblingChanged = siblingRevRef.current !== siblingRev
+    siblingRevRef.current = siblingRev
     if (streaming) return // 流式走下方节流直写，不动 docHtml（srcDoc 此时也是 undefined）
-    if (shouldSkipSelfEditEcho(selfEditRef.current, content, bridgeChanged)) {
+    if (shouldSkipSelfEditEcho(selfEditRef.current, content, bridgeChanged || siblingChanged)) {
       selfEditRef.current = null
       return
     }
@@ -977,7 +1025,7 @@ export function HtmlPreview({ content, streaming, onContentEdit, toolbarHost }: 
       if (!cancelled) setDocHtml(full)
     })()
     return () => { cancelled = true }
-  }, [content, streaming, conversationId, bridgeScript, isCanvasBusy, scheduleIdleFlush])
+  }, [content, siblingRev, streaming, conversationId, bridgeScript, isCanvasBusy, scheduleIdleFlush])
 
   const addPendingMention = useChatStore(s => s.addPendingMention)
   const removePendingMention = useChatStore(s => s.removePendingMention)
@@ -1050,12 +1098,15 @@ export function HtmlPreview({ content, streaming, onContentEdit, toolbarHost }: 
   const streamThrottleAtRef = useRef(0)
   const streamTrailingRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastWrittenRef = useRef('')
+  // 本流已预载过的运行时兄弟件 key（每流每 key 只送一次；新流/换壳时重置）
+  const preloadSentRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!streaming) {
       // 流式结束 → 复位外壳与节流状态，终稿由 docHtml 整页接管（带完整逻辑类）
       shellRef.current = { head: '', bridge: '', loaded: false }
       lastWrittenRef.current = ''
       streamThrottleAtRef.current = 0
+      preloadSentRef.current = new Set()
       return
     }
     if (!content) return
@@ -1093,6 +1144,9 @@ export function HtmlPreview({ content, streaming, onContentEdit, toolbarHost }: 
         if (iframeRef.current) iframeRef.current.srcdoc = html
         shellRef.current = { head, bridge: bridgeScript, loaded: true }
         streamThrottleAtRef.current = Date.now()
+        // 建壳这一刻已流到的引用，assembleDocSync→inlineDcSiblings 已经内联进文档了：
+        // 记成"已送"，别再经预载通道把同一份源码重放一遍。
+        preloadSentRef.current = new Set(scanKnownSiblingPreloads(content).map((p) => p.key))
         return
       }
       const pump = (): void => {
@@ -1112,6 +1166,18 @@ export function HtmlPreview({ content, streaming, onContentEdit, toolbarHost }: 
         iframeRef.current?.contentWindow?.postMessage(
           { __openpipal: true, type: 'dc:stream-template', template: truncateUnclosedInterp(template), streaming: true }, '*'
         )
+        // 流式预载：累积文本里刚刚出现完整引用的运行时预制件，当场把源码送进活文档。
+        // 不这么做的话，x-import 行晚于建壳帧的产物（deck 几乎必然如此——前面隔着整段 helmet）
+        // 会一路只有占位骨架，直到生成结束终稿重建才"大爆炸"式出现。
+        // 全部 key 送完即彻底停止扫描（早退，别每帧白跑正则）。
+        if (preloadSentRef.current.size < KNOWN_SIBLING_COUNT) {
+          for (const p of scanKnownSiblingPreloads(src, preloadSentRef.current)) {
+            preloadSentRef.current.add(p.key)
+            iframeRef.current?.contentWindow?.postMessage(
+              { __openpipal: true, type: 'dc:preload', key: p.key, code: p.code }, '*'
+            )
+          }
+        }
         // canvas 画板流入中：新 frame 到达会加宽画板，auto 模式下顺手重 fit（在 iframe 内测量，廉价）
         if (canvasModeRef.current && zoomModeRef.current === 'auto') {
           iframeRef.current?.contentWindow?.postMessage({ __openpipal: true, type: 'dc:fit' }, '*')
@@ -1279,6 +1345,18 @@ export function HtmlPreview({ content, streaming, onContentEdit, toolbarHost }: 
       // 更新 commentAnchor.rect 让气泡/面板跟着重新定位（bubblePos 的 effect 依赖 commentAnchor）
       if (d.type === 'comment:rect-changed') {
         setCommentAnchor((prev) => (prev && prev.dom === d.dom && d.rect ? { ...prev, rect: d.rect } : prev))
+        return
+      }
+
+      // edl:changed —— 播放条上的剪辑（倍速 / 删除段）写回产物内容本身，
+      // 这样重载、逐帧导出、隐藏窗口自检看到的都是同一份剪辑（iframe 里存不住：origin 是 null）
+      if (d.type === 'edl:changed' && onContentEdit) {
+        const next = writeDcEdl(contentRef.current, Array.isArray(d.edl) ? d.edl : null)
+        if (next !== contentRef.current) {
+          contentRef.current = next
+          selfEditRef.current = next // 自己写的回声不该重载 srcDoc——iframe 里已经是这个状态了
+          onContentEdit(next)
+        }
         return
       }
 

@@ -3,7 +3,13 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// 这一组测试每条都要建临时 git 仓、跑若干次 git 子进程：I/O 主导，跟机器当下的负载走。
+// 默认 5s 空载时绰绰有余，但同机开着 app / vite / playwright 就会整片超时红——红的是环境
+// 不是代码（同一份代码空载 1637 全绿）。抬到 30s：它们本来就不是快测，用超时当性能守卫只会制造假警报。
+vi.setConfig({ testTimeout: 30_000 })
+
 
 const verifier = path.resolve('scripts/verify-open-source-candidate.mjs')
 const POLICY_PATH = 'config/open-source-policy.json'

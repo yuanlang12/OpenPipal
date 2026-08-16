@@ -518,6 +518,9 @@ export function installWebApiShim(): void {
     async testConnection(_config: any) {
       return browserUnsupported('runtimeChrome.browserShim.features.testModel')
     },
+    async listRemoteModels(_config: any) {
+      return browserUnsupported('runtimeChrome.browserShim.features.listModels')
+    },
     async getProviders() {
       const res = await fetch(`${API_BASE}/api/config/providers`)
       return res.json()
@@ -532,6 +535,16 @@ export function installWebApiShim(): void {
     },
     async clearModelConfig() {
       return browserUnsupported('runtimeChrome.browserShim.features.clearModel')
+    },
+    // 搜索服务配置 —— v1 桌面独占：不开 HTTP 路由，插件端三个写方法直接说明不支持
+    async saveSearchConfig() {
+      return browserUnsupported('runtimeChrome.browserShim.features.saveSearch')
+    },
+    async testSearchConnection() {
+      return browserUnsupported('runtimeChrome.browserShim.features.testSearch')
+    },
+    async clearSearchConfig() {
+      return browserUnsupported('runtimeChrome.browserShim.features.clearSearch')
     },
     // 归档记忆
     async listArchivedMemories() {

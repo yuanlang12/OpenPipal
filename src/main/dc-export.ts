@@ -18,7 +18,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { app } from 'electron'
 import { rewriteFromAttrs } from './dc-siblings'
-import { inlineDcForHeadless } from './dc-headless'
+import { inlineDcForHeadless, collectSidecarNames, readSidecarFiles, injectSidecarData } from './dc-headless'
 import { findArtifactFileById } from './artifact-store'
 import { mainError } from './main-i18n'
 import { dataPath, getDataRoot } from './data-root'
@@ -61,7 +61,9 @@ const VENDOR_TAGS =
 // 调参重放：data-prop-overrides 是宿主内的用户调整记录，导出后由这段脚本在 boot 后回放
 const REPLAY_SCRIPT = `<script>/* openpipal export: replay saved tweaks */(function(){
   function apply(){
-    var s=document.querySelector('script[data-dc-script]'); if(!s) return true;
+    /* 脚本可能注入在 head：首个 tick 时 body 尚未解析到 data-dc-script，此时要继续轮询而不是
+       判定"没有要重放的"（上限 100 tick 兜住真没有的文档） */
+    var s=document.querySelector('script[data-dc-script]'); if(!s) return false;
     var raw=s.getAttribute('data-prop-overrides'); if(!raw) return true;
     if(!(window.__dcSetProps&&window.__dcRootName)) return false;
     try{ window.__dcSetProps(window.__dcRootName(), JSON.parse(raw)); }catch(e){}
@@ -105,7 +107,7 @@ function resolveExportSibling(p: string): ExportSibling | null {
 }
 
 /** artifactId → 其所在会话目录（uploads/sidecar 定位共用）；找不到返回 undefined。 */
-function artifactSourceDir(artifactId?: string): string | undefined {
+export function artifactSourceDir(artifactId?: string): string | undefined {
   if (!artifactId) return undefined
   const f = findArtifactFileById(artifactId)
   return f ? path.dirname(f) : undefined
@@ -146,13 +148,14 @@ export function exportDcBundle(projectName: string, artifacts: DcExportItem[]): 
       while (used.has(name)) name = ensureDcFilename(`${item.title} ${i++}`)
       used.add(name)
       const prepared = prepareDcForExport(item.content)
-      fs.writeFileSync(path.join(dir, name), prepared.html, 'utf8')
-      files.push(name)
+      let html = prepared.html
       // 兄弟预制件拷贝：resource 从 runtime 拷、artifact sidecar 从绝对路径拷（去重 by targetName）
+      const siblingPaths: string[] = []
       for (const s of prepared.siblings) {
+        const src = s.isResource ? path.join(runtime, s.copyFrom) : s.copyFrom
+        siblingPaths.push(src)
         if (copied.has(s.targetName)) continue
         copied.add(s.targetName)
-        const src = s.isResource ? path.join(runtime, s.copyFrom) : s.copyFrom
         try {
           fs.copyFileSync(src, path.join(dir, s.targetName))
           files.push(s.targetName)
@@ -160,21 +163,31 @@ export function exportDcBundle(projectName: string, artifacts: DcExportItem[]): 
           console.warn('[dc-export] 预制件拷贝失败:', s.targetName, err?.message)
         }
       }
-      // sidecar(*.state.json)随包携带——image-slot 拖图状态在导出目录里与 html 同层(官方同形状,
-      // 组件读取是文档相对 fetch,服务式打开即可见)
-      const scDir = /\.state\.json/.test(item.content) ? artifactSourceDir(item.artifactId) : undefined
+      // sidecar(*.state.json)随包携带——image-slot 拖图状态在导出目录里与 html 同层。
+      // 基名字面量只住在组件源码里（zip 把组件当独立文件拷、根本不内联），因此扫描范围必须
+      // 覆盖兄弟预制件源码；只扫 item.content 恒为空 = 拖进去的图永远出不了包。
+      const scDir = artifactSourceDir(item.artifactId)
       if (scDir) {
-        const scRefs = new Set<string>()
-        for (const m of Array.from(item.content.matchAll(/([A-Za-z0-9._-]+\.state\.json)/g))) scRefs.add(m[1])
-        for (const name of Array.from(scRefs)) {
-          if (name !== path.basename(name) || copied.has(name)) continue
-          copied.add(name)
+        const scNames = collectSidecarNames(item.content, ...siblingPaths.map((p) => {
+          try { return fs.readFileSync(p, 'utf8') } catch { return '' }
+        }))
+        const scData = readSidecarFiles(scDir, scNames)
+        for (const scName of Object.keys(scData)) {
+          if (copied.has(scName)) continue
+          copied.add(scName)
           try {
-            fs.copyFileSync(path.join(scDir, name), path.join(dir, name))
-            files.push(name)
-          } catch { /* 会话里从没拖过图 → 无 sidecar,正常 */ }
+            fs.writeFileSync(path.join(dir, scName), scData[scName], 'utf8')
+            files.push(scName)
+          } catch (err: any) {
+            console.warn('[dc-export] sidecar 拷贝失败:', scName, err?.message)
+          }
         }
+        // 同一份数据再内联进 HTML：交接包开箱即含图。组件读取优先文档相对 fetch（服务式打开），
+        // file:// 双击时相对 fetch 被拒 → 退到这份内联数据，而不是退成空槽。
+        html = injectSidecarData(html, scData)
       }
+      fs.writeFileSync(path.join(dir, name), html, 'utf8')
+      files.push(name)
       // uploads/ 随包携带（官方 zip 同形状）：文档相对引用的粘贴图从产物所在会话目录拷出
       const srcDir = /uploads\//.test(item.content) ? artifactSourceDir(item.artifactId) : undefined
       if (srcDir) {

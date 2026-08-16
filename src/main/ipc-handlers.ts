@@ -22,8 +22,10 @@ import {
   listModelProviders, updateModelProvider, getModelProviderFull,
   getModelPresetFull, updateModelPreset,
   getOnboardingCompleted, setOnboardingCompleted,
-  getExportDir, setExportDir, getEffectiveModelConfigForDisplay
+  getExportDir, setExportDir, getEffectiveModelConfigForDisplay,
+  getEffectiveSearchConfigForDisplay, saveSearchConfig, clearSearchConfig, type SearchConfig
 } from './config-manager'
+import { testSearchConnection } from './web-search'
 import {
   setRealtimeWindowRef, getRealtimeConfig, startRealtimeSession, stopRealtimeSession, sendRealtimeEvent,
   testRealtimeConnection, previewVoice, stopVoicePreview
@@ -689,6 +691,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     const { detectContextWindow } = await import('./context-window-detector')
     return detectContextWindow(config)
   })
+  // 向服务商本人要模型清单（远端决定"有哪些"，Pi 目录决定"是什么"）；拿不到就退回目录 + 手填
+  ipcMain.handle('config:list-remote-models', async (_event, config: ModelConfig) => {
+    const { listRemoteModels } = await import('./remote-model-list')
+    return listRemoteModels(config)
+  })
   ipcMain.handle('config:test-thinking', async (_event, config: ModelConfig) => (await agentService()).testThinkingSupport(config))
   ipcMain.handle('config:get-providers', () => getProviders())
   ipcMain.handle('config:has-key', () => ({ hasKey: hasApiKey() }))
@@ -736,6 +743,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle('config:update-preset', (_event, id: string, name: string, config: any) => updateModelPreset(id, name, config))
   ipcMain.handle('config:is-custom', () => ({ isCustom: isUserCustomConfig() }))
   ipcMain.handle('config:clear-model', () => { clearModelConfig(); return { ok: true } })
+
+  // ---- 搜索服务（web_search）配置 IPC ----
+  // 红线出口同样只给展示口径：key 恒掩码，内置回退打 builtin 标记，明文永不出主进程
+  ipcMain.handle('config:get-search', () => getEffectiveSearchConfigForDisplay())
+  // 空 apiKey = 保留原值（设置页只回显掩码，用户不改 key 时提交空串）
+  ipcMain.handle('config:save-search', (_event, config: SearchConfig) => { saveSearchConfig(config); return { ok: true } })
+  ipcMain.handle('config:clear-search', () => { clearSearchConfig(); return { ok: true } })
+  // 连通测试可带一个还没保存的临时 key；返回只有成败与 errorKey，绝不回显 key
+  ipcMain.handle('config:test-search', (_event, apiKey?: string) => testSearchConnection(apiKey))
 
   // ---- 导出对话 Markdown ----
   ipcMain.handle('dialog:save-markdown', async (_event, defaultName: string) => {
@@ -1441,7 +1457,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   })
 
   // ---- DC 设计交付物导出（离线自足文件夹：.dc.html + support.js + 本地 React vendor）----
-  ipcMain.handle('artifact:export-dc', async (_event, projectName: string, artifacts: { title: string; content: string }[]) => {
+  ipcMain.handle('artifact:export-dc', async (_event, projectName: string, artifacts: { title: string; content: string; artifactId?: string }[]) => {
     return exportDcBundle(projectName, artifacts || [])
   })
 
@@ -1478,7 +1494,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     id?: string
     filename?: string
     projectName?: string
-    artifacts?: { title: string; content: string }[]
+    artifacts?: { title: string; content: string; artifactId?: string }[]
     dsName?: string
     durationSec?: number
     fps?: number

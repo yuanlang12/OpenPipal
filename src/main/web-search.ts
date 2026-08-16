@@ -1,5 +1,5 @@
 import { net } from 'electron'
-import { ENV } from './env'
+import { getEffectiveSearchConfig } from './config-manager'
 
 interface SearchResult {
   title: string
@@ -16,13 +16,8 @@ export type SearchOutcome =
   | { ok: true; results: SearchResult[] }
   | { ok: false; reason: 'no_key' | 'request_failed' | 'http_error' | 'bad_response'; detail: string }
 
-export async function webSearch(query: string, maxResults = 5): Promise<SearchOutcome> {
-  const apiKey = ENV.TAVILY_API_KEY
-  if (!apiKey) {
-    console.error('[web-search] TAVILY_API_KEY 未配置(.env 为空)—— 搜索不可用')
-    return { ok: false, reason: 'no_key', detail: 'TAVILY_API_KEY 未配置' }
-  }
-
+/** 单次 Tavily 检索。key 由调用方给——生效配置或设置页正在测试的临时值。 */
+function runTavilySearch(apiKey: string, query: string, maxResults: number): Promise<SearchOutcome> {
   return new Promise((resolve) => {
     const request = net.request({
       url: 'https://api.tavily.com/search',
@@ -75,12 +70,45 @@ export async function webSearch(query: string, maxResults = 5): Promise<SearchOu
   })
 }
 
+export async function webSearch(query: string, maxResults = 5): Promise<SearchOutcome> {
+  // 每次调用现读配置:用户在设置页改完 key,下一次搜索即生效,不需重启
+  const apiKey = getEffectiveSearchConfig().apiKey
+  if (!apiKey) {
+    console.error('[web-search] 未配置搜索服务(用户配置与内置回退均为空)—— 搜索不可用')
+    return { ok: false, reason: 'no_key', detail: '未配置搜索服务' }
+  }
+  return runTavilySearch(apiKey, query, maxResults)
+}
+
+/**
+ * 设置页的连通性测试。
+ * apiKey 可传设置页里还没保存的临时值;不传则用生效配置。
+ * 返回只有成败与本进程自造的 errorKey —— key 无论如何不回显。
+ */
+export async function testSearchConnection(
+  apiKey?: string
+): Promise<{ ok: boolean; errorKey?: string; errorParams?: Record<string, string> }> {
+  const key = (apiKey || '').trim() || getEffectiveSearchConfig().apiKey
+  if (!key) return { ok: false, errorKey: 'settings.search.errors.missingApiKey' }
+
+  const outcome = await runTavilySearch(key, 'OpenPipal search connectivity check', 1)
+  if (outcome.ok) return { ok: true }
+  switch (outcome.reason) {
+    case 'http_error':
+      return { ok: false, errorKey: 'settings.search.errors.httpError', errorParams: { detail: outcome.detail } }
+    case 'request_failed':
+      return { ok: false, errorKey: 'settings.search.errors.requestFailed', errorParams: { detail: outcome.detail } }
+    default:
+      return { ok: false, errorKey: 'settings.search.errors.badResponse' }
+  }
+}
+
 export function formatSearchResults(outcome: SearchOutcome): string {
   if (!outcome.ok) {
     // 硬失败 —— 明确告诉模型工具不可用,禁止编造检索结果/失败原因(否则会瞎说"检索源受限")
     const hint =
       outcome.reason === 'no_key'
-        ? '搜索功能未配置(缺少 API Key)。'
+        ? '未配置搜索服务——在 设置 → 搜索服务 里填入你的 Tavily API Key。'
         : `搜索服务暂不可用(${outcome.detail})。`
     return `${hint}请如实告知用户当前无法联网搜索,不要编造检索结果或失败原因。`
   }

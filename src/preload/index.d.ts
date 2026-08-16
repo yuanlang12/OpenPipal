@@ -31,6 +31,19 @@ interface ThinkingBudgets {
   high: number
 }
 
+/** 搜索服务（web_search）配置 —— v1 服务商固定 tavily；提交空 apiKey = 保留已保存的值 */
+interface SearchConfigShape {
+  provider: 'tavily'
+  apiKey: string
+}
+
+interface SearchConfigDisplayShape extends SearchConfigShape {
+  /** 生效凭证来自内置（.env）回退 */
+  builtin: boolean
+  /** 生效配置里有 key（用户自配或内置任一） */
+  configured: boolean
+}
+
 interface ModelConfigShape {
   provider: string
   baseUrl: string
@@ -154,7 +167,12 @@ interface OpenPipalAPI {
   saveModelConfig: (config: Partial<ModelConfigShape>) => Promise<any>
   testConnection: (config: Partial<ModelConfigShape>) => Promise<{ ok: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string>; model?: string; correctedBaseUrl?: string }>
   testThinkingSupport: (config: Partial<ModelConfigShape>) => Promise<{ detected: boolean; error?: string }>
-  getProviders: () => Promise<Record<string, { name: string; baseUrl: string; models: string[] }>>
+  listRemoteModels: (config: Partial<ModelConfigShape>) => Promise<{
+    ok: boolean
+    models: Array<{ id: string; name?: string; reasoning?: boolean; image?: boolean; contextWindow?: number; known?: boolean }>
+    errorKey?: string
+  }>
+  getProviders: () => Promise<Record<string, { name: string; baseUrl: string; models: Array<{ id: string; name?: string; reasoning?: boolean; image?: boolean; contextWindow?: number }> }>>
   hasApiKey: () => Promise<{ hasKey: boolean }>
   getAvailableModels: () => Promise<Array<{
     id: string
@@ -191,6 +209,11 @@ interface OpenPipalAPI {
   setInterpretTarget: (target: string) => Promise<{ ok: boolean }>
   archiveTranscript: (title: string, content: string) => Promise<{ ok: boolean; path?: string }>
   clearModelConfig: () => Promise<any>
+  // 搜索服务（web_search）—— 展示口径：apiKey 恒掩码；builtin=内置回退；configured=生效配置有 key
+  getSearchConfig: () => Promise<SearchConfigDisplayShape>
+  saveSearchConfig: (config: SearchConfigShape) => Promise<{ ok: boolean }>
+  clearSearchConfig: () => Promise<{ ok: boolean }>
+  testSearchConnection: (apiKey?: string) => Promise<{ ok: boolean; errorKey?: string; errorParams?: Record<string, string> }>
   // Realtime Voice
   getRealtimeConfig: () => Promise<{
     provider: string

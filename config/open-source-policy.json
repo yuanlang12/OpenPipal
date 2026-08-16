@@ -372,6 +372,50 @@
         "docs/open-source-provenance.md",
         "docs/open-source-readiness.md"
       ]
+    },
+    {
+      "id": "exclude-design-rewrite-process",
+      "scope": "candidate",
+      "action": "exclude",
+      "patterns": [
+        "docs/claude/design-rewrite/**",
+        "tests/contracts/**",
+        "tests/unit/animations-runtime.test.ts",
+        "tests/unit/dc-sidecar-carry.test.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ],
+      "note": "设计运行时 clean-room 重写这一轮引入的过程物与配套测试，晚于评审基线，随「设计运行时不进本次发行」一起不带。逐条理由：docs/claude/design-rewrite/** 是写给干净侧实现者的行为规格——它由读过原件的人执笔，是 clean-room 流程的脏侧材料，公开等于把被替换件的行为描述一并发出去，与替换本身的目的相悖；tests/contracts/** 与 tests/unit/animations-runtime.test.ts 是 animations 运行时的契约与单测，运行时本身在 replace-design-runtime-material 里被拦，测试留在公开树只会红着；tests/unit/dc-sidecar-carry.test.ts 同理依赖 image-slot 运行时（与既有的 tests/unit/dc-runtime-sibling.test.ts 同一族，那条已在 exclude-non-default-agents 里）。等三件原件（ios-frame / android-frame / three-d-stage）也完成自研替换、设计能力整体随发行时，这条规则连同 replace-design-runtime-material 一起重估。"
+    },
+    {
+      "id": "review-search-settings-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "src/renderer/src/components/SearchSettings.tsx",
+        "tests/unit/search-config.test.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ],
+      "note": "提交 2f8d123（搜索服务配置外化到设置页）引入的新文件，晚于评审基线。第一方产品源码：设置页让用户自配搜索服务，内置 key 只做静默回退。已核查两份文件都不含任何密钥、端点或内置配置字面量（唯一的长字符串是一个 data-testid），与 CLAUDE.md 红线「Settings 页面不得暴露内置 API Key / Base URL / 模型名」一致——设置页只显示掩码与 builtin 标记。"
+    },
+    {
+      "id": "review-model-catalog-and-anchored-menu-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "src/main/remote-model-list.ts",
+        "src/renderer/src/components/shared/AnchoredMenu.tsx",
+        "tests/e2e/model-catalog-picker.spec.ts",
+        "tests/unit/model-catalog.test.ts",
+        "tests/unit/remote-model-list.test.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ],
+      "note": "提交 a16fb8b / 979e3c9 / 929d87d（服务商与模型目录来自 Pi、下拉改锚定浮层、服务商自报模型清单）引入的新文件，晚于评审基线。全部是第一方产品源码与配套测试：remote-model-list.ts 按用户填的地址与 key 去问服务商 /models，再拿 Pi 目录的元数据补齐；AnchoredMenu.tsx 是纯 UI 浮层定位组件；三份测试钉住目录规模、远端清单合并与选择器交互。已逐份核查：不含任何密钥、内置端点或私有提示词——源码里唯一的字面 URL 是注释里指向 pi 官方文档的 https://pi.dev；测试里的地址全是各家公开的官方端点（api.openai.com / api.anthropic.com / dashscope.aliyuncs.com / opencode.ai / api.siliconflow.cn）或显式示例域（example.com、https://x），key 全是 sk-test-1234 / sk-x 这类一眼可辨的占位串。与 CLAUDE.md 红线「Settings 页面不得暴露内置 API Key / Base URL / 模型名」一致：目录里的地址是服务商公开的官方地址，不是我们的内置配置。"
     }
   ],
   "classificationOnly": true,

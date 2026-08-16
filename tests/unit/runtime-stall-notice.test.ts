@@ -41,14 +41,25 @@ describe('模型停滞哨兵', () => {
 
   it('渲染层按当前语言翻译哨兵，并保留 [Error] 前缀的既有本地化', async () => {
     const i18n = await createRendererI18n('en')
-    const english = formatMessageContentForDisplay(stallMessage(120), i18n.t)
-    expect(english).toContain('120 seconds')
+    const english = formatMessageContentForDisplay(stallMessage(75), i18n.t)
+    expect(english).toContain('75 seconds')
     expect(english).not.toContain('openpipal:model-stall')
 
     await i18n.changeLanguage('zh-CN')
-    const chinese = formatMessageContentForDisplay(stallMessage(120), i18n.t)
-    expect(chinese).toContain('120 秒')
+    const chinese = formatMessageContentForDisplay(stallMessage(75), i18n.t)
+    expect(chinese).toContain('75 秒')
     expect(chinese).not.toContain('openpipal:model-stall')
+  })
+
+  it('整分钟的阈值用分钟说——默认已是 5 分钟，"300 秒"读起来像机器在说话', async () => {
+    const i18n = await createRendererI18n('zh-CN')
+    expect(formatMessageContentForDisplay(stallMessage(300), i18n.t)).toContain('5 分钟')
+    expect(formatMessageContentForDisplay(stallMessage(120), i18n.t)).toContain('2 分钟')
+    // 不足两分钟或非整分钟仍按秒说，避免出现"1.25 分钟"这种读数
+    expect(formatMessageContentForDisplay(stallMessage(90), i18n.t)).toContain('90 秒')
+
+    await i18n.changeLanguage('en')
+    expect(formatMessageContentForDisplay(stallMessage(300), i18n.t)).toContain('5 minutes')
   })
 
   it('网关原文（外部内容）仍逐字保留，不被当作哨兵处理', async () => {

@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import {
   collectAppInventory,
   generateInventory,
@@ -10,6 +11,11 @@ import {
   renderInventoryJson,
   renderInventoryMarkdown,
 } from '../../scripts/generate-third-party-inventory.mjs'
+
+// 这一组测试每条都要建临时 git 仓、跑若干次 git 子进程：I/O 主导，跟机器当下的负载走。
+// 默认 5s 空载时绰绰有余，但同机开着 app / vite / playwright 就会整片超时红——红的是环境
+// 不是代码（同一份代码空载 1637 全绿）。抬到 30s：它们本来就不是快测，用超时当性能守卫只会制造假警报。
+vi.setConfig({ testTimeout: 30_000 })
 
 const temporaryRoots: string[] = []
 

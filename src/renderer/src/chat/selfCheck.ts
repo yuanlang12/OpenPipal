@@ -6,7 +6,7 @@
  */
 import { ChatMessage } from '../types'
 import { getMessageKind } from './messages'
-import { looksLikeDeckDc, looksLikePhoneDc } from '../components/artifacts/dcRuntime'
+import { looksLikeDeckDc, looksLikePhoneDc, collectDcSiblingArtifactIds } from '../components/artifacts/dcRuntime'
 
 export const SELF_CHECK_TOOL = 'render_artifact'
 
@@ -50,6 +50,39 @@ export function parseSelfCheckVerdict(text: string): SelfCheckVerdict {
   return { ok: null, kind: 'raw', label: head.slice(0, 40) }
 }
 
+/**
+ * 轻量内容指纹（长度 + djb2）。自检结论必须与"被检的那一版内容"绑定：结论落下后产物又被
+ * AI 改过 → 徽标降级为"已过时"，而不是继续宣称旧结论。不求抗碰撞，只求变更可感知。
+ */
+export function contentFingerprint(text: string): string {
+  let h = 5381
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0
+  return `${text.length}:${h >>> 0}`
+}
+
+/**
+ * **渲染输入**指纹 = 产物自身 + 它 from 链里引用的会话兄弟产物（场景 jsx 等）。
+ *
+ * 只盯薄壳自己是不够的：动画产物的画面由「薄壳 + N 份场景 jsx」共同决定，模型改 bug 十有八九
+ * 改的是场景 jsx，薄壳一个字节都不动——只比薄壳的话，"自检发现 1 个问题"会永远钉在那里
+ * （实测复现）。兄弟不在 store 里（未水合）记为 `-`，它变成有内容时指纹照样会变。
+ */
+export function renderInputsFingerprint(
+  target: { id: string; content?: string } | null | undefined,
+  artifacts: Array<{ id: string; content?: string }>
+): string | null {
+  if (!target) return null
+  const own = contentFingerprint(target.content || '')
+  const siblingIds = collectDcSiblingArtifactIds(target.content || '')
+  if (!siblingIds.length) return own
+  const byId = new Map(artifacts.map(a => [a.id, a]))
+  const parts = siblingIds.map(id => {
+    const sib = byId.get(id)
+    return `${id}=${sib ? contentFingerprint(sib.content || '') : '-'}`
+  })
+  return `${own}|${parts.join(',')}`
+}
+
 const ARTIFACT_TOOLS = new Set(['create_artifact', 'edit_artifact'])
 
 /**
@@ -63,12 +96,17 @@ export function isVisualArtifactType(type?: string): boolean {
   return VISUAL_ARTIFACT_TYPES.has(type || 'html') // 流式早期 type 可能还没赋值 → 按 html 处理
 }
 
+/** 能直接当页面渲进设备外框的类型；源码类（code/markdown/document）srcdoc 出来只是文本，居次选 */
+const RENDERABLE_PAGE_TYPES = new Set(['html', 'svg', 'canvas'])
+
 /**
  * 本轮自检的目标产物 id。倒着扫到本轮的 user 消息为止（跨轮的旧产物不算数——path 模式自检
  * 设计系统 specimen 时，上一轮的稿子挂在这儿是误导）：
- *   · 命中带 artifactRef 且类型可视的消息 → 用它的 id（精确）
- *   · 命中 create_artifact / edit_artifact 但没 ref（落盘失败/ref 还没回填）→ 退到最近一个可视产物
- *   · 命中的是 todos/questions 这类非画面产物 → 跳过继续往前找，别把 JSON 塞进电脑屏幕
+ *   · **可渲染页（html/svg/canvas）优先于源码类**——动画轮里模型常常后写场景 jsx，
+ *     自检真正渲染的却是薄壳 html；把 jsx 原文塞进电脑屏幕只会是一片白
+ *   · 命中 create_artifact / edit_artifact 但没 ref（落盘失败/ref 还没回填）→ 本轮已见的
+ *     源码类候选优先，否则退到最近一个可视产物
+ *   · todos/questions 这类非画面产物 → 跳过继续往前找，别把 JSON 塞进电脑屏幕
  *   · 都没有 → null，调用方据此不弹卡
  */
 export function resolveSelfCheckTarget(
@@ -82,18 +120,24 @@ export function resolveSelfCheckTarget(
     }
     return null
   }
+  let textualHit: string | null = null // 本轮最近的源码类候选：先记住，继续找可渲染页
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
     if (m.role === 'user') break
     const ref = (m as ChatMessage & { artifactRef?: { id?: string; type?: string } }).artifactRef
     if (ref?.id) {
-      // 类型以 store 里的为准，store 没有（未水合）才退回 ref 自带的
-      if (isVisualArtifactType(typeById.get(ref.id) ?? ref.type)) return ref.id
+      // 类型以 store 里的为准，store 没有（未水合）才退回 ref 自带的；流式早期无 type 按 html
+      const ty = (typeById.get(ref.id) ?? ref.type) || 'html'
+      if (!isVisualArtifactType(ty)) continue
+      if (RENDERABLE_PAGE_TYPES.has(ty)) return ref.id
+      if (!textualHit) textualHit = ref.id
       continue
     }
-    if (getMessageKind(m) === 'tool' && m.toolName && ARTIFACT_TOOLS.has(m.toolName)) return lastVisual()
+    if (getMessageKind(m) === 'tool' && m.toolName && ARTIFACT_TOOLS.has(m.toolName)) {
+      return textualHit ?? lastVisual()
+    }
   }
-  return null
+  return textualHit
 }
 
 /** 最近一条 render_artifact 的工具结果文本（有 content 才算已返回） */

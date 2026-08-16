@@ -1,19 +1,21 @@
 import { useState } from 'react'
-import { Cpu, Mic, Monitor, Brain, Info, Palette } from 'lucide-react'
+import { Cpu, Mic, Monitor, Brain, Info, Palette, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ModelSettings } from './ModelSettings'
 import { VoiceSettings } from './VoiceSettings'
+import { SearchSettings } from './SearchSettings'
 import { AppSettings } from './AppSettings'
 import { MemorySettings } from './MemorySettings'
 import { AboutSection } from './AboutSection'
 import { AppearanceSettings } from './AppearanceSettings'
 
-type SettingsTab = 'appearance' | 'model' | 'voice' | 'apps' | 'memory' | 'about'
+type SettingsTab = 'appearance' | 'model' | 'voice' | 'search' | 'apps' | 'memory' | 'about'
 
 const TABS: { key: SettingsTab; icon: React.ReactNode }[] = [
   { key: 'appearance', icon: <Palette className="w-4 h-4" /> },
   { key: 'model', icon: <Cpu className="w-4 h-4" /> },
   { key: 'voice', icon: <Mic className="w-4 h-4" /> },
+  { key: 'search', icon: <Search className="w-4 h-4" /> },
   { key: 'apps', icon: <Monitor className="w-4 h-4" /> },
   { key: 'memory', icon: <Brain className="w-4 h-4" /> },
   { key: 'about', icon: <Info className="w-4 h-4" /> },
@@ -54,6 +56,7 @@ export function SettingsPanel() {
         {activeTab === 'appearance' && <AppearanceSettings />}
         {activeTab === 'model' && <ModelSettings />}
         {activeTab === 'voice' && <VoiceSettings />}
+        {activeTab === 'search' && <SearchSettings />}
         {activeTab === 'apps' && <AppSettings />}
         {activeTab === 'memory' && <MemorySettings />}
         {activeTab === 'about' && <AboutSection />}

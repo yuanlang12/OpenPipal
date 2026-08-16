@@ -179,6 +179,53 @@ test.describe('自检实时画面卡', () => {
     await page.screenshot({ path: `${ARTIFACTS_DIR}/t2b-problems.png`, fullPage: true })
   })
 
+  test('T2d 结论落下后产物又被改 → 徽标降级"已过时"（不猜"修好了"）', async ({ page }) => {
+    await setup(page)
+    await startSelfCheck(page)
+    await endSelfCheck(page, '渲染发现 1 个问题（修完再交）：\n- TypeError: x is not a function')
+
+    const card = page.locator('[data-testid="self-check-preview"]')
+    await expect(card).toContainText('发现 1 个问题')
+
+    // AI 改稿：edit_artifact 的预览回填走的就是同 id upsert
+    await page.evaluate(() => {
+      const store = (window as any).__artifactStore.getState()
+      const cur = store.artifacts.find((a: any) => a.id === 'art-1')
+      store.addArtifact({ ...cur, content: `${cur.content}<!-- fixed -->` })
+    })
+
+    await expect(card).toContainText('已过时')
+    await expect(card.getByTestId('self-check-stale-icon')).toBeVisible()
+    await expect(card.getByTestId('self-check-issues-icon')).toHaveCount(0)
+  })
+
+  test('T2e 薄壳没变、场景 jsx 被改 → 同样"已过时"（动画产物的真实修复形态）', async ({ page }) => {
+    await setup(page)
+    const shell = '<!DOCTYPE html><html><body><x-dc>'
+      + '<x-import component-from-global-scope="Scene" from="./animations.jsx ./artifact-9001.jsx"></x-import>'
+      + '</x-dc></body></html>'
+    await page.evaluate((html) => {
+      const store = (window as any).__artifactStore.getState()
+      store.addArtifact({ id: 'art-1', type: 'html', title: 'Kyro 落地页', content: html, messageId: 't1', createdAt: Date.now() })
+      store.addArtifact({ id: 'artifact-9001', type: 'code', language: 'jsx', title: '场景.jsx', content: 'const beat = 1', messageId: 't2', createdAt: Date.now() })
+    }, shell)
+
+    await startSelfCheck(page)
+    await endSelfCheck(page, '渲染发现 1 个问题（修完再交）：\n- TypeError: x is not a function')
+    const card = page.locator('[data-testid="self-check-preview"]')
+    await expect(card).toContainText('发现 1 个问题')
+
+    // 只改场景素材，薄壳一个字节不动——画面变了，结论就必须跟着降级
+    await page.evaluate(() => {
+      const store = (window as any).__artifactStore.getState()
+      const scene = store.artifacts.find((a: any) => a.id === 'artifact-9001')
+      store.addArtifact({ ...scene, content: 'const beat = 2' })
+    })
+
+    await expect(card).toContainText('已过时')
+    await expect(card.getByTestId('self-check-stale-icon')).toBeVisible()
+  })
+
   test('T2c 结论文本缺失（旧后端/插件端没带）→ 中性完成态，不误报通过或失败', async ({ page }) => {
     await setup(page)
     await startSelfCheck(page)

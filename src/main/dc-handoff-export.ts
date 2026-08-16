@@ -29,7 +29,8 @@ import path from 'path'
 import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { assembleOfflineDc, sanitizeName, dcRuntimeDir, prepareDcForExport } from './dc-export'
+import { assembleOfflineDc, sanitizeName, dcRuntimeDir, prepareDcForExport, artifactSourceDir } from './dc-export'
+import { collectSidecarNames, readSidecarFiles, injectSidecarData } from './dc-headless'
 import {
   evalChecked,
   pollUntil,
@@ -41,8 +42,8 @@ import {
 } from './dc-capture'
 import { captureDeckStageFrames } from './dc-pptx-export'
 import {
-  SVG_SELECTOR,
-  waitForSvgReady,
+  CANVAS_SELECTOR,
+  waitForCanvasReady,
   waitForFontsInlined,
   readDomStageSize,
   readDomDurationSec,
@@ -404,7 +405,7 @@ async function captureAnimationKeyframes(
   frameDir: string,
   onProgress?: (done: number, total: number) => void
 ): Promise<{ frames: CapturedFrame[]; width: number; height: number; durationSec: number }> {
-  await waitForSvgReady(dbg, 8000)
+  await waitForCanvasReady(dbg, 8000)
   await evalChecked(dbg, `new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`, { awaitPromise: true })
   await waitForFontsInlined(dbg, 3000)
 
@@ -429,8 +430,8 @@ async function captureAnimationKeyframes(
       dbg,
       `(() => new Promise((resolve, reject) => {
         try {
-          const el = ${SVG_SELECTOR};
-          if (!el) { reject(new Error('svg missing')); return; }
+          const el = ${CANVAS_SELECTOR};
+          if (!el) { reject(new Error('canvas missing')); return; }
           el.dispatchEvent(new CustomEvent('data-om-seek-to-time-frame', { detail: { time: ${t} } }));
           requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
         } catch (e) { reject(e); }
@@ -513,7 +514,7 @@ async function captureCanvasOrPage(
 
 /** design/ 文件夹装配：主 dc 文件 + support.js/vendor + 场景 sidecar，复用 dc-export.ts 的
  * prepareDcForExport（sibling 收集/改写逻辑）与 dcRuntimeDir（runtime 定位），不重复造轮子。 */
-function writeDesignFolder(designDir: string, title: string, content: string): string[] {
+function writeDesignFolder(designDir: string, title: string, content: string, sourceDir?: string): string[] {
   fs.mkdirSync(path.join(designDir, 'vendor'), { recursive: true })
   const runtime = dcRuntimeDir()
   fs.copyFileSync(path.join(runtime, 'support.js'), path.join(designDir, 'support.js'))
@@ -525,11 +526,12 @@ function writeDesignFolder(designDir: string, title: string, content: string): s
   const base = sanitizeName(title).replace(/\.html?$/i, '')
   const dcFileName = /\.dc\.html?$/i.test(base) ? base : `${base}.dc.html`
   const prepared = prepareDcForExport(content)
-  fs.writeFileSync(path.join(designDir, dcFileName), prepared.html, 'utf8')
-  files.push(dcFileName)
+  let html = prepared.html
 
+  const siblingPaths: string[] = []
   for (const s of prepared.siblings) {
     const src = s.isResource ? path.join(runtime, s.copyFrom) : s.copyFrom
+    siblingPaths.push(src)
     try {
       fs.copyFileSync(src, path.join(designDir, s.targetName))
       files.push(s.targetName)
@@ -537,6 +539,30 @@ function writeDesignFolder(designDir: string, title: string, content: string): s
       console.warn('[dc-handoff-export] 预制件拷贝失败:', s.targetName, err?.message)
     }
   }
+
+  // 产物 sidecar（image-slot 拖进去的图）随交接包走：与 html 同层落一份（服务式打开走文档相对
+  // fetch）+ 内联一份（zip 解开后 file:// 双击也含图）。基名字面量只住在组件源码里，扫描范围
+  // 必须覆盖兄弟预制件源码——只扫 content 恒为空。
+  if (sourceDir) {
+    const scData = readSidecarFiles(
+      sourceDir,
+      collectSidecarNames(content, ...siblingPaths.map((p) => {
+        try { return fs.readFileSync(p, 'utf8') } catch { return '' }
+      }))
+    )
+    for (const scName of Object.keys(scData)) {
+      try {
+        fs.writeFileSync(path.join(designDir, scName), scData[scName], 'utf8')
+        files.push(scName)
+      } catch (err: any) {
+        console.warn('[dc-handoff-export] sidecar 拷贝失败:', scName, err?.message)
+      }
+    }
+    html = injectSidecarData(html, scData)
+  }
+
+  fs.writeFileSync(path.join(designDir, dcFileName), html, 'utf8')
+  files.push(dcFileName)
   return files
 }
 
@@ -685,7 +711,7 @@ export async function exportArtifactHandoff(
     return { index, label, fileName, textSummary }
   })
 
-  const designFiles = writeDesignFolder(designDir, title, content)
+  const designFiles = writeDesignFolder(designDir, title, content, artifactSourceDir(artifactId))
 
   const generatedAt = new Date().toISOString()
   const meta: HandoffMeta = {

@@ -30,6 +30,41 @@ function injectBeforeBodyEnd(html: string, scripts: string[]): string {
   return /<\/body>/i.test(html) ? html.replace(/<\/body>/i, (b) => tags + b) : html + tags
 }
 
+// ── 产物 sidecar（*.state.json）：基名扫描 / 读盘 / 内联，headless 与 zip 导出共用 ──
+// 关键事实：基名字面量（如 .image-slots.state.json）**只存在于组件源码里**（image-slot.js），
+// 产物 HTML 自己一个字都没有。所以扫描必须发生在兄弟预制件内联/收集**之后**，
+// 在原始 content 上扫恒为空——那正是 PDF / 独立 HTML / MP4 / zip 一直拿不到用户拖图的原因。
+const SIDECAR_REF_RE = /[A-Za-z0-9._-]+\.state\.json/g
+const SIDECAR_MAX_REFS = 4
+
+export function collectSidecarNames(...texts: (string | null | undefined)[]): string[] {
+  const out = new Set<string>()
+  for (const t of texts) {
+    if (!t) continue
+    for (const n of t.match(SIDECAR_REF_RE) || []) {
+      if (n === path.basename(n)) out.add(n)
+      if (out.size >= SIDECAR_MAX_REFS) return Array.from(out)
+    }
+  }
+  return Array.from(out)
+}
+
+export function readSidecarFiles(baseDir: string, names: string[]): Record<string, string> {
+  const data: Record<string, string> = {}
+  for (const n of names) {
+    if (n !== path.basename(n)) continue
+    try { data[n] = fs.readFileSync(path.join(baseDir, n), 'utf8') } catch { /* 缺失 = 空槽,不是错误 */ }
+  }
+  return data
+}
+
+/** 数据内联标签：组件读取优先文档相对 fetch,失败(file:// 双击/无垫片)退到这份内联数据。 */
+export function injectSidecarData(html: string, data: Record<string, string>): string {
+  if (!Object.keys(data).length) return html
+  const tag = `<script>window.__openpipalSidecarData=${JSON.stringify(data).replace(/</g, '\\u003c')}</script>`
+  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + tag) : tag + html
+}
+
 /** prescripts：需排在兄弟预制件之前执行的内联脚本源码（如 React vendor），供 assembleOfflineDc 传入。 */
 export function inlineDcForHeadless(content: string, baseDir?: string, prescripts: string[] = []): string {
   const { app } = require('electron')
@@ -100,29 +135,36 @@ export function inlineDcForHeadless(content: string, baseDir?: string, prescript
       } catch { return m }
     })
   }
+  // 先在原始 content 上删 from + 收集链序（避免扫到 support.js 内联后 JS 里的 src="…" 字面量）
+  const { html: stripped, ordered } = rewriteFromAttrs(content, resolve)
   // 产物 sidecar(*.state.json)水合——image-slot 拖图状态在 PDF/MP4/独立 HTML 里继续可见。
-  // 注入数据 + fetch 垫片(headless 页面没有 BRIDGE_SCRIPT,自带一份;file///data URL 下相对 fetch 必败)。
+  // 注入数据 + fetch 垫片(headless 页面没有 BRIDGE_SCRIPT,自带一份;file:///data URL 下相对 fetch 必败)。
+  // 扫描范围含兄弟预制件源码：基名字面量只住在组件里,只扫产物 HTML 恒为空(见 collectSidecarNames)。
+  let withSidecar = stripped
   if (baseDir) {
-    const scNames = Array.from(new Set(content.match(/[A-Za-z0-9._-]+\.state\.json/g) || [])).slice(0, 4)
-    const scData: Record<string, string> = {}
-    for (const n of scNames) {
-      if (n !== path.basename(n)) continue
-      try { scData[n] = fs.readFileSync(path.join(baseDir, n), 'utf8') } catch { /* 缺失=空槽 */ }
-    }
+    const scData = readSidecarFiles(baseDir, collectSidecarNames(content, ...ordered.map((o) => o.source)))
     if (Object.keys(scData).length) {
       const shim =
-        `<script>window.__openpipalSidecarData=${JSON.stringify(scData).replace(/</g, '\\u003c')};` +
-        `(function(){var f=window.fetch?window.fetch.bind(window):null;window.fetch=function(i,o){try{` +
+        `<script>(function(){var f=window.fetch?window.fetch.bind(window):null;window.fetch=function(i,o){try{` +
         `var u=typeof i==='string'?i:((i&&i.url)||'');if(/^[A-Za-z0-9._-]+\\.state\\.json$/.test(u)){` +
         `var d=(window.__openpipalSidecarData||{})[u];return Promise.resolve(new Response(d!=null?d:'',` +
         `{status:d!=null?200:404,headers:{'Content-Type':'application/json'}}))}}catch(_){}` +
         `return f?f(i,o):Promise.reject(new TypeError('no fetch'))};})();</script>`
-      content = /<head[^>]*>/i.test(content) ? content.replace(/<head[^>]*>/i, (m) => m + shim) : shim + content
+      // 两者都落在 <head>、都排在兄弟预制件（</body> 前）之前执行；垫片是惰性读数据，谁先谁后都成立
+      withSidecar = /<head[^>]*>/i.test(withSidecar)
+        ? withSidecar.replace(/<head[^>]*>/i, (m) => m + shim)
+        : shim + withSidecar
+      withSidecar = injectSidecarData(withSidecar, scData)
     }
   }
-  // 先在原始 content 上删 from + 收集链序（避免扫到 support.js 内联后 JS 里的 src="…" 字面量）
-  const { html: stripped, ordered } = rewriteFromAttrs(content, resolve)
-  let out = injectBeforeBodyEnd(stripped, [...prescripts, ...ordered.map((o) => o.source)])
+  // React vendor：自研 support.js 零 CDN 回退，缺依赖只报错——供给是宿主的责任。调用方没自带
+  // （PDF 直出、render_artifact 自检都没带）就在这里补上，否则 headless 页面渲出的是"React 缺失"错误块。
+  const carriesReact = prescripts.some((s) => s.indexOf('react.production.min.js') !== -1)
+  const vendor = carriesReact || !/<x-dc[\s>]/i.test(content)
+    ? []
+    : [readRt('vendor/react.production.min.js'), readRt('vendor/react-dom.production.min.js')]
+      .filter((s): s is string => !!s)
+  let out = injectBeforeBodyEnd(withSidecar, [...vendor, ...prescripts, ...ordered.map((o) => o.source)])
   // 再内联 support.js（同样挪到 body 末尾，紧跟兄弟预制件之后，见文件头注释）
   const supportRe = /<script[^>]*\bsrc=["'][^"']*support\.js["'][^>]*>\s*<\/script>/i
   const supportSrc = readRt('support.js')
