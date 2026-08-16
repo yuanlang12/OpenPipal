@@ -4,7 +4,7 @@
  * 提供:主题模式切换 / 强调色 / 背景 / 前景 / 对比度 / 字体 / 半透明侧边栏 /
  *      Diff 颜色 / UI 字号 / 减少动效 / 复制主题字符串 / 导入主题字符串 / 重置默认
  */
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { Copy, Check, RotateCcw, AlertCircle, Palette } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAppStore, ThemeMode } from '../stores/appStore'
@@ -14,6 +14,7 @@ import type { ChatDensity, OpenPipalThemeVariant, ThemeVariantKey } from '../typ
 import type { LocalePreference } from '../../../shared/i18n/contract'
 import { resolveSystemLocale } from '../../../shared/i18n/contract'
 import { getBrowserPreferredLanguages } from '../i18n'
+import { AnchoredMenu } from './shared/AnchoredMenu'
 import { useLocale } from '../i18n/LocaleProvider'
 
 const THEME_MODE_OPTIONS: { value: ThemeMode; labelKey: string }[] = [
@@ -558,36 +559,41 @@ function FontInput({
   onChange: (v: string) => void
 }) {
   const [showDropdown, setShowDropdown] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!showDropdown) return
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setShowDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showDropdown])
+  const inputRef = useRef<HTMLInputElement>(null)
 
   return (
-    <div ref={containerRef} className="relative">
+    <div>
       <input
+        ref={inputRef}
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setShowDropdown(true)}
+        // Esc 关掉后输入框仍持有焦点，onFocus 不会二次触发——不补这个就再也点不开了
+        onClick={() => setShowDropdown(true)}
+        data-testid="font-input"
+        aria-haspopup="listbox"
+        aria-expanded={showDropdown}
         className="w-full text-sw-sm px-2 py-1 rounded border border-border bg-surface-primary text-ink-primary focus:outline-none focus:border-border-focus"
         style={{ fontFamily: `"${value}", system-ui, sans-serif` }}
       />
+      {/* 外观页在设置面板的 overflow-y-auto 里，absolute 浮层滚到下半屏会被裁掉；
+          与模型页共用同一个锚定浮层，点外面 / Esc / 上下键也一并由它管 */}
       {showDropdown && (
-        <div className="op-menu absolute z-10 left-0 right-0 mt-1 max-h-48 overflow-y-auto">
+        <AnchoredMenu
+          anchorRef={inputRef}
+          open
+          onClose={() => setShowDropdown(false)}
+          testId="font-suggestions"
+        >
           {presets.map((p) => (
             <button
               key={p}
-              onMouseDown={(e) => {
-                e.preventDefault()
+              type="button"
+              role="option"
+              data-menu-item
+              aria-selected={p === value}
+              onClick={() => {
                 onChange(p)
                 setShowDropdown(false)
               }}
@@ -597,7 +603,7 @@ function FontInput({
               {p}
             </button>
           ))}
-        </div>
+        </AnchoredMenu>
       )}
     </div>
   )

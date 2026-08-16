@@ -52,7 +52,8 @@ describe('远端清单 × Pi 目录', () => {
       known: true,
       reasoning: catalogGpt5!.reasoning,
       image: catalogGpt5!.image,
-      contextWindow: catalogGpt5!.contextWindow
+      contextWindow: catalogGpt5!.contextWindow,
+      contextWindowSource: 'catalog'
     })
   })
 
@@ -70,7 +71,7 @@ describe('远端清单 × Pi 目录', () => {
     })
   })
 
-  it('目录没有时才用远端自己的扩展字段兜底（OpenRouter / vLLM 那套）', async () => {
+  it('远端自己的扩展字段（OpenRouter / vLLM 那套）能力位兜底、窗口直接采信', async () => {
     fetchMock.mockResolvedValue(jsonResponse({
       data: [{
         id: 'some-gateway-model',
@@ -84,9 +85,22 @@ describe('远端清单 × Pi 目录', () => {
     expect(result.models[0]).toMatchObject({
       id: 'some-gateway-model',
       contextWindow: 262144,
+      contextWindowSource: 'endpoint',
       image: true,
       reasoning: true,
       known: false
+    })
+  })
+
+  it('窗口按端点优先：目录认识这个 id，但网关把它截短了就听网关的', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 'gpt-5', context_length: 128000 }] }))
+    const result = await listRemoteModels({ provider: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-x', model: '' } as any)
+    expect(result.models[0]).toMatchObject({
+      id: 'gpt-5',
+      known: true,
+      contextWindow: 128000,            // 不是目录的 400K
+      contextWindowSource: 'endpoint',
+      reasoning: catalogGpt5!.reasoning  // 能力位仍然是目录说了算
     })
   })
 

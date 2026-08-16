@@ -18,7 +18,6 @@
 
 import type { ModelConfig } from './config-manager'
 import { getProviders } from './config-manager'
-import { pickWindow } from './context-window-detector'
 
 export interface RemoteModelEntry {
   id: string
@@ -28,6 +27,8 @@ export interface RemoteModelEntry {
   contextWindow?: number
   /** true = Pi 目录里有同名 id，能力位来自目录；false = 纯远端 id，能力位得用户自己确认 */
   known?: boolean
+  /** contextWindow 的出处，只在有值时出现；上下文窗口检测据此给出来源标签 */
+  contextWindowSource?: 'endpoint' | 'catalog'
 }
 
 export interface RemoteModelListResult {
@@ -39,6 +40,16 @@ export interface RemoteModelListResult {
 }
 
 const TIMEOUT_MS = 8000
+
+/**
+ * 各家网关自定义的窗口字段，逐个嗅探。住在这里而不是检测器里：依赖方向只能有一条
+ * （context-window-detector → 本模块），否则两个模块互相 import。
+ */
+export function pickWindow(info: any): number {
+  if (!info || typeof info !== 'object') return 0
+  const w = info.max_input_tokens || info.context_length || info.max_model_len || info.context_window
+  return typeof w === 'number' && w > 0 ? w : 0
+}
 
 function fail(errorKey: string, errorParams?: Record<string, string>): RemoteModelListResult {
   return { ok: false, models: [], errorKey, ...(errorParams ? { errorParams } : {}) }
@@ -69,6 +80,18 @@ function extractEntries(payload: unknown): Record<string, any>[] | null {
 
 function projectCatalogModel(model: { id: string; name?: string; reasoning?: boolean; image?: boolean; contextWindow?: number }): RemoteModelEntry {
   return { id: model.id, name: model.name, reasoning: model.reasoning, image: model.image, contextWindow: model.contextWindow }
+}
+
+/**
+ * 单个 id 的目录元数据：当前服务商自己的目录优先，其次跨服务商一致才借。
+ * 上下文窗口检测在远端清单不可用时退回这条（见 context-window-detector）。
+ */
+export function catalogMetaFor(providerId: string | undefined, id: string): RemoteModelEntry | undefined {
+  if (providerId) {
+    const own = getProviders()[providerId]?.models.find((m) => m.id === id)
+    if (own) return projectCatalogModel(own)
+  }
+  return getCatalogIndex().get(id) ?? undefined
 }
 
 /** id → 目录元数据。同一 id 出现在多家目录且元数据打架时，该字段不借。 */
@@ -173,12 +196,18 @@ export async function listRemoteModels(mc: ModelConfig): Promise<RemoteModelList
     const ownModel = own.get(id)
     const meta = ownModel ? projectCatalogModel(ownModel) : getCatalogIndex().get(id) ?? undefined
     const sniffed = sniffCapabilities(entry)
+    // 能力位（思考 / 图片）是模型固有的，目录说了算；上下文窗口不是——同一个模型在
+    // 不同网关上可能被截短，端点自己报的数字描述的是"这个部署"，比目录的通用值更该信。
+    // 这也保住了上下文窗口检测原有的优先级（扩展字段 > 内置注册表）。
+    const endpointWindow = pickWindow(entry) || pickWindow(entry.model_info) || undefined
+    const contextWindow = endpointWindow ?? meta?.contextWindow
     models.push({
       id,
       name: meta?.name || (typeof entry.display_name === 'string' ? entry.display_name : undefined),
       reasoning: meta?.reasoning ?? sniffed.reasoning,
       image: meta?.image ?? sniffed.image,
-      contextWindow: meta?.contextWindow ?? (pickWindow(entry) || pickWindow(entry.model_info) || undefined),
+      contextWindow,
+      ...(contextWindow ? { contextWindowSource: endpointWindow ? 'endpoint' as const : 'catalog' as const } : {}),
       known: !!meta
     })
   }

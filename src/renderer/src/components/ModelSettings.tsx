@@ -890,6 +890,7 @@ export function ModelSettings() {
             <label className="block text-[11px] text-surface-400 mb-1">{t('settings.model.form.modelLabel')}</label>
             <input ref={modelInputRef} type="text" value={model} onChange={e => setModel(e.target.value)}
               onFocus={() => { if (modelSuggestions.length > 0) setShowModelDropdown(true) }}
+              onClick={() => { if (modelSuggestions.length > 0) setShowModelDropdown(true) }}
               placeholder={t('settings.model.form.modelPlaceholder')}
               className="w-full text-[13px] text-surface-700 bg-surface-50 border border-surface-100 rounded-md px-2.5 py-1.5 outline-none focus:border-brand-400 transition-colors" />
             {showModelDropdown && filteredSuggestions.length > 0 && (

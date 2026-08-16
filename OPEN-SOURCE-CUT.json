@@ -1,10 +1,10 @@
 {
-  "generatedFrom": "f689a6974982e485802f16ca7cf9200677f4de85",
+  "generatedFrom": "257098681a98e3cb09b230ceb009cf32549961a9",
   "policyId": "openpipal-open-source-candidate-v1",
-  "trackedInPrivateRepo": 1121,
-  "publishedFiles": 757,
+  "trackedInPrivateRepo": 1125,
+  "publishedFiles": 759,
   "droppedByRule": {
-    "remove-private-history-and-qa": 274,
+    "remove-private-history-and-qa": 276,
     "exclude-non-default-agents": 20,
     "exclude-design-rewrite-process": 10,
     "remove-third-party-fixtures-and-provenance-ledgers": 4,

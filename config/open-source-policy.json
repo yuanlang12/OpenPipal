@@ -408,14 +408,16 @@
       "patterns": [
         "src/main/remote-model-list.ts",
         "src/renderer/src/components/shared/AnchoredMenu.tsx",
+        "tests/e2e/font-picker-menu.spec.ts",
         "tests/e2e/model-catalog-picker.spec.ts",
+        "tests/unit/context-window-detector.test.ts",
         "tests/unit/model-catalog.test.ts",
         "tests/unit/remote-model-list.test.ts"
       ],
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "提交 a16fb8b / 979e3c9 / 929d87d（服务商与模型目录来自 Pi、下拉改锚定浮层、服务商自报模型清单）引入的新文件，晚于评审基线。全部是第一方产品源码与配套测试：remote-model-list.ts 按用户填的地址与 key 去问服务商 /models，再拿 Pi 目录的元数据补齐；AnchoredMenu.tsx 是纯 UI 浮层定位组件；三份测试钉住目录规模、远端清单合并与选择器交互。已逐份核查：不含任何密钥、内置端点或私有提示词——源码里唯一的字面 URL 是注释里指向 pi 官方文档的 https://pi.dev；测试里的地址全是各家公开的官方端点（api.openai.com / api.anthropic.com / dashscope.aliyuncs.com / opencode.ai / api.siliconflow.cn）或显式示例域（example.com、https://x），key 全是 sk-test-1234 / sk-x 这类一眼可辨的占位串。与 CLAUDE.md 红线「Settings 页面不得暴露内置 API Key / Base URL / 模型名」一致：目录里的地址是服务商公开的官方地址，不是我们的内置配置。"
+      "note": "提交 a16fb8b / 979e3c9 / 929d87d（服务商与模型目录来自 Pi、下拉改锚定浮层、服务商自报模型清单）引入的新文件，晚于评审基线。全部是第一方产品源码与配套测试：remote-model-list.ts 按用户填的地址与 key 去问服务商 /models，再拿 Pi 目录的元数据补齐；AnchoredMenu.tsx 是纯 UI 浮层定位组件；三份测试钉住目录规模、远端清单合并与选择器交互。已逐份核查：不含任何密钥、内置端点或私有提示词——源码里唯一的字面 URL 是注释里指向 pi 官方文档的 https://pi.dev；测试里的地址全是各家公开的官方端点（api.openai.com / api.anthropic.com / dashscope.aliyuncs.com / opencode.ai / api.siliconflow.cn）或显式示例域（example.com、https://x），key 全是 sk-test-1234 / sk-x 这类一眼可辨的占位串。与 CLAUDE.md 红线「Settings 页面不得暴露内置 API Key / Base URL / 模型名」一致：目录里的地址是服务商公开的官方地址，不是我们的内置配置。 后补（提交 1013795，同一条线的收尾）：上下文窗口检测收编进 remote-model-list——它原本自己打同一个 /models、只认 {data:[]}，于是 {models:[]} 或裸数组的网关上检测静默失败；外观页字体选择器并进同一个锚定浮层，此前它和模型页共享同一个被滚动容器裁切的 bug。两份新测试同样核查过：context-window-detector.test.ts 里是 gw.example.com 这类示例域与公开端点，font-picker-menu.spec.ts 复用的是 model-catalog-picker 那份已分类的同款 mock（占位 key + 各家公开官方地址）。"
     }
   ],
   "classificationOnly": true,
