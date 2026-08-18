@@ -60,15 +60,23 @@ import type {
 } from './agent-runtime/contracts'
 import { filterToolsForChatSource } from './agent-runtime/source-tool-policy'
 import {
-  appendRuntimeContext,
   buildPiUserMessage,
+  buildRuntimeContextMessage,
   convertHistoryToPiMessages
 } from './agent-runtime/pi-message-conversion'
 import { AsyncQueue } from './agent-runtime/async-queue'
 import {
   buildOpenPipalRuntimeContext,
-  buildOpenPipalSystemPrompt
+  buildOpenPipalSystemPrompt,
+  prepareOpenPipalSystemPrompt
 } from './agent-runtime/openpipal-prompt'
+import { buildSkillPromptSection } from './skill-manager'
+import {
+  buildContextUsageSegments,
+  estimateTextTokens,
+  estimateToolTokens,
+  isMcpToolName
+} from './context-usage-stats'
 import { dataPath } from './data-root'
 
 // Backward-compatible type exports while callers migrate to agent-runtime.
@@ -274,7 +282,17 @@ export async function* agentChat(
 
   // 3. 构建系统提示词。模型补丁跟随解析后的 preset，因此欢迎页选择、会话钉住和中途切换
   // 使用同一个不可歧义的模型配置；未配置补丁时与共同提示词逐字节一致。
-  const systemPrompt = buildSystemPrompt(source, overrides, { stablePrefix: true, modelConfig: mc })
+  // 不走 buildSystemPrompt 包装，为的是拿到技能段原文做分区估算——render 参数与包装逐字节一致。
+  const preparedPrompt = prepareOpenPipalSystemPrompt(source, overrides, { stablePrefix: true, modelConfig: mc })
+  const skillSection = buildSkillPromptSection(preparedPrompt.skillContext)
+  const systemPrompt = preparedPrompt.render(skillSection)
+  // 用量卡分区：组装期各估算一次（口径见 context-usage-stats.ts 头注）
+  const segmentEstimate = {
+    systemPromptTokens: estimateTextTokens(systemPrompt),
+    skillTokens: estimateTextTokens(skillSection),
+    builtinToolTokens: estimateToolTokens(allTools.filter((t: any) => !isMcpToolName(t.name))),
+    mcpToolTokens: estimateToolTokens(allTools.filter((t: any) => isMcpToolName(t.name)))
+  }
 
   // 4. 创建 Pi Agent 实例
   // thinkingLevel 决策：
@@ -395,20 +413,28 @@ export async function* agentChat(
     return
   }
 
-  // 把 stablePrefix 从 system prompt 剔除的易变信息（时间/前台应用/产物清单）附加到本轮
-  // 首条用户消息尾部，只附加这一次——只读追加，不回写 history/store，磁盘和 UI 里的消息不变。
+  // 把 stablePrefix 从 system prompt 剔除的易变信息（时间/前台应用/产物清单）作为
+  // 独立 user 消息追加在本轮首条用户消息之后。prompt cache 按字节前缀匹配：若快照
+  // 不进历史，下一轮回放与缓存在"上一轮末条消息"处分歧，上一轮整段 assistant/tool
+  // 流量全部 miss。因此除当轮追加外，还把快照原文经 runtime_context 事件回传渲染层，
+  // 由渲染层作为 messageKind='runtime-context' 的隐藏消息落盘——下轮回放字节一致，
+  // miss 收缩到最新一张纸条自身。
   // goal loop 的 continuation hint（下面 while 循环里重新赋值的 currentMessage）不再附加：
-  // 旧一轮的 runtime-context 不进历史 → 下一轮请求只在"上一轮末条消息"处出现有界失配
-  // （量级是一条消息），换来 system prompt + 全部更早历史的前缀完全稳定——miss 有界的刻意取舍。
+  // continuation 时已有更新过的当轮上下文，重复追加只会白白扩大不命中段。
   const runtimeContext = buildRuntimeContext(overrides?.conversationId)
-  if (runtimeContext) appendRuntimeContext(currentMessage, runtimeContext)
+  const runtimeContextMessage = runtimeContext ? buildRuntimeContextMessage(runtimeContext) : undefined
+  let runtimeContextAnnounced = false
+  // 独立 user 消息与首条用户消息连续；Anthropic(2024-10 起)与 OpenAI 系端点会合并为一个回合
+  let promptPayload: AgentMessage | AgentMessage[] = runtimeContextMessage
+    ? [currentMessage, runtimeContextMessage]
+    : currentMessage
 
   // 溢出自愈：stopReason=length 且近零输出 = 载荷顶满窗口，盲目续跑只会更糟。
   // 撞墙的那次调用已把实报用量写进锚点（上面 recordMeasuredPromptTokens），
   // 这里强制压缩历史、整体重建 agent 状态，把重建后的末条 user 消息交回守卫重试。
   // 丢弃本轮已产生的中间消息是刻意的：它们正是挤爆窗口的载荷，模型会在压缩后的
   // 上下文里重做（工具本身幂等性由既有安全钩子把关，与普通重试同一风险面）。
-  const rebuildAfterOverflow = async (): Promise<AgentMessage | null> => {
+  const rebuildAfterOverflow = async (): Promise<AgentMessage | AgentMessage[] | null> => {
     try {
       const compacted = await compactHistoryForModel(
         history, overrides?.conversationId, historyModelConfig, { force: true }
@@ -424,9 +450,8 @@ export async function* agentChat(
       stateMessages.length = 0
       for (let i = 0; i < rebuilt.length - 1; i++) stateMessages.push(rebuilt[i])
       const next = rebuilt[rebuilt.length - 1]
-      if (runtimeContext) appendRuntimeContext(next, runtimeContext)
       console.log(`[Compactor] 溢出自愈：历史重建为压缩投影 ${rebuilt.length} 条，原地重试本轮`)
-      return next
+      return runtimeContextMessage ? [next, runtimeContextMessage] : next
     } catch (err: any) {
       console.warn('[Compactor] 溢出自愈压缩失败:', err?.message)
       return null
@@ -498,6 +523,12 @@ export async function* agentChat(
     while (true) {
       // 8.1 每轮新建 queue,复用 agent / adapter
       const eventQueue = new AsyncQueue<AgentEvent>()
+      // 快照原文只广播一次（首轮）：渲染层据此落盘隐藏的 runtime-context 消息。
+      // goal continuation 不重播——那会驱动渲染层在错误位置再插一张纸条。
+      if (!runtimeContextAnnounced) {
+        runtimeContextAnnounced = true
+        if (runtimeContext) eventQueue.push({ type: 'runtime_context', text: runtimeContext })
+      }
       const observation = {
         sequence: ++nextTurnObservation,
         startedAt: Date.now(),
@@ -584,7 +615,8 @@ export async function* agentChat(
               kind: 'call', conv: convIdShort, model: mc.model, seq: usageCallSeq,
               input, cacheRead, cacheWrite, output, prompt: denom, hit: hitPct,
               trailTok: trailMeasure.tokens, trailMsgs: trailMeasure.count,
-              histMsgs: historyForModel.length, compacted: historyCompacted
+              histMsgs: historyForModel.length, compacted: historyCompacted,
+              cost: (msg.usage as any)?.cost?.total || 0
             })
             // 缓存失配告警(仿 pi showCacheMissNotices):热上下文(轮内第 2+ 次调用,或带
             // 历史的会话轮)命中率骤低 = 前缀疑似被改写,带 sys/tools 指纹对照上一条
@@ -595,13 +627,16 @@ export async function* agentChat(
             if (warmContext && denom > 8000 && hitPct < 50) {
               console.warn(`[CacheMiss] conv=${convIdShort} call#${usageCallSeq} hit=${hitPct}% cacheWrite=${cacheWrite} input=${input} sys=${lastSysHash} tools=${lastToolsHash} ——前缀疑似失配`)
             }
-            // 上下文用量圆环：真实 prompt tokens = input + cacheRead + cacheWrite
+            // 上下文用量圆环：真实 prompt tokens = input + cacheRead + cacheWrite。
+            // usage/segments 供 hover 卡片累计命中率与分区占比——只透传已算好的数字。
             eventQueue.push({
               type: 'context_usage',
               promptTokens: denom,
               contextWindow: usageContextWindow,
               budget: usageBudget,
-              compacted: historyCompacted
+              compacted: historyCompacted,
+              usage: { input, cacheRead, cacheWrite },
+              segments: buildContextUsageSegments({ promptTokens: denom, ...segmentEstimate })
             })
           }
         }
@@ -612,7 +647,7 @@ export async function* agentChat(
       })
 
       // 8.3 触发本轮 prompt
-      promptWithEmptyCompletionRetry(agent, currentMessage, {
+      promptWithEmptyCompletionRetry(agent, promptPayload, {
         signal,
         // 第二次 prompt 是新的模型 phase，清掉 adapter 的流式去重状态；
         // 已经进入 eventQueue 的第一次思考事件不受影响。
@@ -734,6 +769,7 @@ export async function* agentChat(
         role: 'user',
         content: buildContinuationHint(goal, checkResult)
       } as any
+      promptPayload = currentMessage
     }
   } finally {
     if (signal && onAbort) signal.removeEventListener('abort', onAbort)

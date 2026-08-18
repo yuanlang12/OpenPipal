@@ -275,4 +275,46 @@ describe('parseTokens — 直接单元', () => {
     expect(byName['--b'].kind).toBe('spacing')
     expect(byName['--c']).toMatchObject({ kind: 'other', annotation: 'other' })
   })
+
+  /**
+   * 分类看的是**连字符段**而不是 `--` 后的第一段：品牌 token 几乎都带命名空间
+   * （`--acme-font-body`），锚定首段会让它们整批静默错分——字体 token 归错类，
+   * 画廊那条「只允许用设计系统字体」的告警规则就根本不生成。
+   */
+  it('带命名空间前缀的 token 仍按关键词分类', () => {
+    const css = `:root{
+      --acme-font-body: 'Georgia', serif;
+      --sw-text-xs: 11px;
+      --brand-space-4: 16px;
+      --acme-card-radius: 8px;
+      --sw-elevation-shadow: 0 1px 2px rgba(0,0,0,.1);
+    }`
+    const k = Object.fromEntries(parseTokens(css, 'x.css').map((t) => [t.name, t.kind]))
+    expect(k['--acme-font-body']).toBe('font')
+    expect(k['--sw-text-xs']).toBe('font') // 字号是 font，不是 spacing
+    expect(k['--brand-space-4']).toBe('spacing')
+    expect(k['--acme-card-radius']).toBe('radius')
+    expect(k['--sw-elevation-shadow']).toBe('shadow')
+  })
+
+  it('值是色值就判 color，名字里的 text/size 不参与抢夺', () => {
+    const css = `:root{
+      --text-primary: #333333;
+      --brand-text-muted: oklch(60% 0.02 250);
+      --font-size: 14px;
+      --shadow-color: rgba(0,0,0,.2);
+    }`
+    const k = Object.fromEntries(parseTokens(css, 'x.css').map((t) => [t.name, t.kind]))
+    expect(k['--text-primary']).toBe('color') // 修正前是 font
+    expect(k['--brand-text-muted']).toBe('color')
+    expect(k['--font-size']).toBe('font') // font 段优先于 size 段
+    expect(k['--shadow-color']).toBe('shadow') // shadow 判定在色值判定之前，阴影 token 保住自己的类
+  })
+
+  it('名字与值都给不出信号时如实归 other，不硬猜', () => {
+    const css = `:root{ --brand-sage: var(--brand-500); --duration-fast: 150ms; }`
+    const k = Object.fromEntries(parseTokens(css, 'x.css').map((t) => [t.name, t.kind]))
+    expect(k['--brand-sage']).toBe('other') // var() 引用没解析，没有色值字面量可依据
+    expect(k['--duration-fast']).toBe('other') // 没有 motion 类
+  })
 })

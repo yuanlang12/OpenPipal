@@ -1,13 +1,13 @@
-const supportJsRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
-const reactUmdRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
-const reactDomUmdRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
-const deckStageRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
-const animationsCompiledRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
-const iosFrameCompiledRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
-const androidFrameCompiledRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
-const imageSlotRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
-const docPageRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
-const threeDStageRaw = '' // 本发行版不含设计运行时，见 OPEN-SOURCE-CUT.json
+import supportJsRaw from '../../../../../resources/dc-runtime/support.js?raw'
+import reactUmdRaw from '../../../../../resources/dc-runtime/vendor/react.production.min.js?raw'
+import reactDomUmdRaw from '../../../../../resources/dc-runtime/vendor/react-dom.production.min.js?raw'
+import deckStageRaw from '../../../../../resources/dc-runtime/deck-stage.js?raw'
+import animationsCompiledRaw from '../../../../../resources/dc-runtime/animations.compiled.js?raw'
+import iosFrameCompiledRaw from '../../../../../resources/dc-runtime/ios-frame.compiled.js?raw'
+import androidFrameCompiledRaw from '../../../../../resources/dc-runtime/android-frame.compiled.js?raw'
+import imageSlotRaw from '../../../../../resources/dc-runtime/image-slot.js?raw'
+import docPageRaw from '../../../../../resources/dc-runtime/doc-page.js?raw'
+import threeDStageRaw from '../../../../../resources/dc-runtime/three-d-stage.js?raw'
 
 /**
  * 非 DC 裸 HTML 的已知预制脚本内联（3D 舞台走 <script type="module" src="./three-d-stage.js">，

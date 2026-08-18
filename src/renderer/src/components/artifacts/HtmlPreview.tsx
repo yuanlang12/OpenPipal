@@ -221,11 +221,13 @@ const BRIDGE_SCRIPT_TEMPLATE = `<script>(function(){
     _applyZoom(Math.max(FIT_FRAME_MIN, zFrame));
   }
 
-  // ---- 产物 sidecar(*.state.json)通道:官方 image-slot/design-canvas 契约 ----
+  // ---- 产物 sidecar(*.state.json)通道:image-slot / design-canvas 这类可编辑预制件的持久化契约 ----
   // 读:组件 fetch('<name>.state.json') 相对路径在 srcdoc(null origin)必败——垫片从宿主
   // 注入的 __openpipalSidecarData 供给;无数据回 404(组件按空槽处理)。
-  // 写:window.omelette.writeFile → postMessage 宿主落盘;resolve 等真实回执——
+  // 写:window.openpipal.writeFile → postMessage 宿主落盘;resolve 等真实回执——
   // 组件靠该 Promise 串行化连续写,提前 resolve 会破坏它的写序。
+  // 注意:定义放在下面的 window.openpipal 单一赋值里,别在这里提前挂——那句是整体赋值,
+  // 提前挂上去会被它覆盖掉。
   var _scPending = Object.create(null);
   var _origFetch = window.fetch ? window.fetch.bind(window) : null;
   window.fetch = function(input, init){
@@ -238,8 +240,7 @@ const BRIDGE_SCRIPT_TEMPLATE = `<script>(function(){
     } catch(_) {}
     return _origFetch ? _origFetch(input, init) : Promise.reject(new TypeError('fetch unavailable'));
   };
-  window.omelette = window.omelette || {};
-  window.omelette.writeFile = function(name, content){
+  function sidecarWriteFile(name, content){
     return new Promise(function(resolve, reject){
       var id = rid();
       _scPending[id] = { resolve: resolve, reject: reject, t: setTimeout(function(){
@@ -247,7 +248,7 @@ const BRIDGE_SCRIPT_TEMPLATE = `<script>(function(){
       }, 15000) };
       parent.postMessage({ __openpipal: true, type: 'sidecar:write', requestId: id, name: String(name || ''), content: String(content == null ? '' : content) }, '*');
     });
-  };
+  }
 
   // ---- 通用宽度适配（canvas 之外的一切 html）----
   // 固定宽内容（如 width:1280px 的原型/单页 dc 文档纸卡）在 480px 面板里只能看到左上角——
@@ -284,10 +285,10 @@ const BRIDGE_SCRIPT_TEMPLATE = `<script>(function(){
   else document.addEventListener('DOMContentLoaded', function(){ setTimeout(_genericFit, 0); });
 
   // ---- 时间轴编辑落盘 ----
-  // 动画运行时在画布元素上派 data-om-edl-changed（不冒泡，与 seek 事件同款约定）。
+  // 动画运行时在画布元素上派 openpipal:edl-changed（不冒泡，与 seek 事件同款约定）。
   // 捕获阶段的 document 监听照样收得到（bubbles 只影响冒泡阶段），转交宿主写回产物——
   // 只留在 iframe 里的话，重载和导出都吃不到这次剪辑。
-  document.addEventListener('data-om-edl-changed', function(e){
+  document.addEventListener('openpipal:edl-changed', function(e){
     try {
       var edl = e && e.detail && e.detail.edl;
       if (Object.prototype.toString.call(edl) === '[object Array]') {
@@ -616,9 +617,12 @@ const BRIDGE_SCRIPT_TEMPLATE = `<script>(function(){
     document.addEventListener(evt, _reportInteract, { capture: true, passive: true });
   });
 
+  // iframe 内产物能用的全部宿主能力，就这一个命名空间、一处赋值。
+  // writeFile 供可编辑预制件（image-slot 等）持久化 sidecar，实现在上面的 sidecar 通道段。
   window.openpipal = {
     complete: complete,
-    tweaks: { register: registerTweaks, setKeys: setTweakKeys }
+    tweaks: { register: registerTweaks, setKeys: setTweakKeys },
+    writeFile: sidecarWriteFile
   };
 })();</script>`
 

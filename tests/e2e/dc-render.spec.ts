@@ -110,9 +110,12 @@ const MINI_DECK = `<!DOCTYPE html>
 </head>
 <body>
 <x-dc>
-<helmet><style>body{margin:0}</style></helmet>
+<helmet><style>body{margin:0}
+@keyframes riseIn{from{opacity:0}to{opacity:1}}
+[data-deck-active] .rise{animation:riseIn 3s linear both}
+</style></helmet>
 <x-import component-from-global-scope="deck-stage" from="./deck-stage.js" width="1920" height="1080" hint-size="100%,100%">
-<section data-label="One" style="background:#f5f0e6;display:flex;align-items:center;justify-content:center;"><h1 style="font-size:72px;">Slide One</h1></section>
+<section data-label="One" data-speaker-notes="开场三十秒" style="background:#f5f0e6;display:flex;align-items:center;justify-content:center;"><h1 class="rise" style="font-size:72px;">Slide One</h1></section>
 <section data-label="Two" style="background:#2a2620;color:#fff;display:flex;align-items:center;justify-content:center;"><h1 style="font-size:72px;">Slide Two</h1></section>
 </x-import>
 </x-dc>
@@ -461,6 +464,53 @@ test.describe('DC 渲染管道 P1', () => {
     await page.screenshot({ path: `${ARTIFACTS_DIR}/t7-deck.png`, fullPage: true })
   })
 
+  // 备注的外发通道：组件的 notes getter 是导出器取备注的唯一入口（规格 Q2 于 2026-08-17 改判 (c)）。
+  // OOXML 那一头有 dc-pptx-notes 单测守着，这条守的是组件这一头——两来源合并与按 rawIndex 寻址。
+  test('T7c deck.notes 按 rawIndex 给出逐页备注（PPTX 导出的取数入口）', async ({ page }) => {
+    await setup(page)
+    await emitArtifact(page, { id: 'dc-deck-notes', type: 'html', title: 'DeckNotes.dc.html', content: MINI_DECK })
+
+    const frame = page.frameLocator(DC_IFRAME)
+    await expect(frame.locator('#dc-root deck-stage')).toBeVisible({ timeout: 20000 })
+
+    const notes = await frame.locator('deck-stage').first().evaluate((d: any) => d.notes)
+    expect(notes).toEqual(['开场三十秒', '']) // 第 2 页没写属性也没有 JSON 兜底 → 空串占位，下标不塌陷
+    // getter 返回副本：外部改不动内部表
+    const tampered = await frame.locator('deck-stage').first().evaluate((d: any) => {
+      d.notes[0] = 'HACKED'
+      return d.notes[0]
+    })
+    expect(tampered).toBe('开场三十秒')
+  })
+
+  // 逐页截图通道（PPTX / 交接包）不进 print 媒体，入场动画会被拍在刚起步处——一页 opacity:0
+  // 起手的动效导出后就是一张空白。运行时按 noscale 定格兜住它；这条守的是"定格真的生效"。
+  test('T7b noscale 导出通道定格入场动画（PPTX/交接包截图不会拍到半截）', async ({ page }) => {
+    await setup(page)
+    await emitArtifact(page, { id: 'dc-deck-freeze', type: 'html', title: 'DeckFreeze.dc.html', content: MINI_DECK })
+
+    const frame = page.frameLocator(DC_IFRAME)
+    await expect(frame.locator('#dc-root deck-stage')).toBeVisible({ timeout: 20000 })
+
+    const el = frame.locator('.rise').first()
+    // 未设 noscale：动画照常按作者写的 3s 跑
+    expect(await el.evaluate((n) => getComputedStyle(n).animationDuration)).toBe('3s')
+
+    // 导出器就是这么做的：setAttribute('noscale', '') 后只等双 rAF 就开始截图
+    await frame.locator('deck-stage').first().evaluate((d) => d.setAttribute('noscale', ''))
+    await expect
+      .poll(async () => el.evaluate((n) => getComputedStyle(n).animationDuration), { timeout: 5000 })
+      .toBe('0s')
+    // 定格 = 直接落在终态，而不是停在起始的 opacity:0
+    expect(await el.evaluate((n) => getComputedStyle(n).opacity)).toBe('1')
+
+    // 摘掉 noscale 要还原，否则预览里的动画会被导出通道的副作用永久按住
+    await frame.locator('deck-stage').first().evaluate((d) => d.removeAttribute('noscale'))
+    await expect
+      .poll(async () => el.evaluate((n) => getComputedStyle(n).animationDuration), { timeout: 5000 })
+      .toBe('3s')
+  })
+
   test('T8 animations 引擎预载渲染（动画管线）', async ({ page }) => {
     await setup(page)
     await emitArtifact(page, { id: 'dc-anim', type: 'html', title: 'Anim.dc.html', content: MINI_ANIM })
@@ -478,9 +528,11 @@ test.describe('DC 渲染管道 P1', () => {
 
     const frame = page.frameLocator(DC_IFRAME)
     await expect(frame.locator('#dc-root')).toBeVisible({ timeout: 20000 })
-    // 屏幕内容进外框 + 外框自身的状态栏时间(9:41)在场 = IOSDevice 真渲染而非裸透传
+    // 根标记在场 = IOSDevice 真渲染而非裸透传（外框没挂上时 x-import 只透传 children，
+    // 屏幕内容照样可见，所以光断言 BODY_MARKER 不足以证明外框渲染了）
+    await expect(frame.locator('[data-openpipal-frame="ios"]')).toBeVisible({ timeout: 20000 })
     await expect(frame.locator('text=IOS_BODY_MARKER')).toBeVisible({ timeout: 20000 })
-    await expect(frame.locator('text=9:41')).toBeVisible({ timeout: 20000 })
+    await expect(frame.locator('text=9:41')).toBeVisible({ timeout: 20000 }) // 状态栏默认时间
 
     await page.screenshot({ path: `${ARTIFACTS_DIR}/t10-ios-frame.png`, fullPage: true })
   })
@@ -491,8 +543,9 @@ test.describe('DC 渲染管道 P1', () => {
 
     const frame = page.frameLocator(DC_IFRAME)
     await expect(frame.locator('#dc-root')).toBeVisible({ timeout: 20000 })
+    await expect(frame.locator('[data-openpipal-frame="android"]')).toBeVisible({ timeout: 20000 })
     await expect(frame.locator('text=ANDROID_BODY_MARKER')).toBeVisible({ timeout: 20000 })
-    await expect(frame.locator('text=9:30')).toBeVisible({ timeout: 20000 }) // M3 状态栏时间 = 外框真渲染
+    await expect(frame.locator('text=9:30')).toBeVisible({ timeout: 20000 }) // M3 状态栏默认时间
     await page.screenshot({ path: `${ARTIFACTS_DIR}/t12-android-frame.png`, fullPage: true })
   })
 
@@ -517,7 +570,7 @@ test.describe('DC 渲染管道 P1', () => {
     await expect(frame.locator('image-slot img[src^="data:image"]').first()).toBeVisible({ timeout: 20000 })
   })
 
-  test('T15 image-slot 拖图写回：window.omelette.writeFile → 宿主落盘 + 真实回执', async ({ page }) => {
+  test('T15 image-slot 拖图写回：window.openpipal.writeFile → 宿主落盘 + 真实回执', async ({ page }) => {
     await setup(page)
     await emitArtifact(page, { id: 'dc-imgslot-write', type: 'html', title: 'PosterW.dc.html', content: MINI_IMAGE_SLOT })
 
@@ -525,7 +578,7 @@ test.describe('DC 渲染管道 P1', () => {
     await expect(frame.locator('#dc-root')).toBeVisible({ timeout: 20000 })
     const childFrame = page.frames().find((f) => f !== page.mainFrame())
     const ok = await childFrame!.evaluate(() =>
-      (window as any).omelette.writeFile('.image-slots.state.json', '{"hero":{"u":"data:,x","s":1,"x":0,"y":0}}'))
+      (window as any).openpipal.writeFile('.image-slots.state.json', '{"hero":{"u":"data:,x","s":1,"x":0,"y":0}}'))
     expect(ok).toBe(true) // Promise resolve = 宿主真实回执，非提前放行
     const call = await page.evaluate(() =>
       (window as any).__mockCalls?.find((c: any) => c.method === 'writeArtifactSidecar'))

@@ -144,14 +144,28 @@ const api = {
     ipcRenderer.on('chat:tool-start', handler)
     return () => ipcRenderer.removeListener('chat:tool-start', handler)
   },
-  // 上下文用量圆环：每次 LLM 调用后发一次，promptTokens=input+cacheRead+cacheWrite
+  // 上下文用量圆环/信息卡：每次 LLM 调用后发一次，promptTokens=input+cacheRead+cacheWrite；
+  // usage/segments 供卡片累计命中率与分区占比（可选，旧主进程不发送）
   onContextUsage: (
-    callback: (conversationId: string, data: { promptTokens: number; contextWindow: number; budget: number; compacted: boolean }) => void
+    callback: (conversationId: string, data: {
+      promptTokens: number; contextWindow: number; budget: number; compacted: boolean
+      usage?: { input: number; cacheRead: number; cacheWrite: number }
+      segments?: { systemPrompt: number; skills: number; toolsBuiltin: number; toolsMcp: number; messages: number }
+    }) => void
   ): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, cid: string, data: any): void => callback(cid, data)
     ipcRenderer.on('context-usage', handler)
     return () => ipcRenderer.removeListener('context-usage', handler)
   },
+  // runtime-context 快照原文：渲染层据此落盘隐藏消息，保证下轮回放与实发字节一致
+  onRuntimeContext: (callback: (conversationId: string, text: string) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, cid: string, text: string): void => callback(cid, text)
+    ipcRenderer.on('runtime-context', handler)
+    return () => ipcRenderer.removeListener('runtime-context', handler)
+  },
+  // 今日按模型用量/成本（卡片展开时拉一次；聚合在读侧，见 usage-log.ts）
+  getTodayUsage: (): Promise<Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }>> =>
+    ipcRenderer.invoke('usage:get-today'),
   onToolEnd: (
     callback: (
       conversationId: string, name: string,
@@ -261,7 +275,7 @@ const api = {
   /** 读会话 uploads 单资源（srcdoc 预览内联 data URI 用） */
   readUploadAsset: (conversationId: string, name: string): Promise<{ base64: string; mime: string } | null> =>
     ipcRenderer.invoke('artifact:read-upload', conversationId, name),
-  /** 产物 sidecar（*.state.json）写入——iframe 内 window.omelette.writeFile 的宿主端 */
+  /** 产物 sidecar（*.state.json）写入——iframe 内 window.openpipal.writeFile 的宿主端 */
   writeArtifactSidecar: (conversationId: string, name: string, content: string): Promise<boolean> =>
     ipcRenderer.invoke('artifact:write-sidecar', conversationId, name, content),
   /** 产物 sidecar 读取（预览水合 fetch 垫片的数据源） */

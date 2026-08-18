@@ -71,7 +71,8 @@
       ],
       "overrides": [
         "reviewed-baseline-default"
-      ]
+      ],
+      "note": "内置角色实现不随发行，裁剪脚本随即在原路径写入返回空对象的替身（替身那端分类见 keep-release-cut-seams）。 2026-08-17：design-role.ts 已从本条摘出，改由 keep-self-written-design-roles 收下。它当初被排除的唯一理由是「正文点名 15 个设计技能与 dc-runtime 各组件，而那些还被拦着，放行等于发一个开箱即坏的角色」——运行时八件与技能十六份现已全部自研，那个理由消失。留在本条的只有 optional-roles.ts（另外四个内置角色，与设计能力无关，各自独立判定）。"
     },
     {
       "id": "exclude-non-default-agents",
@@ -119,16 +120,6 @@
       "action": "blocked-replacement",
       "patterns": [
         "resources/dc-runtime/animations.jsx",
-        "resources/dc-runtime/animations.compiled.js",
-        "resources/dc-runtime/android-frame.jsx",
-        "resources/dc-runtime/android-frame.compiled.js",
-        "resources/dc-runtime/deck-stage.js",
-        "resources/dc-runtime/doc-page.js",
-        "resources/dc-runtime/image-slot.js",
-        "resources/dc-runtime/ios-frame.jsx",
-        "resources/dc-runtime/ios-frame.compiled.js",
-        "resources/dc-runtime/support.js",
-        "resources/dc-runtime/three-d-stage.js",
         "resources/dc-runtime/backup-pre-w1/support.js",
         "resources/dc-runtime/backup-pre-w1/animations.jsx",
         "resources/dc-runtime/backup-pre-w1/animations.compiled.js"
@@ -136,38 +127,22 @@
       "overrides": [
         "reviewed-baseline-default",
         "remove-private-history-and-qa"
-      ]
+      ],
+      "note": "本条原先拦下整个 dc-runtime，写于自研重写之前。已完成 clean-room 替换的件逐批移出本条，改由 keep-self-written-design-runtime 显式收下——blocked-replacement 是绝对判定，任何一条 blocked 规则命中即报 BLOCKED_REPLACEMENT_PRESENT，后面的 conditional-keep 救不回来，所以必须从 patterns 里摘出去而不是靠覆盖。三批：五件基础运行时（2026-08-16）、设备外框四件（2026-08-17）、three-d-stage（2026-08-17，最后一件）。 **本条现在不再拦任何在树的文件**：剩下的四条全是已从树里删除的历史路径（animations.jsx 与 backup-pre-w1/*），保留分类是因为它们在评审基线里存在，基线域规则按定义要覆盖基线路径——留着比删掉诚实，删掉会让\"这些路径从未被分类过\"。"
     },
     {
       "id": "replace-design-instruction-material",
       "scope": "reviewed-baseline",
       "action": "blocked-replacement",
       "patterns": [
-        "resources/skills/animation-basics/**",
         "resources/skills/curriculum-info-tech-primary/SKILL.md",
-        "resources/skills/curriculum-physics-junior/SKILL.md",
-        "resources/skills/dc-authoring/**",
-        "resources/skills/deck-stage/**",
-        "resources/skills/design-system-authoring/**",
-        "resources/skills/design-tokens/**",
-        "resources/skills/doc-design/**",
-        "resources/skills/flier/**",
-        "resources/skills/frontend-design/**",
-        "resources/skills/hi-fi-design/**",
-        "resources/skills/html-email/**",
-        "resources/skills/interactive-prototype/**",
-        "resources/skills/prototype-tweaks/**",
-        "resources/skills/three-d-object/**",
-        "resources/skills/trifold-brochure/**",
-        "resources/skills/web-research/**",
-        "resources/skills/wireframe/**",
-        "resources/system-agents/design/preflow.json"
+        "resources/skills/curriculum-physics-junior/SKILL.md"
       ],
       "overrides": [
         "reviewed-baseline-default",
         "exclude-non-default-agents"
       ],
-      "note": "设计类 skills 整组不随本次发行:机制层(design-tokens 等)尚未完成自研替换,未替换=不带。frontend-design/SKILL.md 是所有者自己写的判断层技能,不涉及确权,但正文 7 处指向 design-tokens——单独发行会在公开树里留一条断掉的引用。判断层与机制层本是配套的一对,一起走比拆开发更诚实,所以归进同一条规则(所有者 2026-08-13 确认)。已核查其余 6 个存活 skill(doc / pdf / skill-creator / slides / spreadsheet / tool-installer)对被裁 skill 的引用数为 0,无其他断链。"
+      "note": "本条原先拦下整组设计类 skills，写于 15 份技能仍是第三方原件之时。所有者 2026-08-17 确认十五份同源，此后按 docs/claude/design-rewrite/skill-rewrite-contract.md 逐份重写——信息源换成我们自己的运行时代码，不参照原件也不参照旧行文（这一条同时解决归属与覆盖：描述自己的代码是自己的作品，而旧技能描述的是原件宿主某个时点的能力面，我们后来长出来的东西它看不见，能力盈余审计查出 134 条差集）。十四份重写完成、frontend-design 本就是所有者自著、prototype-tweaks 整份删除，已移出本条改由 keep-self-written-design-skills 收下；preflow.json 同日移出，归 keep-self-written-design-roles。台账见 THIRD_PARTY_NOTICES.md 同日那节。 **留在本条的两份与设计能力无关**：curriculum-* 是教学角色的课程技能，混进本条是历史分类，应随教学能力单独判定，不受设计这轮结论影响。"
     },
     {
       "id": "replace-unreviewed-brand-assets",
@@ -271,6 +246,8 @@
         "src/shared/update-contract.ts",
         "tests/helpers/tracked-files.ts",
         "tests/unit/canvas-engine.test.ts",
+        "tests/unit/dc-pptx-notes.test.ts",
+        "tests/unit/design-skill-references.test.ts",
         "tests/unit/main-error-localization.test.ts",
         "tests/unit/main-i18n-key-existence.test.ts",
         "tests/unit/main-user-facing-i18n.test.ts",
@@ -356,7 +333,7 @@
         "reviewed-baseline-default",
         "exclude-release-cut-internals"
       ],
-      "note": "裁剪脚本在这个路径上留了一道接缝:私仓版本(五个非默认内置角色)由 exclude-release-cut-internals 裁掉,脚本随即写入一个返回空对象的替身,好让 role-manager 一行不用改就能编译。策略里必须把这两件事分开记:『私仓那份不发行』是 exclude 那条,『发行树里这份替身可公开』是本条。规则按顺序求值、最后命中者决定去留,所以本条排在 exclude 之后。少了它,校验器会正确地把接缝替身报成 EXCLUDED_PATH_PRESENT —— 那不是误报,是策略当时确实没描述这道接缝。 同理还有两个只存在于发行树、私仓里根本没有的产物:OPEN-SOURCE-CUT.json(裁剪清单,记录从哪个私仓提交裁出、按哪条规则丢了什么)与 README.zh-CN.md(由 docs/open-source/README.public.zh-CN.md 改名而来)。它们同样是接缝,同样必须被显式分类,否则校验器报未分类——报得对。"
+      "note": "裁剪脚本在这两个角色模块路径上各留了一道接缝:私仓版本(optional-roles.ts 的学习/教学/办公/同传四角色,design-role.ts 的设计助手)由 exclude-release-cut-internals 裁掉,脚本随即在原路径写入返回空对象的替身,好让 role-manager 的组合处一行不用改就能编译。脚本按文件逐个判定、不整组置空——两个模块的去留是各自独立的判断,将来设计助手先解禁时,它那份就该是真实现而不是替身。策略里必须把这两件事分开记:『私仓那份不发行』是 exclude 那条,『发行树里这份替身可公开』是本条。规则按顺序求值、最后命中者决定去留,所以本条排在 exclude 之后。少了它,校验器会正确地把接缝替身报成 EXCLUDED_PATH_PRESENT —— 那不是误报,是策略当时确实没描述这道接缝。 同理还有两个只存在于发行树、私仓里根本没有的产物:OPEN-SOURCE-CUT.json(裁剪清单,记录从哪个私仓提交裁出、按哪条规则丢了什么)与 README.zh-CN.md(由 docs/open-source/README.public.zh-CN.md 改名而来)。它们同样是接缝,同样必须被显式分类,否则校验器报未分类——报得对。"
     },
     {
       "id": "remove-third-party-fixtures-and-provenance-ledgers",
@@ -386,7 +363,7 @@
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "设计运行时 clean-room 重写这一轮引入的过程物与配套测试，晚于评审基线，随「设计运行时不进本次发行」一起不带。逐条理由：docs/claude/design-rewrite/** 是写给干净侧实现者的行为规格——它由读过原件的人执笔，是 clean-room 流程的脏侧材料，公开等于把被替换件的行为描述一并发出去，与替换本身的目的相悖；tests/contracts/** 与 tests/unit/animations-runtime.test.ts 是 animations 运行时的契约与单测，运行时本身在 replace-design-runtime-material 里被拦，测试留在公开树只会红着；tests/unit/dc-sidecar-carry.test.ts 同理依赖 image-slot 运行时（与既有的 tests/unit/dc-runtime-sibling.test.ts 同一族，那条已在 exclude-non-default-agents 里）。等三件原件（ios-frame / android-frame / three-d-stage）也完成自研替换、设计能力整体随发行时，这条规则连同 replace-design-runtime-material 一起重估。"
+      "note": "设计运行时与技能 clean-room 重写这一轮引入的过程物与配套测试，晚于评审基线。 **2026-08-17 已按原定条件重估，结论是继续不带**，理由与当初一致且并未随替换完成而消失：docs/claude/design-rewrite/** 是写给干净侧实现者的行为规格与写作契约，由读过原件的人执笔，是 clean-room 流程的脏侧材料——公开它等于把\"被替换件当初长什么样\"的描述一并发出去，与替换本身的目的相悖。替换做完了不改变这一点：证据链的价值在于它记录了当时的分侧事实，而不在于它可以公开。 tests/contracts/** 与 tests/unit/animations-runtime.test.ts、tests/unit/dc-sidecar-carry.test.ts 是运行时的契约与单测，与被拦的过程物同源，一并不带。需要向外证明分侧属实时，走 THIRD_PARTY_NOTICES.md 里逐节的 Resolved 记录，那是对外的口径。"
     },
     {
       "id": "review-search-settings-delta",
@@ -399,7 +376,7 @@
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "提交 2f8d123（搜索服务配置外化到设置页）引入的新文件，晚于评审基线。第一方产品源码：设置页让用户自配搜索服务，内置 key 只做静默回退。已核查两份文件都不含任何密钥、端点或内置配置字面量（唯一的长字符串是一个 data-testid），与 CLAUDE.md 红线「Settings 页面不得暴露内置 API Key / Base URL / 模型名」一致——设置页只显示掩码与 builtin 标记。"
+      "note": "提交 2f8d123（搜索服务配置外化到设置页）引入的新文件，晚于评审基线。第一方产品源码：设置页让用户自配搜索服务，内置 key 只做静默回退。已核查两份文件都不含任何密钥、端点或内置配置字面量（唯一的长字符串是一个 data-testid），与 CLAUDE.md 红线「Settings 页面不得暴露内置 API Key / Base URL / 模型名」一致——设置页只显示掩码与 builtin 标记。 后补（提交 1013795，同一条线的收尾）：上下文窗口检测收编进 remote-model-list——它原本自己打同一个 /models、只认 {data:[]}，于是 {models:[]} 或裸数组的网关上检测静默失败；外观页字体选择器并进同一个锚定浮层，此前它和模型页共享同一个被滚动容器裁切的 bug。两份新测试同样核查过：context-window-detector.test.ts 里是 gw.example.com 这类示例域与公开端点，font-picker-menu.spec.ts 复用的是 model-catalog-picker 那份已分类的同款 mock（占位 key + 各家公开官方地址）。"
     },
     {
       "id": "review-model-catalog-and-anchored-menu-delta",
@@ -417,21 +394,147 @@
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "提交 a16fb8b / 979e3c9 / 929d87d（服务商与模型目录来自 Pi、下拉改锚定浮层、服务商自报模型清单）引入的新文件，晚于评审基线。全部是第一方产品源码与配套测试：remote-model-list.ts 按用户填的地址与 key 去问服务商 /models，再拿 Pi 目录的元数据补齐；AnchoredMenu.tsx 是纯 UI 浮层定位组件；三份测试钉住目录规模、远端清单合并与选择器交互。已逐份核查：不含任何密钥、内置端点或私有提示词——源码里唯一的字面 URL 是注释里指向 pi 官方文档的 https://pi.dev；测试里的地址全是各家公开的官方端点（api.openai.com / api.anthropic.com / dashscope.aliyuncs.com / opencode.ai / api.siliconflow.cn）或显式示例域（example.com、https://x），key 全是 sk-test-1234 / sk-x 这类一眼可辨的占位串。与 CLAUDE.md 红线「Settings 页面不得暴露内置 API Key / Base URL / 模型名」一致：目录里的地址是服务商公开的官方地址，不是我们的内置配置。 后补（提交 1013795，同一条线的收尾）：上下文窗口检测收编进 remote-model-list——它原本自己打同一个 /models、只认 {data:[]}，于是 {models:[]} 或裸数组的网关上检测静默失败；外观页字体选择器并进同一个锚定浮层，此前它和模型页共享同一个被滚动容器裁切的 bug。两份新测试同样核查过：context-window-detector.test.ts 里是 gw.example.com 这类示例域与公开端点，font-picker-menu.spec.ts 复用的是 model-catalog-picker 那份已分类的同款 mock（占位 key + 各家公开官方地址）。"
+      "note": "提交 a16fb8b / 979e3c9 / 929d87d（服务商与模型目录来自 Pi、下拉改锚定浮层、服务商自报模型清单）引入的新文件，晚于评审基线。全部是第一方产品源码与配套测试：remote-model-list.ts 按用户填的地址与 key 去问服务商 /models，再拿 Pi 目录的元数据补齐；AnchoredMenu.tsx 是纯 UI 浮层定位组件；三份测试钉住目录规模、远端清单合并与选择器交互。已逐份核查：不含任何密钥、内置端点或私有提示词——源码里唯一的字面 URL 是注释里指向 pi 官方文档的 https://pi.dev；测试里的地址全是各家公开的官方端点（api.openai.com / api.anthropic.com / dashscope.aliyuncs.com / opencode.ai / api.siliconflow.cn）或显式示例域（example.com、https://x），key 全是 sk-test-1234 / sk-x 这类一眼可辨的占位串。与 CLAUDE.md 红线「Settings 页面不得暴露内置 API Key / Base URL / 模型名」一致：目录里的地址是服务商公开的官方地址，不是我们的内置配置。"
+    },
+    {
+      "id": "review-runtime-context-dedicated-message-test",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "tests/unit/runtime-context-dedicated-message.test.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ],
+      "note": "runtime context 从「拼进末条用户消息」改为「独立末尾 user 消息」（prompt cache 前缀稳定）这轮改动引入的唯一新文件，配套单测。晚于评审基线。第一方测试：用 pi-ai faux provider 驱动 legacy 与 pi-core 两条真实 agentChat 循环，捕获实际请求消息，断言两个回合间历史消息字节稳定、runtime-context 只以独立消息出现在载荷末尾。已核查不含任何密钥、真实端点或私有提示词——测试里的 baseUrl 是显式占位 http://localhost:0，provider 为 faux，runtime-context fixture 是一段中文时间文案。"
+    },
+    {
+      "id": "review-usage-card-and-persisted-rc-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "src/main/context-usage-stats.ts",
+        "tests/unit/context-usage-stats.test.ts",
+        "tests/unit/usage-log-today.test.ts",
+        "tests/unit/real-api-cache.acceptance.test.ts",
+        "tests/e2e/context-usage-card.spec.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ],
+      "note": "「runtime-context 快照落盘回放 + 上下文用量信息卡」这轮改动引入的新文件，晚于评审基线。context-usage-stats.ts 是用量卡分区估算的纯函数模块；四份测试分别是分区估算单测、usage-log 今日聚合单测、真实 API 缓存验收（默认跳过，仅 OPENPIPAL_REAL_API=1 时运行）与卡片 e2e。已逐份核查：不含任何密钥或内置端点——真实 API 验收测试的模型与密钥在运行时从用户自己的 ~/.openpipal/config.json 读取且打印时脱敏（baseUrl 打码 host、key 永不输出），文件内唯一的地址字面量是示例占位 http://localhost:0 与临时目录；e2e 的 mock 数据为编造的模型名与用量数字。"
+    },
+    {
+      "id": "keep-self-written-design-runtime",
+      "scope": "reviewed-baseline",
+      "action": "conditional-keep",
+      "patterns": [
+        "resources/dc-runtime/support.js",
+        "resources/dc-runtime/doc-page.js",
+        "resources/dc-runtime/deck-stage.js",
+        "resources/dc-runtime/image-slot.js",
+        "resources/dc-runtime/animations.compiled.js",
+        "resources/dc-runtime/ios-frame.jsx",
+        "resources/dc-runtime/ios-frame.compiled.js",
+        "resources/dc-runtime/android-frame.jsx",
+        "resources/dc-runtime/android-frame.compiled.js",
+        "resources/dc-runtime/three-d-stage.js"
+      ],
+      "overrides": [
+        "reviewed-baseline-default",
+        "replace-design-runtime-material"
+      ],
+      "note": "设计运行时的 clean-room 自研实现。每件在仓库历史里都有「清原件 → 干净侧落地」提交对，且文件头自陈自研：doc-page 5d562db（356 行，原件 757）；support.js 四期 ae5ff90 → 1a6f5be → 5fe4e74 → f579e3c（P1 骨架 892 行到 P4 毕业，全套 E2E 52/52）；deck-stage bd927fa → 551f951（800 行，17 条硬契约）；image-slot bf57384 → f7ff41f（547 行，18+1 条契约）；animations 74858c3 → 2195707（1050 行，10 条单测 + 32 条浏览器契约）。设备外框两件 2026-08-17 同批落地（ios-frame 663 行 / android-frame 515 行 JSX，各自的 .compiled.js 由 scripts/build-dc-runtime-compiled.mjs 从 JSX 生成而非手写，因此可复现比对）：两个干净侧实现者分别施工，禁读名单含两件原件、两件 compiled、three-d-stage.js 与 docs/claude/claude-design-dc-prompt.md，二者均报告未触及且旧文件在其工作期间 git 无改动；根元素探针换成我方命名空间 data-openpipal-frame，原件那个第三方宿主探针（全仓无读取方）未带过来。台账对应记录见 THIRD_PARTY_NOTICES.md 的「Resolved 2026-08-16」与「Device frames, 2026-08-17」两节。 不钉 evidence 哈希：这些件仍在活跃迭代（如 5fb6c0d 改 animations 播放条），钉了会退化成每次改动都要重签的噪声，而重签本身不产生任何审查。防「静默换回原件」靠的是文件头那句自研声明与那几对提交——它们改不动却看得见。"
+    },
+    {
+      "id": "review-self-written-device-frames-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "scripts/build-dc-runtime-compiled.mjs"
+      ],
+      "note": "设备外框自研这一轮新增的构建脚本（晚于评审基线，故是候选域而非基线域）。它把 dc-runtime 里的 JSX 预制件编译成宿主实际内联的 .compiled.js。单独立一条而不是并进别的候选 delta：这个脚本的去留与设备外框绑定，同进同出，混进无关规则里将来没法一起重估。 为什么要有它：两件 compiled 此前的再生方式只是文件头一句注释里的手工配方，手工同步迟早会漂；改成脚本产出后「compiled 等于 esbuild(jsx)」变成任何人都能重跑验证的事实，这本身是开源发行的一条证据。 不与任何在先规则重叠，故不声明 overrides：基线域规则按定义不匹配基线里不存在的路径。"
+    },
+    {
+      "id": "keep-self-written-design-skills",
+      "scope": "reviewed-baseline",
+      "action": "conditional-keep",
+      "patterns": [
+        "resources/skills/animation-basics/**",
+        "resources/skills/dc-authoring/**",
+        "resources/skills/deck-stage/**",
+        "resources/skills/design-system-authoring/**",
+        "resources/skills/design-tokens/**",
+        "resources/skills/doc-design/**",
+        "resources/skills/flier/**",
+        "resources/skills/hi-fi-design/**",
+        "resources/skills/html-email/**",
+        "resources/skills/interactive-prototype/**",
+        "resources/skills/three-d-object/**",
+        "resources/skills/trifold-brochure/**",
+        "resources/skills/web-research/**",
+        "resources/skills/wireframe/**"
+      ],
+      "overrides": [
+        "reviewed-baseline-default",
+        "replace-design-instruction-material"
+      ],
+      "note": "十四份自研重写的设计技能。frontend-design 是所有者自著、从未派生，但所有者决定只留本地不随发行——见 exclude-owner-local-only。重写规程见 docs/claude/design-rewrite/skill-rewrite-contract.md：唯一信息源是 resources/dc-runtime/ 下我们自己的运行时代码与 src/ 里消费它的宿主代码，硬规矩要求每条技术断言能指到代码行、禁止教运行时里不存在的东西、并强制两个旧技能都没有的章节（运行时已经替你做了什么 / 约束与静默失败）。体量 1323 行 → 4036 行，逐份对照见 THIRD_PARTY_NOTICES.md 的「Resolved 2026-08-17 — the sixteen design skills」。 tests/unit/design-skill-references.test.ts 守两条不变量：角色提示词点名的技能目录必须存在、技能与提示词里写的每个运行时标识符必须在代码里有实（防\"教了不存在的东西\"回潮）。 不钉 evidence 哈希，理由同 keep-self-written-design-runtime：这些件仍在迭代，钉了只会退化成无人阅读的重签。"
+    },
+    {
+      "id": "keep-self-written-design-roles",
+      "scope": "reviewed-baseline",
+      "action": "conditional-keep",
+      "patterns": [
+        "resources/system-agents/design/preflow.json"
+      ],
+      "note": "设计角色的前置问答页配置（新建对话时那张页面）：标题与占位文案、14 张交付形态卡片、四个上下文上传入口（品牌/截图/代码库/Figma）、英文覆盖层、可跳过开关。面板里的产物库与设计系统库两个标签页由代码现查，不在这个文件里。 **形态清单与原件的交付形态分类有重合**，如实记下；但重合来自能力相似而非照抄：「动画」是原件没有的形态、四个上传入口与英文层是我方自定、且每一张卡片现在都指向一份我们自研重写的技能——差异项来自我们自己的能力。 它是「文件存在即开启」的可选件（role-manager.ts 的 readRoleManifest 缺文件返回 null）。 覆盖三条：基线兜底、exclude-non-default-agents（那条按目录拦下整个 system-agents/design/**，本文件是其中唯一确权完成的一件）、以及 replace-design-instruction-material（2026-08-17 从中移出）。",
+      "overrides": [
+        "reviewed-baseline-default",
+        "exclude-non-default-agents",
+        "replace-design-instruction-material"
+      ]
+    },
+    {
+      "id": "keep-self-written-design-role-module",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "src/main/roles/design-role.ts"
+      ],
+      "note": "设计助手角色模块。提示词是所有者自己写的，从未派生；2026-08-16 从 optional-roles.ts 拆成独立文件，使「带不带设计助手」成为一次文件级取舍。此前被 exclude-release-cut-internals 排除，理由是它点名的技能与运行时还被拦着——2026-08-17 那两组全部完成自研替换后该理由不再成立。它现在是真实现而不是裁剪替身，故同时从 keep-release-cut-seams 摘掉。候选域：这个路径晚于评审基线。"
+    },
+    {
+      "id": "remove-candidate-qa-artifacts",
+      "scope": "candidate",
+      "action": "exclude",
+      "patterns": [
+        "tests/artifacts/**"
+      ],
+      "note": "E2E 截图产物，与 remove-private-history-and-qa 同一判断，只是作用在候选域：那条是基线域规则，匹配不到评审基线之后新拍的截图。跑一轮全量 E2E 就会新增或刷新一批，每次都当未分类路径报错没有意义——判断从第一天起就是「QA 产物不进发行树」，这里补上它在候选域的那一半。 与 remove-private-history-and-qa 的 patterns 完全同名，故必须显式声明覆盖它与基线兜底——两条是同一判断的两个作用域，不是分歧。",
+      "overrides": [
+        "reviewed-baseline-default",
+        "remove-private-history-and-qa"
+      ]
+    },
+    {
+      "id": "exclude-owner-local-only",
+      "scope": "reviewed-baseline",
+      "action": "exclude",
+      "patterns": [
+        "resources/skills/frontend-design/**"
+      ],
+      "overrides": [
+        "reviewed-baseline-default",
+        "replace-design-instruction-material"
+      ],
+      "note": "所有者自著的判断层技能（做前端视觉时的审美方向指南），**不涉及确权**——排除的理由是所有者选择只在本地项目保留，2026-08-17 明确。与本文件里其它 exclude 条目性质不同：那些是「不能公开」，这条是「不想公开」，两者都合法但理由要分清，免得将来有人以为它有归属问题。 它单向引用 design-tokens 三个概念（oklch 推色板、字体备选清单、刻度），反向无人引用它，所以裁掉不产生断链——已核实：全仓除它自身外零引用。"
     }
   ],
   "classificationOnly": true,
   "classificationNote": "本策略只描述「哪些路径可以进入发行树」，不承载任何人的批准。校验器相应只检查分类的完整性与一致性：每条路径都被规则覆盖、exclude 与 blocked-replacement 的材料没漏进去、规则重叠已显式声明、策略确实是对着它声称的基线写的。是否发布由人在发行前对着清单确认，不写进这个文件——原因见 docs/claude/mechanism-registry.md。",
   "ledgerBindingNote": "台账不变量：THIRD_PARTY_NOTICES.md 判 EXCLUDED FROM CLEARANCE 的材料不得出现在发行树里。台账行里的散文限定语（\"except for…\"、\"other than the five…\"）解析器不解读——那类行会自然产生非空交集，必须在下面写一条带理由的显式豁免。豁免对不上台账行、或它豁免的路径已不在树里，一律报 LEDGER_EXCEPTION_STALE：留着会让下一个人以为某件事被处理过。",
   "ledgerExceptions": [
-    {
-      "rowContains": "resources/dc-runtime/**",
-      "reason": "台账行自己就写了 \"except for the separately evidenced React file match above\"。这两个文件是 React 18.3.1 UMD 逐字节匹配（MIT），NOTICE 已记 SHA-256。待办：vendor/ 目录内应补 React MIT 许可全文，MIT 要求许可随附。",
-      "allow": [
-        "resources/dc-runtime/vendor/react.production.min.js",
-        "resources/dc-runtime/vendor/react-dom.production.min.js"
-      ]
-    },
     {
       "rowContains": "resources/skills/*",
       "reason": "台账行写的是 \"other than the five directories named in resources/SKILLS-NOTICE.md\"——那五个是 openai/skills 的 Apache-2.0 官方版本，各带 LICENSE.txt，SKILLS-NOTICE.md 已署名。tool-installer 不在台账的豁免措辞里，但审计确认是第一方（满篇 OpenPipal 专有路径与中文 UI 指引），**这是台账本身的缺口，应在下一轮修订 NOTICE 时补上第一方声明**。resources/SKILLS-NOTICE.md 本身被收进来是解析器的已知不精确：它在台账行里是个指针引用，不是被排除的材料，但解析器只认反引号不认语义。待办：14 个带 \"Copyright (c) OpenAI\" 文件头的文件需在 NOTICE 里显式留存（Apache-2.0 §4(c)）。",

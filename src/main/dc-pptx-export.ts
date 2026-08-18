@@ -1,11 +1,11 @@
 /**
- * DC 幻灯片（deck）导出 PPTX（截图版）—— 对齐官方 Claude Design 的 "Export as PPTX (screenshots)"：
- * 每页一张整幅截图的 .pptx，像素级还原、不可编辑。
+ * DC 幻灯片（deck）导出 PPTX（截图版）：每页一张整幅截图的 .pptx，像素级还原、不可编辑。
+ * 选这条路线是因为 deck 的版式由 CSS 决定，转成可编辑 PPTX 形状必然失真；截图版换来的是"所见即所得"。
  *
  * 核心机制：resources/dc-runtime/deck-stage.js 的 <deck-stage> 组件已经内置了导出协议——
  * `noscale` 属性关闭内部 transform:scale() 缩放（改用作者尺寸的裸几何，见该文件 `_fit()` 里
  * "PPTX exporter sets noscale..." 的注释——这是它专门为本导出器预留的钩子），配合向 window
- * postMessage `{__omelette_presenting:true}` 进入"演示模式"（隐藏 prev/next 覆层、缩略图侧栏、
+ * postMessage `{__openpipal_presenting:true}` 进入"演示模式"（隐藏 prev/next 覆层、缩略图侧栏、
  * 右键菜单），真机验证（2026-07-09）两者叠加后活动幻灯片的 getBoundingClientRect() 恰好等于
  * `{x:0,y:0,width:designWidth,height:designHeight}`——不需要 mp4 导出器那种 autofit 收敛轮询。
  * 翻页用组件的公开 API `deckEl.goTo(i)`（0-based），每次翻页后 `slidechange` CustomEvent 佐证
@@ -54,11 +54,25 @@ const DECK_SELECTOR = "document.querySelector('deck-stage')"
 const NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 const NS_RELS = 'http://schemas.openxmlformats.org/package/2006/relationships'
 
-/** [Content_Types].xml —— Default(rels/xml/png) + Override 每个固定 part 与每页 slideN.xml。 */
-function buildContentTypes(pageCount: number): string {
+/**
+ * [Content_Types].xml —— Default(rels/xml/png) + Override 每个固定 part 与每页 slideN.xml。
+ * notesPages 是**有备注的那几页的页码**（1 基）：没有备注的页不建 notesSlide，整份没备注时
+ * 连 notesMaster 与 theme2 都不建，产物与加备注之前逐字节一致。
+ */
+function buildContentTypes(pageCount: number, notesPages: number[]): string {
   const slideOverrides = Array.from({ length: pageCount }, (_, i) =>
     `<Override PartName="/ppt/slides/slide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`
   ).join('')
+  const notesOverrides = notesPages.length
+    ? '\n<Override PartName="/ppt/notesMasters/notesMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"/>' +
+      '\n<Override PartName="/ppt/theme/theme2.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>\n' +
+      notesPages
+        .map(
+          (n) =>
+            `<Override PartName="/ppt/notesSlides/notesSlide${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>`
+        )
+        .join('')
+    : ''
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -68,7 +82,7 @@ function buildContentTypes(pageCount: number): string {
 <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
 <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>
 <Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
-${slideOverrides}
+${slideOverrides}${notesOverrides}
 </Types>`
 }
 
@@ -79,25 +93,37 @@ function buildPackageRels(): string {
 </Relationships>`
 }
 
-function buildPresentationXml(pageCount: number, widthEmu: number, heightEmu: number): string {
+function buildPresentationXml(
+  pageCount: number,
+  widthEmu: number,
+  heightEmu: number,
+  hasNotes: boolean
+): string {
   const sldIds = Array.from({ length: pageCount }, (_, i) => `<p:sldId id="${256 + i}" r:id="rId${2 + i}"/>`).join('')
+  // notesMaster 的关系 id 接在幻灯片之后；schema 要求 notesMasterIdLst 排在 sldIdLst **之前**
+  const notesMasterIdLst = hasNotes
+    ? `\n<p:notesMasterIdLst><p:notesMasterId r:id="rId${2 + pageCount}"/></p:notesMasterIdLst>`
+    : ''
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="${NS_R}" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
-<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>
+<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>${notesMasterIdLst}
 <p:sldIdLst>${sldIds}</p:sldIdLst>
 <p:sldSz cx="${widthEmu}" cy="${heightEmu}"/>
 <p:notesSz cx="6858000" cy="9144000"/>
 </p:presentation>`
 }
 
-function buildPresentationRels(pageCount: number): string {
+function buildPresentationRels(pageCount: number, hasNotes: boolean): string {
   const slideRels = Array.from({ length: pageCount }, (_, i) =>
     `<Relationship Id="rId${2 + i}" Type="${NS_R}/slide" Target="slides/slide${i + 1}.xml"/>`
   ).join('')
+  const notesMasterRel = hasNotes
+    ? `\n<Relationship Id="rId${2 + pageCount}" Type="${NS_R}/notesMaster" Target="notesMasters/notesMaster1.xml"/>`
+    : ''
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="${NS_RELS}">
 <Relationship Id="rId1" Type="${NS_R}/slideMaster" Target="slideMasters/slideMaster1.xml"/>
-${slideRels}
+${slideRels}${notesMasterRel}
 </Relationships>`
 }
 
@@ -222,11 +248,79 @@ function buildSlideXml(n: number, widthEmu: number, heightEmu: number): string {
 </p:sld>`
 }
 
-function buildSlideRels(n: number): string {
+function buildSlideRels(n: number, hasNotes: boolean): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="${NS_RELS}">
 <Relationship Id="rId1" Type="${NS_R}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
-<Relationship Id="rId2" Type="${NS_R}/image" Target="../media/image${n}.png"/>
+<Relationship Id="rId2" Type="${NS_R}/image" Target="../media/image${n}.png"/>${
+    hasNotes ? `\n<Relationship Id="rId3" Type="${NS_R}/notesSlide" Target="../notesSlides/notesSlide${n}.xml"/>` : ''
+  }
+</Relationships>`
+}
+
+/** 备注是作者写的自由文本，`&`/`<` 必须转义，否则整个 part 解析失败、PowerPoint 报修复。 */
+function escapeXml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/**
+ * 备注母版。notesSlide 按 OOXML 需要一个 notesMaster 作为占位符继承源；缺了它 PowerPoint 会
+ * 判包不完整并弹修复。它自己又必须有一份 theme，这里写 theme2.xml（内容与 theme1 同源，
+ * 一个 part 不共享给两个 master 是为了不踩各家解析器对 theme 复用的分歧）。
+ */
+function buildNotesMasterXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:notesMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="${NS_R}" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+<p:cSld>
+<p:spTree>
+<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+<p:grpSpPr/>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="2" name="Notes Placeholder"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="685800" y="4343400"/><a:ext cx="5486400" cy="4114800"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>
+</p:sp>
+</p:spTree>
+</p:cSld>
+<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" hlink="hlink" folHlink="folHlink"/>
+</p:notesMaster>`
+}
+
+function buildNotesMasterRels(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="${NS_RELS}">
+<Relationship Id="rId1" Type="${NS_R}/theme" Target="../theme/theme2.xml"/>
+</Relationships>`
+}
+
+/** 一页的备注。换行拆成多个 `a:p`——单个 `a:t` 里的 \n 在 PowerPoint 里不换行。 */
+function buildNotesSlideXml(n: number, text: string): string {
+  const paras = text
+    .split(/\r?\n/)
+    .map((line) => `<a:p><a:r><a:rPr lang="en-US" dirty="0"/><a:t>${escapeXml(line)}</a:t></a:r></a:p>`)
+    .join('')
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:notes xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="${NS_R}" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+<p:cSld>
+<p:spTree>
+<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+<p:grpSpPr/>
+<p:sp>
+<p:nvSpPr><p:cNvPr id="2" name="Notes Placeholder ${n}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
+<p:spPr/>
+<p:txBody><a:bodyPr/><a:lstStyle/>${paras}</p:txBody>
+</p:sp>
+</p:spTree>
+</p:cSld>
+<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:notes>`
+}
+
+function buildNotesSlideRels(n: number): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="${NS_RELS}">
+<Relationship Id="rId1" Type="${NS_R}/notesMaster" Target="../notesMasters/notesMaster1.xml"/>
+<Relationship Id="rId2" Type="${NS_R}/slide" Target="../slides/slide${n}.xml"/>
 </Relationships>`
 }
 
@@ -234,16 +328,22 @@ function buildSlideRels(n: number): string {
  *  最终清理）；zip 的 cwd 设为 ooxmlDir 本身（而不是父目录起别名），让 [Content_Types].xml 等
  *  part 落在 zip 根，不是嵌套在一层子文件夹里——这与 dc-export.ts exportZip 的"分享打包成
  *  <basename>/…"语义不同，OOXML 要求 part 路径就是 zip 内的绝对根路径。 */
-async function assemblePptxZip(
+export async function assemblePptxZip(
   ooxmlDir: string,
   slidePngPaths: string[],
   widthPx: number,
   heightPx: number,
-  outPath: string
+  outPath: string,
+  slideNotes: string[] = []
 ): Promise<void> {
   const widthEmu = Math.round(widthPx * EMU_PER_PX)
   const heightEmu = Math.round(heightPx * EMU_PER_PX)
   const pageCount = slidePngPaths.length
+  // 空白备注不建 part：一页都没写备注时整棵 notes 子树不存在，产物与本功能落地前完全一致
+  const notesPages = slidePngPaths
+    .map((_, i) => (String(slideNotes[i] || '').trim() ? i + 1 : 0))
+    .filter((n) => n > 0)
+  const hasNotes = notesPages.length > 0
 
   fs.mkdirSync(path.join(ooxmlDir, '_rels'), { recursive: true })
   fs.mkdirSync(path.join(ooxmlDir, 'ppt', '_rels'), { recursive: true })
@@ -252,22 +352,48 @@ async function assemblePptxZip(
   fs.mkdirSync(path.join(ooxmlDir, 'ppt', 'slides', '_rels'), { recursive: true })
   fs.mkdirSync(path.join(ooxmlDir, 'ppt', 'theme'), { recursive: true })
   fs.mkdirSync(path.join(ooxmlDir, 'ppt', 'media'), { recursive: true })
+  if (hasNotes) {
+    fs.mkdirSync(path.join(ooxmlDir, 'ppt', 'notesMasters', '_rels'), { recursive: true })
+    fs.mkdirSync(path.join(ooxmlDir, 'ppt', 'notesSlides', '_rels'), { recursive: true })
+  }
 
-  fs.writeFileSync(path.join(ooxmlDir, '[Content_Types].xml'), buildContentTypes(pageCount))
+  fs.writeFileSync(path.join(ooxmlDir, '[Content_Types].xml'), buildContentTypes(pageCount, notesPages))
   fs.writeFileSync(path.join(ooxmlDir, '_rels', '.rels'), buildPackageRels())
-  fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'presentation.xml'), buildPresentationXml(pageCount, widthEmu, heightEmu))
-  fs.writeFileSync(path.join(ooxmlDir, 'ppt', '_rels', 'presentation.xml.rels'), buildPresentationRels(pageCount))
+  fs.writeFileSync(
+    path.join(ooxmlDir, 'ppt', 'presentation.xml'),
+    buildPresentationXml(pageCount, widthEmu, heightEmu, hasNotes)
+  )
+  fs.writeFileSync(
+    path.join(ooxmlDir, 'ppt', '_rels', 'presentation.xml.rels'),
+    buildPresentationRels(pageCount, hasNotes)
+  )
   fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'slideMasters', 'slideMaster1.xml'), buildSlideMasterXml())
   fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'slideMasters', '_rels', 'slideMaster1.xml.rels'), buildSlideMasterRels())
   fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'slideLayouts', 'slideLayout1.xml'), buildSlideLayoutXml())
   fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'slideLayouts', '_rels', 'slideLayout1.xml.rels'), buildSlideLayoutRels())
   fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'theme', 'theme1.xml'), buildThemeXml())
+  if (hasNotes) {
+    fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'theme', 'theme2.xml'), buildThemeXml())
+    fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'notesMasters', 'notesMaster1.xml'), buildNotesMasterXml())
+    fs.writeFileSync(
+      path.join(ooxmlDir, 'ppt', 'notesMasters', '_rels', 'notesMaster1.xml.rels'),
+      buildNotesMasterRels()
+    )
+  }
 
   for (let i = 0; i < pageCount; i++) {
     const n = i + 1
+    const note = String(slideNotes[i] || '').trim()
     fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'slides', `slide${n}.xml`), buildSlideXml(n, widthEmu, heightEmu))
-    fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'slides', '_rels', `slide${n}.xml.rels`), buildSlideRels(n))
+    fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'slides', '_rels', `slide${n}.xml.rels`), buildSlideRels(n, !!note))
     fs.copyFileSync(slidePngPaths[i], path.join(ooxmlDir, 'ppt', 'media', `image${n}.png`))
+    if (note) {
+      fs.writeFileSync(path.join(ooxmlDir, 'ppt', 'notesSlides', `notesSlide${n}.xml`), buildNotesSlideXml(n, note))
+      fs.writeFileSync(
+        path.join(ooxmlDir, 'ppt', 'notesSlides', '_rels', `notesSlide${n}.xml.rels`),
+        buildNotesSlideRels(n)
+      )
+    }
   }
 
   // 对齐 dc-export.ts exportZip 用系统 /usr/bin/zip 的模式——不引入新 npm 依赖。cwd=ooxmlDir，
@@ -280,6 +406,8 @@ export interface DeckStageFrame {
   screenLabel: string | null
   pngPath: string
   text: string
+  /** 该页的演讲备注（`data-speaker-notes` 或文档级 JSON 兜底，合并规则在组件里）；无则空串 */
+  notes: string
 }
 
 export interface DeckStageCapture {
@@ -334,7 +462,7 @@ export async function captureDeckStageFrames(
   // {0,0,width,height}，不需要 mp4 导出器那种 autofit 收敛轮询。
   await evalChecked(
     dbg,
-    `(() => { const el = ${DECK_SELECTOR}; el.setAttribute('noscale', ''); window.postMessage({ __omelette_presenting: true }, '*'); return true; })()`
+    `(() => { const el = ${DECK_SELECTOR}; el.setAttribute('noscale', ''); window.postMessage({ __openpipal_presenting: true }, '*'); return true; })()`
   )
   await evalChecked(dbg, `new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`, {
     awaitPromise: true
@@ -355,6 +483,14 @@ export async function captureDeckStageFrames(
   if (!Array.isArray(rawIndices) || !rawIndices.length) {
     throw new Error(tMain('artifacts.shell.export.errors.noSlides'))
   }
+
+  // 演讲备注：整表一次取，按 rawIndex 寻址（与 goTo 同口径，跳过页不会让它错位）。
+  // 两种来源的合并规则住在组件的 notes getter 里一份，这里不重新实现。
+  // `el.notes` 取不到就退成空表：存量离线单页内联的是没有这个 getter 的老组件，导出照跑、只是没备注。
+  const allNotes: string[] =
+    (await evalChecked(dbg, `(() => { const el = ${DECK_SELECTOR}; return (el && el.notes) || []; })()`).catch(
+      () => []
+    )) || []
 
   const frames: DeckStageFrame[] = []
   for (let p = 0; p < rawIndices.length; p++) {
@@ -405,7 +541,13 @@ export async function captureDeckStageFrames(
     })
     const pngPath = path.join(frameDir, `${filePrefix}${String(p + 1).padStart(3, '0')}.png`)
     fs.writeFileSync(pngPath, Buffer.from(shot.data, 'base64'))
-    frames.push({ rawIndex, screenLabel: active.label ?? null, pngPath, text: active.text || '' })
+    frames.push({
+      rawIndex,
+      screenLabel: active.label ?? null,
+      pngPath,
+      text: active.text || '',
+      notes: typeof allNotes[rawIndex] === 'string' ? allNotes[rawIndex] : ''
+    })
     onProgress?.(p + 1, rawIndices.length)
   }
 
@@ -439,6 +581,7 @@ export async function exportArtifactPptx(
   let width = 0
   let height = 0
   let slidePngPaths: string[] = []
+  let slideNotes: string[] = []
   try {
     win = new BrowserWindow({
       show: false,
@@ -471,6 +614,7 @@ export async function exportArtifactPptx(
     width = capture.width
     height = capture.height
     slidePngPaths = capture.frames.map((f) => f.pngPath)
+    slideNotes = capture.frames.map((f) => f.notes)
   } catch (err: any) {
     console.error('[dc-pptx-export] 截图渲染异常', err)
     try {
@@ -500,7 +644,7 @@ export async function exportArtifactPptx(
   const outPath = path.join(outRoot, `${baseName || 'design'}.pptx`)
 
   try {
-    await assemblePptxZip(ooxmlDir, slidePngPaths, width, height, outPath)
+    await assemblePptxZip(ooxmlDir, slidePngPaths, width, height, outPath, slideNotes)
   } catch (err: any) {
     console.error('[dc-pptx-export] OOXML 打包异常', err)
     try {

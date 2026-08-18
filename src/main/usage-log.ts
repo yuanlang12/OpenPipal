@@ -45,6 +45,8 @@ export interface UsageCallRecord {
   histMsgs: number
   /** 本轮是否触发了保近压远 */
   compacted: boolean
+  /** 本次调用实报成本（服务商有定价数据时>0，未知为 0）——用量卡"今日"分区用 */
+  cost?: number
 }
 
 export interface UsageTurnRecord {
@@ -122,4 +124,59 @@ export function appendUsageRecord(record: UsageCallRecord | UsageTurnRecord | Ru
   }
   const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n'
   void writeLine(line).catch(() => { /* 用量记录不值得影响一次真实对话 */ })
+}
+
+export interface TodayModelUsage {
+  model: string
+  /** 真实 prompt tokens 累计 = input + cacheRead + cacheWrite */
+  prompt: number
+  output: number
+  cacheRead: number
+  calls: number
+  /** 实报成本累计（服务商未知定价时为 0） */
+  cost: number
+}
+
+/**
+ * 今日（本地时区）按模型聚合的调用量——用量信息卡"今日用量"分区的数据源。
+ * 只在卡片展开时读一次：两代日志各 8MB 上限，逐行扫在几十毫秒级，不进任何
+ * 热路径。读失败按空处理：卡片少一栏比报错强。
+ */
+export async function readTodayUsageByModel(): Promise<TodayModelUsage[]> {
+  const readFile = await import('fs/promises').then(m => m.readFile).catch(() => undefined)
+  if (!readFile) return []
+  const dayStart = new Date()
+  dayStart.setHours(0, 0, 0, 0)
+  const byModel = new Map<string, TodayModelUsage>()
+  for (const path of [USAGE_LOG_PATH, USAGE_LOG_PATH + '.1']) {
+    let text: string
+    try {
+      text = await readFile(path, 'utf-8')
+    } catch {
+      continue
+    }
+    for (const line of text.split('\n')) {
+      if (!line.startsWith('{"ts"')) continue
+      let record: any
+      try {
+        record = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (record?.kind !== 'call') continue
+      const ts = Date.parse(record.ts || '')
+      if (!Number.isFinite(ts) || ts < dayStart.getTime()) continue
+      const entry = byModel.get(record.model) || {
+        model: record.model, prompt: 0, output: 0, cacheRead: 0, calls: 0, cost: 0
+      }
+      entry.prompt += record.prompt || 0
+      entry.output += record.output || 0
+      entry.cacheRead += record.cacheRead || 0
+      entry.calls += 1
+      entry.cost += record.cost || 0
+      byModel.set(record.model, entry)
+    }
+  }
+  // Array.from 而不是展开：main 侧的 tsconfig target 低于 es2015，展开 Map 迭代器过不了 tsc
+  return Array.from(byModel.values()).sort((a, b) => b.prompt - a.prompt)
 }

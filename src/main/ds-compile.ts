@@ -298,14 +298,28 @@ export interface DsToken {
 
 const COLORISH = /(#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(|oklab\(|lab\(|lch\(|color-mix\()/
 
+/**
+ * token 名里的关键词按**连字符段**匹配，不锚定在 `--` 后第一段。
+ *
+ * 品牌 token 几乎都带命名空间（`--acme-font-body`、`--sw-text-xs`），锚定首段会让它们整批
+ * 认不出来——而且是静默的：字体 token 归错类 → 抽不出 brandFonts → 那条「只允许用设计系统字体」
+ * 的告警规则根本不生成，作者拿不到任何反馈。shadow/radius 两条本来就有 `\b` 兜底，
+ * spacing/font 两条漏了，这里补齐口径。
+ */
+const SEG = (words: string) => new RegExp(`(^|-)(${words})(-|$)`)
+const FONT_SEG = SEG('font|text|leading|tracking|weight|line-height|letter')
+const SPACING_SEG = SEG('space|spacing|gap|size|width|height|measure|sidebar|container|topbar|inset|gutter')
+
 function inferKind(name: string, value: string): TokenKind {
-  const n = name.toLowerCase()
-  if (/^--shadow/.test(n) || /\bshadow\b/.test(n)) return 'shadow'
-  if (/^--radius/.test(n) || /\bradius\b/.test(n) || /\bcorner\b/.test(n)) return 'radius'
-  if (/^--(space|spacing|gap|size|width|height|measure|sidebar|container|topbar|inset|gutter)\b/.test(n))
-    return 'spacing'
-  if (/^--(font|text|leading|tracking|weight|line-height|letter)/.test(n)) return 'font'
+  const n = name.toLowerCase().replace(/^--/, '')
+  if (/(^|-)shadow(-|$)/.test(n)) return 'shadow'
+  if (/(^|-)(radius|corner)(-|$)/.test(n)) return 'radius'
+  // 值是色值就是颜色，先于一切名字猜测——值是事实，名字是猜。
+  // （否则 `--text-primary: #333` 会因为名字里有 text 被判成 font，这是本次修正前的真实错分。）
   if (COLORISH.test(value)) return 'color'
+  // font 排在 spacing 前：`--font-size` 两边都命中，它是字号不是间距
+  if (FONT_SEG.test(n)) return 'font'
+  if (SPACING_SEG.test(n)) return 'spacing'
   // 无名称提示的纯长度值（4px / 1.5rem …）归 spacing
   if (/^-?\d*\.?\d+(px|rem|em|ch|vh|vw|vmin|vmax)$/.test(value.trim())) return 'spacing'
   if (/color|bg|fg|ink|paper|surface|border|accent|success|error|warning|danger|info|ring|focus|text/.test(n))

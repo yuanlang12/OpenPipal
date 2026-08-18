@@ -291,7 +291,7 @@ design 角色的设计交付物采纳 claude.ai Claude Design 同源的单文件
 
 - `dc-capture.ts` — 共享 CDP 捕获层（evalChecked/轮询/滚动条免疫/视口仿真/整数 clip）。⚠️ loadURL 必须 await 完成后才能 debugger.attach + Page.enable，反序会让 Page.enable 无限挂起。
 - `dc-video-export.ts` — 动画 mp4：引擎 seek 协议逐帧 + DOM 真值（尺寸/时长）+ 分辨率守卫 + ffmpeg。
-- `dc-pptx-export.ts` — deck 逐页截图 PPTX：deck-stage 的 `noscale` 属性 + `__omelette_presenting` postMessage 是组件预留的导出钩子（去缩放/藏导轨），`goTo(i)` 翻页、`data-deck-skip` 页排除；OOXML 手写最小结构（python-pptx 参考模板校验），系统 zip 打包，1px=9525 EMU。
+- `dc-pptx-export.ts` — deck 逐页截图 PPTX：deck-stage 的 `noscale` 属性 + `__openpipal_presenting` postMessage 是组件预留的导出钩子（去缩放/藏导轨），`goTo(i)` 翻页、`data-deck-skip` 页排除；OOXML 手写最小结构（python-pptx 参考模板校验），系统 zip 打包，1px=9525 EMU。
 - `pi-tools.ts` export_artifact — Agent 侧导出（mp4/pdf/standalone-html/project-zip/pptx），证据式校验文本（ffprobe/页数/大小），落 `~/.openpipal/outputs`；成功结果携带文件元数据，因此会话右侧能精确显示本会话交付物，不依赖扫描全局目录。
 
 ## 关键数据流（从 CLAUDE.md 下沉）

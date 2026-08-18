@@ -641,11 +641,11 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
         // 页面文本摘要：截图 read 链路已证实全断（photon resize 在主进程恒断）+ 当前主模型不支持
         // 图片输入——弱模型全靠这段文本核对文案/品牌名/数据，"渲染干净"只代表无 JS 错误。
         summary = await win.webContents.executeJavaScript(PAGE_TEXT_SUMMARY_JS).catch(() => null)
-        // 动画多帧自检（W2 条款6）：仅当产物含 data-om-exportable-video-with-duration-secs（运行时的
+        // 动画多帧自检（W2 条款6）：仅当产物含 data-openpipal-video-duration-secs（运行时的
         // seek 监听挂在该画布元素本体）时触发——无此属性→duration=0→整段跳过，非动画产物零回归。
         const duration: number = await win.webContents
           .executeJavaScript(
-            `(function(){var el=document.querySelector('[data-om-exportable-video-with-duration-secs]');if(!el)return 0;var d=parseFloat(el.getAttribute('data-om-exportable-video-with-duration-secs'));return isFinite(d)&&d>0?d:0;})()`
+            `(function(){var el=document.querySelector('[data-openpipal-video-duration-secs]');if(!el)return 0;var d=parseFloat(el.getAttribute('data-openpipal-video-duration-secs'));return isFinite(d)&&d>0?d:0;})()`
           )
           .catch(() => 0)
         if (typeof duration === 'number' && duration > 0) {
@@ -665,7 +665,7 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
             let ready = false
             for (let i = 0; i < 40; i++) {
               ready = await win.webContents
-                .executeJavaScript(`!!document.querySelector('[data-om-exportable-video-with-duration-secs]')`)
+                .executeJavaScript(`!!document.querySelector('[data-openpipal-video-duration-secs]')`)
                 .catch(() => false)
               if (ready) break
               await new Promise((r) => setTimeout(r, 150))
@@ -676,9 +676,9 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
             }
             const seeked = await win.webContents
               .executeJavaScript(
-                `new Promise(function(resolve){var el=document.querySelector('[data-om-exportable-video-with-duration-secs]');` +
+                `new Promise(function(resolve){var el=document.querySelector('[data-openpipal-video-duration-secs]');` +
                   `if(!el){resolve(false);return}` +
-                  `el.dispatchEvent(new CustomEvent('data-om-seek-to-time-frame',{detail:{time:${time}}}));` +
+                  `el.dispatchEvent(new CustomEvent('openpipal:seek-to-time',{detail:{time:${time}}}));` +
                   `requestAnimationFrame(function(){requestAnimationFrame(function(){resolve(true)})});` +
                   `setTimeout(function(){resolve(true)},1500)})`
               )

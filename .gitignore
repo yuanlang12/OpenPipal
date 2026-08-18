@@ -21,6 +21,7 @@ coverage/
 playwright-report/
 test-results/
 .playwright-mcp/
+.playwright-cli/
 
 # 外部工具缓存
 .serena/

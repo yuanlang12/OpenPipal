@@ -4,7 +4,7 @@
  * 覆盖:
  *   T1 动画 dc artifact（引用 animations.jsx）→ 弹窗含 mp4 格式卡 + "时长自动读取"说明文案，无时长输入框
  *   T2 选中 mp4 卡 → 下载 → artifact:export(format:'mp4', fps:30)，不带 durationSec（时长由主进程
- *      从 DOM data-om-exportable-video-with-duration-secs 属性读取，见 dc-video-export.ts）
+ *      从 DOM data-openpipal-video-duration-secs 属性读取，见 dc-video-export.ts）
  *   T3 非动画 dc artifact（无 animations.jsx/useTime 等标记）→ 无 mp4 卡（回归防误伤静态 dc）
  *
  * Mock 策略同 pdf-export-btn.spec.ts：精简 window.api mock + __mockBus.emit('artifact', ...)。

@@ -5,6 +5,7 @@ import { homedir } from 'os'
 import { loadRoleFromDisk, seedSystemAgents } from './role-loader'
 import { resolveDesignSystemDirectory } from './design-system-resource'
 import { buildOptionalRoles } from './roles/optional-roles'
+import { buildDesignRole } from './roles/design-role'
 import { dataPath } from './data-root'
 export {
   addDetectedApp,
@@ -123,7 +124,10 @@ const BUILTIN_ROLES: Record<string, RoleConfig> = {
     systemPrompt: GENERAL_SYSTEM_PROMPT,
     tools: COMMON_TOOLS
   },
-  ...buildOptionalRoles(COMMON_TOOLS)
+  // 两处展开而不是一处：设计助手能不能随某个发行走，与另外四个角色是各自独立的判断，
+  // 各自对应一个可被裁剪脚本换成空实现的文件（文件式取舍，见两个模块自己的说明）
+  ...buildOptionalRoles(COMMON_TOOLS),
+  ...buildDesignRole(COMMON_TOOLS)
 }
 
 let currentRole: RoleConfig = BUILTIN_ROLES.general

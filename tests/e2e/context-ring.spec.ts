@@ -119,7 +119,7 @@ test.describe('上下文用量圆环 (context ring)', () => {
     const title = await ring.getAttribute('title')
     expect(title).toContain('上下文')
     expect(title).toContain('42.0k')
-    expect(title).toContain('131k')
+    expect(title).toContain('131.1k')
     expect(title).not.toContain('已压缩生效')
     // 未压缩时不应有压缩微标
     await expect(page.locator('[data-testid="context-ring-compacted"]')).toHaveCount(0)

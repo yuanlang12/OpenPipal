@@ -135,8 +135,14 @@ the locally installed React 18.3.1 UMD production files at the hashes shown:
 
 The installed React packages contain MIT license texts, but the vendored directory
 does not currently carry that text alongside the files. These two vendored files are
-**PENDING** until the required license/notice placement is made part of the release.
-This match does not clear any other part of `resources/dc-runtime/`.
+**PENDING** until the required license/notice placement is made part of the release:
+the MIT licence requires its text to accompany the code, so the full licence must be
+placed inside `vendor/` before release. Until 2026-08-16 this obligation was tracked as
+a machine-checked exception in `config/open-source-policy.json`, which worked only as a
+side effect of the broad exclusion row that has since been narrowed; it is recorded
+here instead, and in the release checklist below.
+
+This match does not clear any other part of the runtime beyond the two files named.
 
 ### OpenAI Skills snapshots
 
@@ -170,8 +176,7 @@ licenses.
 | Material | Status | Required resolution |
 |---|---|---|
 | `docs/claude/anthropic-design-agent-prompt.md`; `docs/claude/claude-design-dc-prompt.md` | **EXCLUDED FROM CLEARANCE** | Establish origin, applicable terms, and redistribution permission; otherwise omit from the public release. |
-| `resources/dc-runtime/**`, except for the separately evidenced React file match above | **EXCLUDED FROM CLEARANCE** | Establish provenance and license per file/component, including generated, backup, support, and stage assets; otherwise omit. |
-| `resources/skills/*` other than the five directories named in `resources/SKILLS-NOTICE.md` | **EXCLUDED FROM CLEARANCE** | Classify first-party versus third-party authorship and retain the applicable license/provenance record for every distributed skill. |
+| `resources/skills/*` other than the five directories named in `resources/SKILLS-NOTICE.md` and the sixteen design skills resolved below | **EXCLUDED FROM CLEARANCE** | Classify first-party versus third-party authorship and retain the applicable license/provenance record for every distributed skill. Narrowed on 2026-08-17: the sixteen design skills are resolved below. What remains under this row is the two curriculum skills (`curriculum-info-tech-primary`, `curriculum-physics-junior`), which belong to the teaching role and were never part of the design capability. |
 | `resources/skills-legacy/**` | **EXCLUDED FROM CLEARANCE** | Resolve authorship, upstream source, modifications, and redistribution terms; otherwise omit. |
 | `resources/system-agents/**/skills/**` | **EXCLUDED FROM CLEARANCE** | Resolve authorship and redistribution terms for agent-specific skills; otherwise omit. |
 
@@ -192,6 +197,226 @@ redistribution for, the following materials previously listed above as unresolve
 
 This resolution records the owner's own declaration; it is not a third-party license
 finding and licenses nothing beyond the paths listed.
+
+### Resolved 2026-08-16 — DC Runtime clean-room replacements
+
+The row above covering `resources/dc-runtime/**` was written on 2026-08-14 at 10:08.
+Five of the runtime files were replaced by clean-room implementations written in this
+repository later the same day and the day before; the row was never revisited, so it
+kept describing files that no longer existed. It is narrowed above to the three
+components that are still original material, and the five below are recorded here as
+first-party work.
+
+Unlike the 2026-08-14 brand-asset resolution, this one does not rest on a declaration
+alone. Each file was produced under the split-side procedure documented in
+`docs/claude/design-rewrite/README.md`: one side read the original and wrote a
+behaviour specification stating only what the host requires, and a second side that
+never read the original implemented against that specification. Each replacement
+therefore has a matching pair of commits — the original being removed first, the
+independent implementation landing after — and each file opens with its own
+authorship statement.
+
+| File | Commits (original removed → clean-side landed) | Independent implementation |
+|---|---|---|
+| `resources/dc-runtime/doc-page.js` | `5d562db` | 356 lines, replacing a 757-line original |
+| `resources/dc-runtime/support.js` | `5d562db` → `ae5ff90`, `1a6f5be`, `5fe4e74`, `f579e3c` | four stages, P1 skeleton 892 lines through P4; 52/52 end-to-end |
+| `resources/dc-runtime/deck-stage.js` | `bd927fa` → `551f951` | 800 lines; 17 host contracts pass |
+| `resources/dc-runtime/image-slot.js` | `bf57384` → `f7ff41f` | 547 lines; 18+1 host contracts pass |
+| `resources/dc-runtime/animations.compiled.js` | `74858c3` → `2195707` | 1050 lines; 10 unit tests and 32 browser contracts pass |
+
+The corresponding policy entry is `keep-self-written-design-runtime` in
+`config/open-source-policy.json`. Content hashes are deliberately not pinned there:
+these five files are still under active development, and a pin would decay into a
+signature that is re-applied without being read. Substitution back to original material
+is instead visible in the per-file authorship headers and in the commit pairs above.
+
+This resolution covers only the five files listed. It makes no finding about
+`three-d-stage` or any skill directory; the two device frames are resolved separately
+below.
+
+**Namespace migration, 2026-08-16.** The clean-room rewrites retained the original
+host's protocol identifiers so that each replacement could be accepted against the
+existing host without changing two things at once; the rewrite specifications recorded
+this as a deferred, separately revertible commit. That commit has now been made. The
+host API `window.omelette.writeFile` is `window.openpipal.writeFile`, the deck
+presentation message key `__omelette_presenting` is `__openpipal_presenting`, and the
+animation export protocol identifiers `data-om-exportable-video-with-duration-secs`,
+`data-om-fonts-inlined`, `data-om-seek-to-time-frame` and `data-om-edl-changed` are
+`data-openpipal-video-duration-secs`, `data-openpipal-fonts-ready`,
+`openpipal:seek-to-time` and `openpipal:edl-changed`. Both sides of every identifier
+were changed together — runtime, four host files, the browser contract harness and the
+skill documentation. In the release tree produced by `scripts/make-open-source-cut.mjs`
+the earlier namespace now occurs nowhere except in this record of the rename itself.
+Two documentation files that are
+excluded from release, `docs/claude/design-parity-goal.md` and
+`docs/claude/dc-route-acceptance.md`, still name it when describing the original
+host's video-export protocol; those are statements about the original and are accurate
+as written.
+
+### Resolved 2026-08-17 — device frames
+
+`ios-frame` and `android-frame` were replaced by first-party implementations. They were
+produced under the same split-side procedure as the five files above and against a
+single written specification, `docs/claude/design-rewrite/device-frames-spec.md`, which
+states only what each frame must present and what the host pipeline requires. The
+specification deliberately contains no geometry, colour values, SVG paths or shadow
+recipes: every such value in the resulting files was chosen by its implementer.
+
+Two implementers worked independently, one per frame. Each was given an explicit
+prohibition list — both original frame files, both of their compiled siblings,
+`resources/dc-runtime/three-d-stage.js`, and `docs/claude/claude-design-dc-prompt.md`
+(which embeds complete third-party source) — and was instructed to stop and report if
+any line of them was seen. Both reported no contact, and neither original file showed
+any modification in version control while they worked.
+
+The two frames do not rest on the same basis, and the distinction is recorded here
+deliberately.
+
+**`android-frame`** was built from the publicly documented Material 3 design system.
+No Material Design code or asset was copied. What was used is the system's documented
+colour-role vocabulary (`surface`, `onSurface`, `surfaceVariant`, `secondaryContainer`,
+`primary`, `outline`, and so on), its light/dark role-to-tone mapping, and its published
+component dimensions. The palette values themselves were computed rather than taken:
+the implementer wrote a generator that treats the Material tone number as CIE L\*,
+applies a chroma envelope around a single self-chosen source hue (a teal at Lab 195°,
+not the Material baseline hue), and reduces chroma until each colour falls inside sRGB.
+Attribution to Material 3 is recorded in the file header and here as a matter of
+practice; it is not offered as a licence grant, because no licensed expression was
+taken.
+
+**`ios-frame`** is an independent implementation of a generic modern smartphone
+interface. No Apple design resource, UI kit, or exported asset was consulted. The
+specification describes the affordances a viewer must be able to recognise — a rounded
+bezel-less body, a black pill near the top edge, a status bar carrying a time and
+signal, wireless and battery indicators, an optional large-title navigation area, an
+optional on-screen keyboard, and a home indicator — and every dimension, path and colour
+implementing them was authored for this repository. The default frame size of 402 × 874
+is a device logical resolution, a fact rather than an expression, and is already
+recorded in this repository's own authoring skills.
+
+The predecessor row for `ios-frame` stated that Apple Design Resources terms prohibit
+embedding and derivatives. That statement is about **using Apple's supplied material**,
+and it remains true; it is not a finding that no phone frame may be drawn. The owner of
+this repository was informed of the distinction, and of the residual risk that a
+sufficiently close visual resemblance can be contested independently of how the file was
+produced, and directed that a first-party replica be built. That direction is recorded
+as the basis for this resolution.
+
+Two things present in the originals were deliberately not carried over: the
+third-party tooling header each file began with, and an inert presence probe in a
+third-party attribute namespace that no code in this repository ever read. The
+replacements carry a `data-openpipal-frame` root attribute instead, which the
+end-to-end tests assert.
+
+| File | Independent implementation |
+|---|---|
+| `resources/dc-runtime/ios-frame.jsx` | 663 lines; seven exported components |
+| `resources/dc-runtime/android-frame.jsx` | 515 lines; six exported components |
+| `resources/dc-runtime/ios-frame.compiled.js`, `resources/dc-runtime/android-frame.compiled.js` | generated from the two files above by `scripts/build-dc-runtime-compiled.mjs`; byte-identical on repeated runs, so the relationship is verifiable by anyone rather than asserted |
+
+Verification at the time of this entry: 1685 unit tests, both TypeScript projects, and
+17 of 17 `dc-render` end-to-end tests pass, including the two that render each frame
+through the real preview pipeline. The corresponding policy entries are
+`keep-self-written-design-runtime` (which now also covers these four files) and
+`review-self-written-device-frames-delta` (the build script).
+
+This resolution covers only the two device frames. `three-d-stage` remains original
+material, and no finding is made about any skill directory.
+
+### Resolved 2026-08-17 — three-d-stage, and the end of the DC Runtime row
+
+`resources/dc-runtime/three-d-stage.js` was the last original third-party file in the DC
+Runtime. It has been replaced by a first-party implementation, and the runtime row above is
+therefore gone rather than narrowed: every file under `resources/dc-runtime/` is now either
+first-party or a vendored dependency recorded elsewhere in this document.
+
+This replacement differs from the seven before it in one respect that is recorded here
+deliberately: **three.js itself is kept.** It is MIT, and it is not vendored — the page loads
+it from a CDN through an import map pinned to one version with Subresource Integrity hashes.
+Referencing an open-source library under its own licence raises no attribution question. What
+was replaced is only the shell around it: the custom element that turns an author-supplied
+`THREE.Object3D` into a lit, framed, orbitable, downloadable stage.
+
+The work followed the same split-side procedure as the earlier replacements, against
+`docs/claude/design-rewrite/three-d-stage-spec.md`. The implementer was given an explicit
+prohibition list — the original file and `docs/claude/claude-design-dc-prompt.md` — reported no
+contact, and the original showed no modification in version control while they worked. The
+lighting rig, framing algorithm, shadow approach and toolbar are all their own; the
+specification deliberately contained no values. For the export formats and the r184 shadow API
+they read three.js's own MIT sources, which is the source the specification pointed at.
+
+| File | Independent implementation |
+|---|---|
+| `resources/dc-runtime/three-d-stage.js` | 816 lines, replacing a third-party original |
+
+Two things were deliberately not carried over: the third-party tooling header, and an export
+notification message in a third-party namespace that no code in this repository consumed. With
+that message gone, the earlier codename appears nowhere in this repository's code or resources —
+only in this document's record of the rename.
+
+The corresponding policy entry is `keep-self-written-design-runtime`, which now covers this file
+too; `replace-design-runtime-material` retains only paths that were deleted from the tree but
+exist in the reviewed baseline.
+
+### Resolved 2026-08-17 — the sixteen design skills
+
+The row above covering `resources/skills/*` was written on 2026-08-14, when every design skill
+was third-party material. The owner confirmed that all fifteen derived skills came from the same
+original. They have now been rewritten, and the row is narrowed to the two curriculum skills,
+which belong to the teaching role and were never part of the design capability.
+
+The rewrite did not edit the originals into new wording. It changed the source of truth:
+
+> The only source for a skill is this repository's own runtime code and the host code that
+> consumes it. Neither the original nor the previous wording is consulted.
+
+That single rule resolves two problems at once. Authorship: a description of our own code is our
+own work. Coverage: the earlier skills described the capabilities of the original's host at some
+point in time, so everything this runtime grew afterwards was invisible to them — an audit found
+134 such gaps, of which 98 were capabilities no skill mentioned at all. Writing from the code
+closes both. The procedure is recorded in
+`docs/claude/design-rewrite/skill-rewrite-contract.md`; its hard rules require every technical
+assertion to be traceable to a line of code, forbid teaching anything absent from the runtime,
+and require two sections that no earlier skill had — what the runtime already does for the
+author, and which constraints fail silently.
+
+| Skill | Before | After |
+|---|---|---|
+| `dc-authoring` | 145 | 470 |
+| `animation-basics` | 321 | 578 |
+| `design-system-authoring` | 152 | 386 |
+| `interactive-prototype` | 31 | 361 |
+| `design-tokens` | 113 | 325 |
+| `doc-design` | 198 | 308 |
+| `deck-stage` | 62 | 268 |
+| `three-d-object` | 69 | 268 |
+| `html-email` | 30 | 221 |
+| `hi-fi-design` | 49 | 212 |
+| `flier` | 71 | 189 |
+| `trifold-brochure` | 40 | 172 |
+| `wireframe` | 14 | 146 |
+| `web-research` | 28 | 132 |
+| **Total** | **1323** | **4036** |
+
+`resources/skills/frontend-design/` is not in that table. It is the owner's own work and was
+never derived; it needed no rewrite.
+
+Two files were deleted rather than rewritten. `resources/skills/prototype-tweaks/` taught a
+pattern this host rejects outright — its template is full-page HTML, which `create_artifact`
+refuses; its styling approach contradicts the foundation skill's rules; and its persistence call
+throws in the preview's sandbox. `resources/skills/deck-stage/starter.html` was a copy of the
+original's hand-rolled slide engine, which the skill itself had already declared obsolete and
+whose output cannot pass the PPTX classifier. Both removals were propagated to their four
+registration points.
+
+Verification at the time of this entry: 1693 unit tests, both TypeScript projects, 112 browser
+contracts and the end-to-end suite pass. Beyond the automated checks, six runs against the real
+application and real models produced deliverables that were inspected by hand — a slide deck, a
+printable A4 document, two animations with exported video, and a phone prototype. The
+capabilities these rewrites newly documented were used without being asked for.
+
+No finding is made here about `resources/skills-legacy/**`, the two curriculum skills, or the
+prompt archives; those rows stand.
 
 ## Before any public release
 

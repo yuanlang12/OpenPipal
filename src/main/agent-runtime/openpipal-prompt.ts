@@ -17,4 +17,4 @@ export function buildOpenPipalSystemPrompt(
   return prepared.render(buildSkillPromptSection(prepared.skillContext))
 }
 
-export { buildOpenPipalRuntimeContext, resolveOpenPipalWorkingDirectory }
+export { buildOpenPipalRuntimeContext, prepareOpenPipalSystemPrompt, resolveOpenPipalWorkingDirectory }

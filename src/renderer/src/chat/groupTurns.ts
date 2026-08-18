@@ -183,7 +183,7 @@ export function groupTurns(messages: ChatMessage[], opts: GroupTurnsOptions = {}
 
   messages.forEach((msg, idx) => {
     const kind = getMessageKind(msg)
-    if (kind === 'task-trigger') return
+    if (kind === 'task-trigger' || kind === 'runtime-context') return
 
     if (kind === 'user') {
       if (current) rawTurns.push(current)

@@ -220,6 +220,16 @@ export interface PdfExportResult {
 }
 
 /**
+ * doc-page 的 size 枚举 → Chromium 纸张名。与 doc-page.js 的 PAPERS 表同源（letter/legal/a4），
+ * 那边加纸张这边要一起加，否则新纸张在连续流模式下悄悄落回信纸。
+ */
+const PAGE_SIZE_BY_DOC_PAGE: Record<string, 'A4' | 'Legal' | 'Letter'> = {
+  letter: 'Letter',
+  legal: 'Legal',
+  a4: 'A4'
+}
+
+/**
  * PDF 直出（W3 条款3）：复用 render_artifact 的隐藏窗口装配（inlineDcForHeadless + data:URL），
  * 用 Chromium printToPDF 落 ~/.openpipal/outputs/<安全化标题>.pdf。用户侧分享动作，不是 pi-tool。
  *
@@ -247,7 +257,31 @@ export async function exportArtifactPdf(title: string, content: string, targetDi
           `new Promise(function(resolve){var done=false;var fin=function(){if(done)return;done=true;resolve(true)};var t=setTimeout(fin,3000);var raf=function(){requestAnimationFrame(function(){requestAnimationFrame(function(){clearTimeout(t);fin()})})};if(document.fonts&&document.fonts.ready){document.fonts.ready.then(raf)}else{raf()}})`
         )
         .catch(() => {})
-      pdfBuf = await win.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true })
+      // 纸张兜底：doc-page 在连续流模式下**不往 @page 写 size**（设计上把纸张交给打印引擎决定，
+      // 见 doc-page.js 的 pinned 判定）。人手动点打印时那是对的——但这里是无头导出，没有那个
+      // "用户"，Chromium 于是回落到自己的默认 Letter：作者写了 size="a4" 也拿到信纸，全程不报错。
+      //
+      // 判据直接读运行时**真正注入的那条 @page**，而不是在这里把它的模式判定重算一遍——同一件事
+      // 两处实现迟早漂移（本仓在"两处正则漂移"上出过事故）。规则里已有 size，说明是固定页/贴合
+      // 模式或作者显式给了 width+height，preferCSSPageSize 会让 CSS 赢，我们不插手；没有 size
+      // 才轮到这个兜底值。非 doc-page 产物（画板稿等）同样拿 null，行为与本次改动前逐字节一致。
+      const paper: { size: string; landscape: boolean } | null = await win.webContents
+        .executeJavaScript(
+          `(function(){` +
+            `var s=document.querySelector('style[data-doc-page="page"]');` +
+            `if(!s||/size\\s*:/.test(s.textContent||''))return null;` +
+            `var el=document.querySelector('doc-page');if(!el)return null;` +
+            `return {size:String(el.getAttribute('size')||'').toLowerCase().trim(),` +
+            `landscape:/landscape/i.test(el.getAttribute('orientation')||'')};` +
+            `})()`
+        )
+        .catch(() => null)
+      pdfBuf = await win.webContents.printToPDF({
+        printBackground: true,
+        preferCSSPageSize: true,
+        // size 缺省时照 doc-page 自己的默认（letter）走，别让 Chromium 的默认代我们决定
+        ...(paper ? { pageSize: PAGE_SIZE_BY_DOC_PAGE[paper.size] || 'Letter', landscape: paper.landscape } : {})
+      })
     } catch (err: any) {
       error = err?.message || String(err)
     } finally {

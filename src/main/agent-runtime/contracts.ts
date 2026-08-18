@@ -61,6 +61,12 @@ export interface ChatMessage {
   id?: string
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
+  /**
+   * 消息分类标记（task-trigger 隐式触发 / runtime-context 隐藏快照）。
+   * runtime-context：本轮 prompt 附带的易变上下文原文，UI 不渲染，
+   * 转换层原样回放——落盘副本与实发字节一致是前缀缓存命中的前提。
+   */
+  messageKind?: string
   screenshot?: string
   screenshotRef?: string
   images?: string[]

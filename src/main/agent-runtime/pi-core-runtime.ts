@@ -56,7 +56,7 @@ import type {
   OpenPipalAgentRuntime
 } from './contracts'
 import {
-  appendRuntimeContext,
+  buildRuntimeContextMessage,
   convertHistoryToPiMessages,
   runtimeInputToPrompt
 } from './pi-message-conversion'
@@ -73,12 +73,25 @@ import {
   resolveOpenPipalWorkingDirectory
 } from './openpipal-prompt-core'
 import { loadPiCoreSkillCatalog } from './pi-core-skills'
+import {
+  buildContextUsageSegments,
+  estimateTextTokens,
+  estimateToolTokens,
+  isMcpToolName
+} from '../context-usage-stats'
 
 const MODEL_STALL_TIMEOUT_MS = resolveModelStallTimeoutMs(process.env.OPENPIPAL_STALL_TIMEOUT_MS)
 
 interface PromptInput {
   text: string
   images?: ImageContent[]
+  /**
+   * 首条用户消息后追加的易变事实（时间/前台应用/产物清单）。作为独立 user 消息
+   * 发送而不是拼进用户消息——prompt cache 按字节前缀匹配，拼接会让下一轮重放在
+   * 该消息处失配、整轮工具流量 miss。只有本轮首条 prompt 携带；continuation 与
+   * 空完成重试是内部脚手架，不带。
+   */
+  runtimeContext?: string
 }
 
 interface AgentBundle {
@@ -369,6 +382,13 @@ async function* runPiCoreAgentChat(
     disabledTools: workspace.disabledTools,
     mcpServers: workspace.mcpServers
   })
+  // 用量卡分区：组装期各估算一次，与 legacy 同口径（context-usage-stats.ts）
+  const segmentEstimate = {
+    systemPromptTokens: estimateTextTokens(systemPrompt),
+    skillTokens: estimateTextTokens(skillCatalog.promptSection),
+    builtinToolTokens: estimateToolTokens(builtTools.tools.filter((t: any) => !isMcpToolName(t.name))),
+    mcpToolTokens: estimateToolTokens(builtTools.tools.filter((t: any) => isMcpToolName(t.name)))
+  }
   let recordStreamBoundary: (phase: StreamBoundaryPhase, attempt: number) => void = () => {}
   const models = createOpenPipalPiCoreModels(model, modelConfig, {
     onStreamBoundary: (phase, attempt) => recordStreamBoundary(phase, attempt)
@@ -598,7 +618,8 @@ async function* runPiCoreAgentChat(
                 kind: 'call', conv: conversationShort, model: modelConfig.model, seq: usage.calls,
                 input, cacheRead, cacheWrite, output, prompt: promptTokens, hit,
                 trailTok: trailMeasure.tokens, trailMsgs: trailMeasure.count,
-                histMsgs: historyForModel.length, compacted: historyCompacted
+                histMsgs: historyForModel.length, compacted: historyCompacted,
+                cost: (message.usage as any)?.cost?.total || 0
               })
               const warmContext = usage.calls > 1 || prefix.length > 0
               if (warmContext && promptTokens > 8000 && hit < 50) {
@@ -609,7 +630,9 @@ async function* runPiCoreAgentChat(
                 promptTokens,
                 contextWindow: usageContextWindow,
                 budget: usageBudget,
-                compacted: historyCompacted
+                compacted: historyCompacted,
+                usage: { input, cacheRead, cacheWrite },
+                segments: buildContextUsageSegments({ promptTokens, ...segmentEstimate })
               })
             }
           }
@@ -641,12 +664,11 @@ async function* runPiCoreAgentChat(
     }
   }
 
-  const seedMessages = (projection: ChatMessage[]): AgentMessage[] => {
-    const messages = convertHistoryToPiMessages(projection, overrides?.conversationId)
-    const current = messages[messages.length - 1]
-    if (current && runtimeContext) appendRuntimeContext(current, runtimeContext)
-    return messages
-  }
+  const seedMessages = (projection: ChatMessage[]): AgentMessage[] =>
+    convertHistoryToPiMessages(projection, overrides?.conversationId)
+
+  const withRuntimeContext = (prompt: PromptInput): PromptInput =>
+    runtimeContext ? { ...prompt, runtimeContext } : prompt
 
   const runPrompt = async (bundle: AgentBundle, prompt: PromptInput): Promise<AssistantMessage> => {
     // Each Agent.prompt is a distinct OpenPipal phase. Adapter streaming/fallback
@@ -676,7 +698,18 @@ async function* runPiCoreAgentChat(
     currentWatchdog.arm()
     const messageStart = bundle.agent.state.messages.length
     turnActive = true
-    const task = bundle.agent.prompt(prompt.text, prompt.images)
+    // 带 runtimeContext 时逐字节复刻 Agent.normalizePromptInput(text, images) 的
+    // 形状，再追加独立上下文消息——保证与不带上下文路径的序列化字节完全一致。
+    const task = prompt.runtimeContext
+      ? bundle.agent.prompt([
+          {
+            role: 'user',
+            content: [{ type: 'text', text: prompt.text }, ...(prompt.images ?? [])],
+            timestamp: Date.now()
+          } as AgentMessage,
+          buildRuntimeContextMessage(prompt.runtimeContext)
+        ])
+      : bundle.agent.prompt(prompt.text, prompt.images)
     let reply: AssistantMessage | undefined
     try {
       await runningHandleController.flushPendingToAgent(bundle.agent)
@@ -831,6 +864,9 @@ async function* runPiCoreAgentChat(
       let bundle = await createBundle(seedMessages(historyForModel))
       activeBundle = bundle
 
+      // 快照原文广播一次：渲染层据此落盘隐藏 runtime-context 消息，下轮回放字节一致
+      if (runtimeContext) eventQueue.push({ type: 'runtime_context', text: runtimeContext })
+
       // Legacy parity: expose the stable handle after construction even when the
       // supplied history has no executable final user message.
       onAgentReady?.(runningHandleController.handle)
@@ -840,7 +876,7 @@ async function* runPiCoreAgentChat(
         return
       }
 
-      let reply = await runPrompt(bundle, bundle.prompt)
+      let reply = await runPrompt(bundle, withRuntimeContext(bundle.prompt))
       if (lifecycleSignal.aborted || watchdogTriggered) return
       if (isEmptySuccessfulAssistantMessage(reply) && !lifecycleSignal.aborted) {
         if (isContextOverflowCompletion(reply, usageContextWindow)) {
@@ -877,7 +913,7 @@ async function* runPiCoreAgentChat(
           bundle = await createBundle(seedMessages(compacted))
           activeBundle = bundle
           if (!bundle.prompt) return
-          reply = await runPrompt(bundle, bundle.prompt)
+          reply = await runPrompt(bundle, withRuntimeContext(bundle.prompt))
           if (isEmptySuccessfulAssistantMessage(reply)) {
             eventQueue.push({
               type: 'error',

@@ -76,8 +76,8 @@ function ContextRing({ promptTokens, contextWindow, budget, compacted }: {
   const r = 6
   const c = 2 * Math.PI * r
   const title = t('chat.input.contextUsage', {
-    used: `${(promptTokens / 1000).toFixed(1)}k`,
-    total: `${Math.round(contextWindow / 1000)}k`,
+    used: formatTokens(promptTokens),
+    total: formatTokens(contextWindow),
     budget: `${Math.round(budget / 1000)}k`,
     compacted: compacted ? t('chat.input.compactedSuffix') : '',
   })
@@ -95,6 +95,149 @@ function ContextRing({ promptTokens, contextWindow, budget, compacted }: {
         />
       </svg>
       {compacted && <span data-testid="context-ring-compacted" className="w-2 h-2 rounded-full bg-current opacity-70" />}
+    </div>
+  )
+}
+
+/** 今日按模型用量的 30s 展开级缓存——卡片每次 hover 都拉一遍 8MB 日志没有意义 */
+let todayUsageCache: { at: number; rows: Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }> } | undefined
+
+interface ContextUsageCardProps {
+  usage: {
+    promptTokens: number; contextWindow: number; budget: number; compacted: boolean
+    usage?: { input: number; cacheRead: number; cacheWrite: number }
+    segments?: { systemPrompt: number; skills: number; toolsBuiltin: number; toolsMcp: number; messages: number }
+  }
+  stats?: { input: number; cacheRead: number; cacheWrite: number; calls: number }
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(Math.round(n))
+}
+
+/**
+ * 用量信息卡 —— 圆环 hover 展开。三块：容量+分区占比（估算）、平均缓存命中率（会话累计实报）、
+ * 今日按模型用量（usage-log 聚合，30s 级缓存；BYO-key 形态没有可靠的"余额"接口，用量更有意义）。
+ * 分区是字符口径估算、总量是服务商实报——分区之和可能≠总量，偏差落在"消息"桶里，展示按占比归一。
+ */
+function ContextUsageCard({ usage, stats }: ContextUsageCardProps) {
+  const { t } = useTranslation()
+  const [todayRows, setTodayRows] = useState<Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }> | undefined>(todayUsageCache?.rows)
+
+  useEffect(() => {
+    if (todayUsageCache && Date.now() - todayUsageCache.at < 30_000) return
+    let cancelled = false
+    ;(window.api as any).getTodayUsage?.().then((rows: Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }> | undefined) => {
+      if (cancelled || !Array.isArray(rows)) return
+      todayUsageCache = { at: Date.now(), rows }
+      setTodayRows(rows)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [usage.promptTokens])
+
+  const segs = usage.segments
+  const pct = (v: number): number => (usage.promptTokens > 0 ? (v / usage.promptTokens) * 100 : 0)
+  const hitDenom = (stats?.input || 0) + (stats?.cacheRead || 0) + (stats?.cacheWrite || 0)
+  const hitPct = hitDenom > 0 ? ((stats!.cacheRead / hitDenom) * 100).toFixed(1) : undefined
+  // 最近一次调用的命中率：冷启动（首次 0%）会长期拖低累计平均，两个口径并列展示才不会误读
+  const lastUsage = usage.usage
+  const lastDenom = lastUsage ? lastUsage.input + lastUsage.cacheRead + lastUsage.cacheWrite : 0
+  const lastHitPct = lastDenom > 0 ? ((lastUsage!.cacheRead / lastDenom) * 100).toFixed(1) : undefined
+
+  // 主色系单色深→浅（brand 阶随用户主题派生）：按占用从多到少排列，最大者最深、依次变浅
+  const BRAND_SHADES = ['bg-brand-700', 'bg-brand-600', 'bg-brand-500', 'bg-brand-400', 'bg-brand-300']
+  const sortedSegments = [
+    { key: 'messages', tokens: segs?.messages ?? 0 },
+    { key: 'tools', tokens: segs?.toolsBuiltin ?? 0 },
+    { key: 'mcpTools', tokens: segs?.toolsMcp ?? 0 },
+    { key: 'systemPrompt', tokens: segs?.systemPrompt ?? 0 },
+    { key: 'skills', tokens: segs?.skills ?? 0 }
+  ]
+    .filter(s => s.tokens > 0)
+    .sort((a, b) => b.tokens - a.tokens)
+    .map((s, i) => ({ ...s, color: BRAND_SHADES[Math.min(i, BRAND_SHADES.length - 1)] }))
+  const remainingTokens = Math.max(0, usage.contextWindow - usage.promptTokens)
+  const windowPct = (v: number): number => (usage.contextWindow > 0 ? (v / usage.contextWindow) * 100 : 0)
+
+  return (
+    <div data-testid="context-usage-card" className="op-menu absolute bottom-full right-0 mb-2 w-72 p-3 text-xs z-50 text-left">
+      <div data-testid="context-usage-card-title" className="flex items-center justify-between font-medium mb-2">
+        <span>{t('chat.input.contextCard.title', { used: formatTokens(usage.promptTokens), total: formatTokens(usage.contextWindow) })}</span>
+        <span className="opacity-60">{usage.contextWindow > 0 ? Math.round((usage.promptTokens / usage.contextWindow) * 100) : 0}%</span>
+      </div>
+
+      {/* 总进度条以整个窗口为分母：主色段按占用占比填充，浅色轨道即剩余空间 */}
+      <div data-testid="context-usage-segments" className="flex h-1.5 rounded-full overflow-hidden mb-2 bg-black/10 dark:bg-white/10">
+        {sortedSegments.map(s => (
+          <div key={s.key} className={s.color} style={{ width: `${windowPct(s.tokens)}%` }} />
+        ))}
+      </div>
+      {/* 分区明细：占用从多到少、主色从深到浅；末行给出剩余空间 */}
+      <div className="flex flex-col gap-1 mb-2">
+        {sortedSegments.map(s => (
+          <div key={s.key} data-testid={`context-usage-segment-${s.key}`} className="flex items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1.5 min-w-0">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.color}`} />
+              <span className="truncate">{t(`chat.input.contextCard.seg.${s.key}`)}</span>
+            </span>
+            <span className="opacity-70 shrink-0 tabular-nums">
+              {Math.round(pct(s.tokens))}%
+            </span>
+          </div>
+        ))}
+        <div data-testid="context-usage-segment-remaining" className="flex items-center justify-between gap-2 opacity-60">
+          <span className="inline-flex items-center gap-1.5 min-w-0">
+            <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-black/15 dark:bg-white/15" />
+            <span className="truncate">{t('chat.input.contextCard.seg.remaining')}</span>
+          </span>
+          <span className="shrink-0 tabular-nums">
+            {Math.round(windowPct(remainingTokens))}%
+          </span>
+        </div>
+      </div>
+
+      <div className="border-t border-black/5 dark:border-white/10 pt-2 mb-2 flex items-center justify-between">
+        <span className="opacity-70">{t('chat.input.contextCard.hitRate')}</span>
+        <span data-testid="context-usage-hit" className="font-medium">
+          {hitPct === undefined ? '—' : (
+            <>
+              {t('chat.input.contextCard.hitLast', { pct: lastHitPct ?? '—' })} · {hitPct}%
+            </>
+          )}
+        </span>
+      </div>
+
+      <div className="border-t border-black/5 dark:border-white/10 pt-2">
+        <div className="opacity-70 mb-1">{t('chat.input.contextCard.today')}</div>
+        <div data-testid="context-usage-today" className="flex flex-col gap-0.5">
+          {(todayRows ?? []).slice(0, 5).map(row => (
+            <div key={row.model} data-testid="context-usage-today-row" className="flex items-center justify-between">
+              <span className="truncate max-w-[9rem]">{row.model}</span>
+              <span className="opacity-70 shrink-0">
+                {formatTokens(row.prompt)}{row.cost > 0 ? ` · ¥${row.cost.toFixed(3)}` : ''}
+              </span>
+            </div>
+          ))}
+          {(!todayRows || todayRows.length === 0) && <span className="opacity-50">{t('chat.input.contextCard.todayEmpty')}</span>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 圆环 + hover 信息卡包装。卡片自身只随 usage 事件重渲染（每次 LLM 调用一次），不在渲染帧上算东西 */
+function ContextUsageIndicator({ usage, stats }: ContextUsageCardProps) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div
+      className="relative shrink-0"
+      data-testid="context-usage-indicator"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <ContextRing {...usage} />
+      {open && <ContextUsageCard usage={usage} stats={stats} />}
     </div>
   )
 }
@@ -131,6 +274,7 @@ export function InputBar({
   const removePendingAnnotation = useChatStore(s => s.removePendingAnnotation)
   const clearPendingAnnotations = useChatStore(s => s.clearPendingAnnotations)
   const contextUsage = useChatStore(s => s.activeConversationId ? s.contextUsage[s.activeConversationId] : undefined)
+  const contextStats = useChatStore(s => s.activeConversationId ? s.contextStats[s.activeConversationId] : undefined)
   const roleName = currentRole?.name || 'learner'
   const onSend = useCallback((content: string, images?: string[], fileAttachments?: FileAttachmentData[]) =>
     sendMessage(content, roleName, images, fileAttachments), [sendMessage, roleName])
@@ -635,8 +779,8 @@ export function InputBar({
             />
           )}
 
-          {/* 上下文用量圆环 —— 无数据(会话还没发过消息)时不渲染 */}
-          {contextUsage && <ContextRing {...contextUsage} />}
+          {/* 上下文用量圆环 + hover 信息卡 —— 无数据(会话还没发过消息)时不渲染 */}
+          {contextUsage && <ContextUsageIndicator usage={contextUsage} stats={contextStats} />}
 
           {/* 流式中：左 Stop（放弃当前回复）+ 右 Send（挂队列）；空闲：仅 Send */}
           {isStreaming && (

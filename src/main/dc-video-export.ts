@@ -2,8 +2,8 @@
  * DC 动画导出 MP4 —— 确定性逐帧导出（不做实时录屏）。
  *
  * 核心机制：resources/dc-runtime 的动画运行时（Stage 组件）内置了视频导出协议——画布元素带
- * data-om-exportable-video-with-duration-secs 属性标记可截图元素，并监听
- * 'data-om-seek-to-time-frame' CustomEvent（挂在该元素本身，detail.time 为秒）：收到后
+ * data-openpipal-video-duration-secs 属性标记可截图元素，并监听
+ * 'openpipal:seek-to-time' CustomEvent（挂在该元素本身，detail.time 为秒）：收到后
  * 暂停播放并把播放头精确定位到该时间戳。导出器逐帧 dispatch 这个事件驱动 React 渲染到精确的
  * t=i/fps，再用 CDP Page.captureScreenshot 对该元素做 clip 截图（只截画布本身，不含底部
  * 播放条/黑色 letterbox），彻底避开 capturePage() 截整个隐藏窗口带来的播放条+黑边问题。
@@ -23,7 +23,7 @@
  * 装配复用 dc-export.ts 的 assembleOfflineDc（headless 内联 + React vendor 内联，断网可开，
  * 杜绝 unpkg CDN 的网络不确定性）。
  *
- * 时长同样以 DOM 为唯一真值：画布元素的 data-om-exportable-video-with-duration-secs 属性
+ * 时长同样以 DOM 为唯一真值：画布元素的 data-openpipal-video-duration-secs 属性
  * 是引擎已经解析好的真实秒数（哪怕源码写的是 duration={DURATION} 变量引用，也已经被引擎求值成
  * 具体数字写在这里）——不再靠源码正则猜 duration={N}/"N"/:N（猜不到变量引用，会静默落错误兜底）。
  * opts.durationSec 变成可选、仅用于向后兼容显式截取场景（如自动化冒烟测试固定跑 N 秒）；不传时
@@ -83,7 +83,7 @@ function parseStageSize(content: string): { width: number; height: number } {
  * foreignObject 那套（字体不继承、尺寸怪癖）在"对活页面做像素捕获"的路线上零收益。
  * 属性名不动（协议标识符照搬），所以旧产物里的 svg 画布同样命中这条选择器。
  */
-export const CANVAS_SELECTOR = "document.querySelector('[data-om-exportable-video-with-duration-secs]')"
+export const CANVAS_SELECTOR = "document.querySelector('[data-openpipal-video-duration-secs]')"
 
 /** 轮询等导出目标画布出现（引擎 React 挂载完成的标志），超时报中文错误。 */
 export async function waitForCanvasReady(dbg: Electron.Debugger, timeoutMs: number): Promise<void> {
@@ -91,9 +91,9 @@ export async function waitForCanvasReady(dbg: Electron.Debugger, timeoutMs: numb
   if (!ready) throw new Error(tMain('artifacts.shell.export.errors.canvasNotReady'))
 }
 
-/** 轮询等引擎置位字体就绪（data-om-fonts-inlined）；超时不阻塞，直接放行继续导出。 */
+/** 轮询等引擎置位字体就绪（data-openpipal-fonts-ready）；超时不阻塞，直接放行继续导出。 */
 export async function waitForFontsInlined(dbg: Electron.Debugger, timeoutMs: number): Promise<void> {
-  await pollUntil(dbg, `!!(${CANVAS_SELECTOR}?.getAttribute('data-om-fonts-inlined'))`, timeoutMs)
+  await pollUntil(dbg, `!!(${CANVAS_SELECTOR}?.getAttribute('data-openpipal-fonts-ready'))`, timeoutMs)
 }
 
 /**
@@ -114,7 +114,7 @@ export async function readDomStageSize(dbg: Electron.Debugger): Promise<{ width:
 }
 
 /**
- * 视频时长的唯一来源：画布元素上 data-om-exportable-video-with-duration-secs 属性——引擎
+ * 视频时长的唯一来源：画布元素上 data-openpipal-video-duration-secs 属性——引擎
  * （Stage 组件）已经把 duration prop 解析成具体秒数字符串写在这里，哪怕源码写的是
  * duration={DURATION} 变量引用也已被引擎求值，比源码正则猜测可靠。允许小数秒（不 round——时长
  * 语义是精确截取到某个时间点，不是取整）。读不到或非正数一律返回 null。
@@ -122,7 +122,7 @@ export async function readDomStageSize(dbg: Electron.Debugger): Promise<{ width:
 export async function readDomDurationSec(dbg: Electron.Debugger): Promise<number | null> {
   const raw = await evalChecked(
     dbg,
-    `(() => { const el = ${CANVAS_SELECTOR}; return el ? el.getAttribute('data-om-exportable-video-with-duration-secs') : null; })()`
+    `(() => { const el = ${CANVAS_SELECTOR}; return el ? el.getAttribute('data-openpipal-video-duration-secs') : null; })()`
   )
   if (raw == null) return null
   const n = parseFloat(raw)
@@ -301,7 +301,7 @@ export async function exportArtifactMp4(
           try {
             const el = ${CANVAS_SELECTOR};
             if (!el) { reject(new Error('canvas missing')); return; }
-            el.dispatchEvent(new CustomEvent('data-om-seek-to-time-frame', { detail: { time: ${t} } }));
+            el.dispatchEvent(new CustomEvent('openpipal:seek-to-time', { detail: { time: ${t} } }));
             requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
           } catch (e) { reject(e); }
         }))()`,

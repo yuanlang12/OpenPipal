@@ -53,4 +53,27 @@ export type AgentEvent =
   | { type: 'permission_request'; requestId: string; tool: string; args: Record<string, any>; risk: string; reason: string }
   | { type: 'error'; content: string }
   | { type: 'goal_update'; goal: ConversationGoal }
-  | { type: 'context_usage'; promptTokens: number; contextWindow: number; budget: number; compacted: boolean }
+  /**
+   * 本轮 prompt 附带的 runtime-context 快照（时间/前台应用/产物清单）原文。
+   * 渲染层把它作为 messageKind='runtime-context' 的隐藏消息存进会话：
+   * 下一轮回放时字节与实发一致，前缀缓存才能连着整轮工具流量一起命中。
+   * 消息位置紧跟本轮用户消息；regenerate 重跑时由渲染层替换旧快照。
+   */
+  | { type: 'runtime_context'; text: string }
+  | {
+      type: 'context_usage'
+      promptTokens: number
+      contextWindow: number
+      budget: number
+      compacted: boolean
+      /** 本次调用实报用量（input+cacheRead+cacheWrite = promptTokens），渲染层据此累计命中率 */
+      usage?: { input: number; cacheRead: number; cacheWrite: number }
+      /** 载荷分区估算（字符口径）：system+skills+tools 是组装期一次估算，messages=promptTokens-其余 */
+      segments?: {
+        systemPrompt: number
+        skills: number
+        toolsBuiltin: number
+        toolsMcp: number
+        messages: number
+      }
+    }

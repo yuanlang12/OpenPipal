@@ -204,7 +204,8 @@ export function installWebApiShim(): void {
         case 'questions_v2': emit('questions-v2', cid, data.title, data.questions); break
         case 'questions_v2_delta': emit('questions-v2-delta', cid, data); break
         // 上下文用量圆环——浏览器端事件已到位，UI 先不接（桌面端优先）
-        case 'context_usage': emit('context-usage', cid, { promptTokens: data.promptTokens, contextWindow: data.contextWindow, budget: data.budget, compacted: data.compacted }); break
+        case 'context_usage': emit('context-usage', cid, { promptTokens: data.promptTokens, contextWindow: data.contextWindow, budget: data.budget, compacted: data.compacted, usage: data.usage, segments: data.segments }); break
+        case 'runtime_context': emit('runtime-context', cid, data.text); break
         // 浏览器写操作的权限确认气泡(与桌面 IPC permission:inline-request 对齐)。
         // data.request 即完整 PermissionRequestData(含 conversationId)。
         case 'permission': emit('permission-request-inline', data.request); break
@@ -362,6 +363,8 @@ export function installWebApiShim(): void {
     onQuestionsV2: (cb: Callback) => on('questions-v2', cb),
     onQuestionsV2Delta: (cb: Callback) => on('questions-v2-delta', cb),
     onContextUsage: (cb: Callback) => on('context-usage', cb),
+    onRuntimeContext: (cb: Callback) => on('runtime-context', cb),
+    getTodayUsage: async () => [],
 
     // 内联权限确认(浏览器写操作)。收:SSE 的 permission 事件 → 渲染层弹气泡;
     // 发:用户点允许/拒绝 → POST /api/permission,落到桌面同一个 resolver。

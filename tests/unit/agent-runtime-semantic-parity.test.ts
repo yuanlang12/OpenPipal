@@ -93,7 +93,15 @@ vi.mock('../../src/main/goal-checker', () => ({
 
 vi.mock('../../src/main/agent-runtime/openpipal-prompt', () => ({
   buildOpenPipalRuntimeContext: () => '',
-  buildOpenPipalSystemPrompt: () => 'system'
+  buildOpenPipalSystemPrompt: () => 'system',
+  prepareOpenPipalSystemPrompt: () => ({
+    skillContext: {},
+    render: () => 'system'
+  })
+}))
+
+vi.mock('../../src/main/skill-manager', () => ({
+  buildSkillPromptSection: () => ''
 }))
 
 vi.mock('../../src/main/agent-runtime/openpipal-prompt-core', () => ({

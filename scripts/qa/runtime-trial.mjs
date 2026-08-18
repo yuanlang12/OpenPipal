@@ -17,7 +17,7 @@
  */
 import { _electron as electron } from 'playwright'
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -28,6 +28,8 @@ function parseArgs(argv) {
     if (a === '--keep-home') { out.keepHome = true; continue }
     if (a === '--save-as-agent') { out.saveAsAgent = true; continue }
     if (a === '--accept-any-completion') { out.acceptAnyCompletion = true; continue }
+    if (a === '--list-presets') { out.listPresets = true; continue }
+    if (a === '--capture-artifacts') { out.captureArtifacts = true; continue }
     const v = argv[++i]
     if (a === '--role') out.role = v
     else if (a === '--runtime') out.runtime = v
@@ -37,6 +39,7 @@ function parseArgs(argv) {
     else if (a === '--timeout') out.timeout = Number(v)
     else throw new Error(`unknown argument: ${a}`)
   }
+  if (out.listPresets) return out
   if (!out.preset) throw new Error('--preset is required')
   if (!out.marker) throw new Error('--marker is required')
   if (!['pi-core', 'legacy', 'default'].includes(out.runtime)) throw new Error('--runtime must be pi-core, legacy or default')
@@ -87,7 +90,68 @@ async function readPersistedConversation(home) {
   return { fileCount: 1, messages: (conv.messages || []).map(m => ({ role: m.role, kind: m.messageKind, len: (m.content || '').length })) }
 }
 
+/**
+ * 列出可用预设的 id / 名字 / 模型——**只印这三样，绝不印 apiKey 或 baseUrl**。
+ * 存在的理由：`~/.openpipal/config.json` 是凭据文件，跑样本的人（含 AI）不该、也不能直接读它，
+ * 但选哪个预设是跑样本的前置条件。让脚本代读并只吐非敏感字段，是唯一不需要人肉转述的路。
+ */
+async function listPresets() {
+  const real = JSON.parse(await readFile(join(homedir(), '.openpipal', 'config.json'), 'utf8'))
+  const providers = new Map((real.modelProviders || []).map((p) => [p.id, p.provider]))
+  return {
+    activePresetId: real.activePresetId || null,
+    presets: (real.modelPresets || []).map((p) => ({
+      id: p.id,
+      name: p.name || null,
+      provider: providers.get(p.providerId) || null,
+      model: (p.config && p.config.model) || null
+    }))
+  }
+}
+
+/**
+ * 逐份列出这轮真的产出了什么：产物文件、自检截图、导出物。
+ * 设计技能的验收判据是"新教的能力有没有被真的用上、观感成不成立"，两者都要落到**看得见的文件**上——
+ * 只看助手最后那段话没有意义，模型说自己做完了和它真做出来了是两回事。
+ */
+function captureArtifacts(home) {
+  const root = join(home, '.openpipal')
+  const out = { artifacts: [], selfCheckShots: [], outputs: [] }
+  const artRoot = join(root, 'conversations', 'artifacts')
+  if (existsSync(artRoot)) {
+    for (const conv of readdirSync(artRoot)) {
+      const dir = join(artRoot, conv)
+      if (!statSync(dir).isDirectory()) continue
+      for (const f of readdirSync(dir)) {
+        const p = join(dir, f)
+        if (statSync(p).isFile()) out.artifacts.push({ path: p, bytes: statSync(p).size })
+      }
+    }
+  }
+  const shotDir = join(root, 'outputs', '.self-check')
+  if (existsSync(shotDir)) {
+    for (const f of readdirSync(shotDir)) {
+      const p = join(shotDir, f)
+      if (statSync(p).isFile()) out.selfCheckShots.push({ path: p, bytes: statSync(p).size })
+    }
+  }
+  const outDir = join(root, 'outputs')
+  if (existsSync(outDir)) {
+    for (const f of readdirSync(outDir)) {
+      const p = join(outDir, f)
+      if (statSync(p).isFile()) out.outputs.push({ path: p, bytes: statSync(p).size })
+    }
+  }
+  return out
+}
+
 const args = parseArgs(process.argv.slice(2))
+
+if (args.listPresets) {
+  console.log(JSON.stringify(await listPresets(), null, 2))
+  process.exit(0)
+}
+
 const prompt = args.prompt || `Reply with exactly this marker and nothing else: ${args.marker}`
 const { home, model } = await buildIsolatedHome(args.preset, args.role)
 const startedAt = Date.now()
@@ -165,6 +229,8 @@ try {
 
 result.phases = (await readRuntimePhases(home)).map(p => ({ runtime: p.runtime, phase: p.phase, at: p.elapsedMs, firstModelEvent: p.firstModelEvent, outcome: p.outcome, attempt: p.attempt }))
 result.conversation = await readPersistedConversation(home)
+// 产物清单要在删 home 之前取；带 --capture-artifacts 时通常同时带 --keep-home，否则拿到路径也读不到文件
+if (args.captureArtifacts) result.produced = captureArtifacts(home)
 result.verdict = result.timedOut ? 'NO_TERMINAL_RESULT'
   : result.matchedMarker ? 'COMPLETED_WITH_MARKER'
   : 'COMPLETED_WITHOUT_MARKER'

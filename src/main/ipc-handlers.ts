@@ -13,6 +13,7 @@ import {
   updateConversationConfig, setTitleUpdateCallback, StoredMessage
 } from './conversation-store'
 import type { ConversationConfig } from './conversation-store'
+import { readTodayUsageByModel } from './usage-log'
 import { saveConversationAttachment, loadConversationAttachment, type AttachmentKind } from './attachment-store'
 import type { ConversationGoal } from './goal-checker'
 import {
@@ -192,6 +193,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle('locale:get-state', () => getLocaleState())
   ipcMain.handle('locale:set-preference', (_event, preference: unknown) =>
     updateLocalePreference(preference))
+
+  // 用量信息卡"今日用量"分区：卡片展开时拉一次，聚合只在读侧做（见 usage-log.ts）
+  ipcMain.handle('usage:get-today', () => readTodayUsageByModel())
 
   // Renderer transcript persistence barrier protocol. Readiness keeps older
   // renderers and lightweight Electron mocks compatible; acknowledgements are
@@ -424,8 +428,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
               promptTokens: event.promptTokens,
               contextWindow: event.contextWindow,
               budget: event.budget,
-              compacted: event.compacted
+              compacted: event.compacted,
+              usage: event.usage,
+              segments: event.segments
             })
+            break
+          case 'runtime_context':
+            // 快照原文 → 渲染层落盘隐藏 runtime-context 消息（下轮回放字节一致，缓存前缀才稳）
+            mainWindow.webContents.send('runtime-context', cid, event.text)
             break
         }
       }

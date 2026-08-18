@@ -120,6 +120,12 @@ result would change the candidate being tested.
 
 Set up the evidence ledger before running a gate:
 
+> `OPENPIPAL_CANDIDATE` below is the **private** commit under test — that is what gates A
+> through E measure. Gate F-00 is the exception: the open-source policy verifier takes the
+> commit of the **cut public tree**, not this one. Passing this variable to it produces a
+> guaranteed, meaningless failure. See "What the candidate commit is, and how to build one"
+> in [`open-source-readiness.md`](open-source-readiness.md).
+
 ```sh
 export OPENPIPAL_CANDIDATE="$(git rev-parse HEAD)"
 export OPENPIPAL_EVIDENCE_ROOT="/absolute/private/path/openpipal-release-evidence/$OPENPIPAL_CANDIDATE"
@@ -539,8 +545,11 @@ run_candidate_policy_gate() {
   mkdir -p "$OPENPIPAL_F00_DIR"
   OPENPIPAL_F00_STARTED="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
+  # 注意：这里要的是**裁剪出来的公开树**的提交，不是 $OPENPIPAL_CANDIDATE（私仓那个）。
+  # 构建步骤见 open-source-readiness.md 的「What the candidate commit is」。
   if npm run --silent open-source:verify-candidate -- \
-    --commit "$OPENPIPAL_CANDIDATE" \
+    --repo "$OPENPIPAL_PUBLIC_CANDIDATE_REPO" \
+    --commit "$OPENPIPAL_PUBLIC_CANDIDATE" \
     > "$OPENPIPAL_F00_DIR/report.json" \
     2> "$OPENPIPAL_F00_DIR/stderr.log"; then
     OPENPIPAL_F00_STATUS=0
@@ -550,7 +559,10 @@ run_candidate_policy_gate() {
 
   OPENPIPAL_F00_FINISHED="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   {
-    printf 'candidate=%s\n' "$OPENPIPAL_CANDIDATE"
+    # 两个提交都记：私仓那个是"这份公开树从哪裁出来的"，公开候选那个才是被验的对象
+    printf 'privateCandidate=%s\n' "$OPENPIPAL_CANDIDATE"
+    printf 'publicCandidate=%s\n' "$OPENPIPAL_PUBLIC_CANDIDATE"
+    printf 'publicCandidateRepo=%s\n' "$OPENPIPAL_PUBLIC_CANDIDATE_REPO"
     printf 'startedAt=%s\n' "$OPENPIPAL_F00_STARTED"
     printf 'finishedAt=%s\n' "$OPENPIPAL_F00_FINISHED"
     printf 'exitCode=%s\n' "$OPENPIPAL_F00_STATUS"

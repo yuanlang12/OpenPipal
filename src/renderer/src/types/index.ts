@@ -91,6 +91,7 @@ export type ChatMessageKind =
   | 'voice'
   | 'incomplete'    // 用户 Stop 后保留可见的部分回复，但不作为完整回答回放给模型
   | 'task-trigger'  // 任务触发时的系统内部消息（prompt + event 数据），UI 隐藏
+  | 'runtime-context' // 本轮 prompt 附带的易变上下文快照（时间/前台应用/产物清单），UI 隐藏、AI 回放时原样读取——落盘副本与实发字节一致是前缀缓存命中的前提
   | 'inject-notice' // 消息插队的 turn 边界通知（"已引导对话" / "已加入跟单队列"），左对齐细灰字，不发给 AI
 
 export interface ChatMessage {

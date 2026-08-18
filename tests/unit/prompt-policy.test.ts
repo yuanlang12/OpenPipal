@@ -52,8 +52,11 @@ describe('模型提示词适配层', () => {
 
   it('主对话用会话解析后的模型配置构建最终系统提示词', () => {
     const source = fs.readFileSync(path.resolve('src/main/pi-agent-service.ts'), 'utf8')
+    // 拆开包装拿技能段原文后，策略断言跟着落到 prepare 调用上（stablePrefix + 会话解析的 mc 不变）
     expect(source).toContain(
-      'buildSystemPrompt(source, overrides, { stablePrefix: true, modelConfig: mc })'
+      'prepareOpenPipalSystemPrompt(source, overrides, { stablePrefix: true, modelConfig: mc })'
     )
+    // 与旧包装逐字节一致：render 的入参仍是技能段，产出直接作为系统提示词
+    expect(source).toContain('const systemPrompt = preparedPrompt.render(skillSection)')
   })
 })

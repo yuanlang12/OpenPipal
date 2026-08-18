@@ -15,7 +15,6 @@ const SKILL_DISPLAY_NAME_KEYS: Record<string, string> = {
   'animation-basics': 'chat.fileResult.skillNames.animationBasics',
   'design-tokens': 'chat.fileResult.skillNames.designTokens',
   'design-system-authoring': 'chat.fileResult.skillNames.designSystemAuthoring',
-  'prototype-tweaks': 'chat.fileResult.skillNames.prototypeTweaks',
   'frontend-design': 'chat.fileResult.skillNames.frontendDesign',
   doc: 'chat.fileResult.skillNames.doc',
   slides: 'chat.fileResult.skillNames.slides',

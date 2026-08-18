@@ -217,8 +217,8 @@ export function conversationUploadsDir(conversationId: string): string {
     : ''
 }
 
-// ── 产物 sidecar（*.state.json）读写——官方 image-slot/design-canvas 同款契约 ──
-// 组件在 iframe 里经 window.omelette.writeFile 提交整文件替换、经 fetch 读回；
+// ── 产物 sidecar（*.state.json）读写——image-slot / design-canvas 这类可编辑预制件的持久化契约 ──
+// 组件在 iframe 里经 window.openpipal.writeFile 提交整文件替换、经 fetch 读回；
 // 宿主职责：只放行 *.state.json 基名、落到产物所在会话目录（与 dc.html/uploads 同层）。
 const SIDECAR_NAME_RE = /^[A-Za-z0-9._-]+\.state\.json$/
 // image-slot 把图片按 ≤1200px WebP dataURL 内嵌进 state 本体（单槽 ~150-300KB）——给足余量

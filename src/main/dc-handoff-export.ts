@@ -432,7 +432,7 @@ async function captureAnimationKeyframes(
         try {
           const el = ${CANVAS_SELECTOR};
           if (!el) { reject(new Error('canvas missing')); return; }
-          el.dispatchEvent(new CustomEvent('data-om-seek-to-time-frame', { detail: { time: ${t} } }));
+          el.dispatchEvent(new CustomEvent('openpipal:seek-to-time', { detail: { time: ${t} } }));
           requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
         } catch (e) { reject(e); }
       }))()`,

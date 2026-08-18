@@ -138,6 +138,72 @@ let activeThinkingId: string | null = null
 let thinkUpdateTimer: ReturnType<typeof setTimeout> | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
+/** 载荷分区估算（主进程 context-usage-stats 同口径） */
+export interface ContextUsageSegments {
+  systemPrompt: number
+  skills: number
+  toolsBuiltin: number
+  toolsMcp: number
+  messages: number
+}
+
+/** 主进程 context_usage 事件的载荷（含可选的逐调用实报与分区） */
+export interface ContextUsageEntry {
+  promptTokens: number
+  contextWindow: number
+  budget: number
+  compacted: boolean
+  usage?: { input: number; cacheRead: number; cacheWrite: number }
+  segments?: ContextUsageSegments
+}
+
+/** 会话累计命中统计（信息卡"平均缓存命中率"） */
+export interface ContextCumulativeStats {
+  input: number
+  cacheRead: number
+  cacheWrite: number
+  calls: number
+}
+
+/**
+ * 用量读数随会话落盘（去抖 2s）：context_usage 每次调用都会来，直接写盘会放大 IO；
+ * 2s 合并成每轮一次。合并基线取 conversations 列表里的现行 config（与首轮配置写
+ * 同一模式），写失败静默——纯展示数据不值得打断对话。
+ */
+const contextUsagePersistTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function scheduleContextUsagePersist(
+  cid: string,
+  data: ContextUsageEntry,
+  getStats: () => ContextCumulativeStats | undefined
+): void {
+  const pending = contextUsagePersistTimers.get(cid)
+  if (pending) clearTimeout(pending)
+  contextUsagePersistTimers.set(cid, setTimeout(() => {
+    contextUsagePersistTimers.delete(cid)
+    try {
+      const s = useChatStore.getState()
+      const conv = s.conversations.find(c => c.id === cid)
+      if (!conv) return
+      const stats = getStats()
+      const merged = { ...(conv.config || {}), lastContextUsage: { ...data, stats } }
+      void window.api.updateConversationConfig(cid, merged).then((ok: unknown) => {
+        if (!ok) return
+        // 回种数据源同步刷新：渲染层自己的 conversations 条目也带上 lastContextUsage，
+        // 否则长会话窗口里（不重启、不重载）切换会话时读到的还是旧 config。
+        useChatStore.setState(st => ({
+          conversations: st.conversations.map(c => c.id === cid ? { ...c, config: { ...(c.config || {}), lastContextUsage: { ...data, stats } } } : c)
+        }))
+      }).catch(() => {})
+    } catch { /* 展示数据，写不进就算了 */ }
+  }, 2000))
+}
+
+function clearContextUsagePersistTimers(): void {
+  for (const timer of Array.from(contextUsagePersistTimers.values())) clearTimeout(timer)
+  contextUsagePersistTimers.clear()
+}
+
 // ── autosave 尾部追加水位线 ──
 // persistedCount：当前活跃会话已确认落盘的消息条数（从数组头部计数）。
 // dirty：水位线之前的内容发生了就地变更（而非纯尾部追加）——下次落盘必须走全量 replace。
@@ -633,8 +699,10 @@ interface ChatState {
   /** 静默响应周期:由 task-trigger / 系统观察 等隐式消息触发的 AI 响应,整个思考过程不渲染。
    *  对应反模式 4("AI 不解释自己的存在")——学生看不到"AI 在思考",只看到 AI 是否冒出一句话。 */
   silentResponseCycle: boolean
-  /** 每会话上下文用量(key=conversationId)——输入框圆环用，会话删除时不清理（体量小） */
-  contextUsage: Record<string, { promptTokens: number; contextWindow: number; budget: number; compacted: boolean }>
+  /** 每会话上下文用量(key=conversationId)——输入框圆环/信息卡用；随 lastContextUsage 落盘、打开会话时回种 */
+  contextUsage: Record<string, ContextUsageEntry>
+  /** 每会话累计用量(key=conversationId)——信息卡"平均缓存命中率"用；随 lastContextUsage 落盘、打开会话时回种 */
+  contextStats: Record<string, ContextCumulativeStats>
 }
 
 interface ChatActions {
@@ -992,6 +1060,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
   isThinking: false,
   silentResponseCycle: false,
   contextUsage: {},
+  contextStats: {},
 
   // ---- 对话管理 ----
 
@@ -1183,6 +1252,15 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       // 进入即视为已读：清掉该会话的"完成未读"红点
       const unread = { ...s.unreadDoneConvIds }
       delete unread[id]
+      // 用量圆环回种：本会话在当前窗口还没有读数时，用落盘的 lastContextUsage 直接显示
+      // （打开旧会话即刻见圆环，不必先发消息）。当前窗口已有实时读数则不动。
+      const persistedUsage = (conv?.config as any)?.lastContextUsage as (ContextUsageEntry & { stats?: ContextCumulativeStats }) | undefined
+      const seededUsage = persistedUsage && !s.contextUsage[id]
+        ? { ...s.contextUsage, [id]: persistedUsage }
+        : s.contextUsage
+      const seededStats = persistedUsage?.stats && !s.contextStats[id]
+        ? { ...s.contextStats, [id]: persistedUsage.stats }
+        : s.contextStats
       return {
         activeConversationId: id,
         activeAgentId: conv?.agentId || null,
@@ -1196,6 +1274,8 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
         isThinking: false,
         pendingPermission: null,
         unreadDoneConvIds: unread,
+        contextUsage: seededUsage,
+        contextStats: seededStats,
         conversations: s.conversations.map(c => c.id === id && c.config !== configAfterPendingReconcile
           ? { ...c, config: configAfterPendingReconcile || undefined }
           : c)
@@ -2759,18 +2839,79 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       )
     }
 
-    // 上下文用量圆环——按 conversationId 存最新一次用量，不清理历史条目（体量小）
+    // 上下文用量圆环/信息卡——按 conversationId 存最新一次用量与累计命中统计，不清理历史条目（体量小）
     if ((window.api as any).onContextUsage) {
       cleanups.push(
-        (window.api as any).onContextUsage((cid: string, data: { promptTokens: number; contextWindow: number; budget: number; compacted: boolean }) => {
+        (window.api as any).onContextUsage((cid: string, data: ContextUsageEntry) => {
           if (!cid) return
-          set(s => ({ contextUsage: { ...s.contextUsage, [cid]: data } }))
+          let statsSnapshot: ContextCumulativeStats | undefined
+          set(s => {
+            const prev = s.contextStats[cid] || { input: 0, cacheRead: 0, cacheWrite: 0, calls: 0 }
+            const usage = data.usage || { input: 0, cacheRead: 0, cacheWrite: 0 }
+            const nextStats = {
+              input: prev.input + (usage.input || 0),
+              cacheRead: prev.cacheRead + (usage.cacheRead || 0),
+              cacheWrite: prev.cacheWrite + (usage.cacheWrite || 0),
+              calls: prev.calls + 1
+            }
+            statsSnapshot = nextStats
+            return {
+              contextUsage: { ...s.contextUsage, [cid]: data },
+              contextStats: { ...s.contextStats, [cid]: nextStats }
+            }
+          })
+          // 随会话落盘（去抖 2s）：重开应用/切回旧会话时圆环直接显示上次读数，
+          // 不必先发一条消息。写失败不影响对话（纯展示数据）。
+          scheduleContextUsagePersist(cid, data, () => statsSnapshot)
+        })
+      )
+    }
+
+    // runtime-context 快照落盘：紧跟本轮末条用户消息之后插入/替换隐藏消息。
+    // 落盘副本与主进程实发字节一致 → 下轮回放命中前缀缓存（见 pi-agent-service 注释）。
+    // regenerate 重跑同一轮时，事件会再发一次——替换旧快照而不是追加，防止纸条堆积。
+    if ((window.api as any).onRuntimeContext) {
+      cleanups.push(
+        (window.api as any).onRuntimeContext((cid: string, text: string) => {
+          if (!cid || !text) return
+          set(s => {
+            if (s.activeConversationId !== cid) return s
+            const messages = [...s.messages]
+            // 找末条用户消息（跳过其后的既有 runtime-context 快照）
+            let lastUserIdx = -1
+            for (let i = messages.length - 1; i >= 0; i--) {
+              const kind = getMessageKind(messages[i] as any)
+              if (kind === 'runtime-context') continue
+              if (kind === 'user') { lastUserIdx = i; break }
+              // 用户消息之后已有 AI 回复落进本地数组（事件迟到时）——快照仍插在用户消息后
+              break
+            }
+            if (lastUserIdx < 0) return s
+            const snapshot: ChatMessage = {
+              ...createUserMessage({
+                id: `rc-${messages[lastUserIdx].id || Date.now()}`,
+                content: text,
+                timestamp: Date.now(),
+                messageKind: 'runtime-context'
+              })
+            }
+            const insertAt = lastUserIdx + 1
+            const existing = messages[insertAt]
+            const next =
+              existing && getMessageKind(existing as any) === 'runtime-context'
+                ? [...messages.slice(0, insertAt), snapshot, ...messages.slice(insertAt + 1)]
+                : [...messages.slice(0, insertAt), snapshot, ...messages.slice(insertAt)]
+            // 在已落盘区间内插行/换行：水位线语义被破坏，下次落盘走全量 replace
+            markDirtyIfPersisted(insertAt)
+            return { messages: normalizeChatMessages(next) }
+          })
         })
       )
     }
 
     return () => {
       cleanups.forEach(fn => { if (typeof fn === 'function') fn() })
+      clearContextUsagePersistTimers()
       resetThinkingState()
       if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
     }

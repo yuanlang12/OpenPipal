@@ -5,7 +5,7 @@ export const EMPTY_COMPLETION_RETRY_PROMPT =
 
 type EmptyCompletionGuardAgent = {
   state: { messages: AgentMessage[] }
-  prompt: (message: AgentMessage) => Promise<void>
+  prompt: (message: AgentMessage | AgentMessage[]) => Promise<void>
 }
 
 type AssistantContentBlock = {
@@ -96,7 +96,7 @@ function describeAssistant(message: AgentMessage | undefined): { stopReason: str
  */
 export async function promptWithEmptyCompletionRetry(
   agent: EmptyCompletionGuardAgent,
-  message: AgentMessage,
+  message: AgentMessage | AgentMessage[],
   options: {
     signal?: AbortSignal
     onRetry?: () => void
@@ -104,9 +104,10 @@ export async function promptWithEmptyCompletionRetry(
     contextWindow?: number
     /**
      * 溢出自愈：由调用方强制压缩历史并整体重建 agent.state.messages，
-     * 返回重建后要重试的 currentMessage；返回 null 表示压不动，走真话报错。
+     * 返回重建后要重试的 prompt（单条消息或"末条用户消息+运行时上下文"数组）；
+     * 返回 null 表示压不动，走真话报错。
      */
-    onOverflowRecover?: () => Promise<AgentMessage | null>
+    onOverflowRecover?: () => Promise<AgentMessage | AgentMessage[] | null>
   } = {}
 ): Promise<EmptyCompletionRetryResult> {
   const firstStart = agent.state.messages.length

@@ -76,6 +76,14 @@ export function convertHistoryToPiMessages(
   for (const msg of history) {
     if (msg.role === 'system') continue
 
+    // 落盘的 runtime-context 快照：原样回放为独立 user 消息。字节与当轮实发一致
+    // （同经 buildRuntimeContextMessage），前缀缓存才能跨回合复用；不走文件提示/图片注入。
+    if (msg.role === 'user' && msg.messageKind === 'runtime-context') {
+      flushPendingText()
+      if (msg.content.trim()) messages.push(buildRuntimeContextMessage(msg.content))
+      continue
+    }
+
     if (msg.role === 'tool') {
       const replay = !msg.screenshot && msg.screenshotRef && conversationId
         ? { ...msg, screenshot: loadConversationAttachment(conversationId, msg.screenshotRef) || undefined }
@@ -120,18 +128,17 @@ export function convertHistoryToPiMessages(
   return messages
 }
 
-/** Append volatile per-turn facts without adding or reordering content blocks. */
-export function appendRuntimeContext(message: AgentMessage, runtimeContext: string): void {
-  const content = (message as any).content
-  if (typeof content === 'string') {
-    ;(message as any).content = content + runtimeContext
-    return
-  }
-  if (!Array.isArray(content)) return
-  for (let index = content.length - 1; index >= 0; index--) {
-    if (content[index]?.type === 'text') {
-      content[index].text = (content[index].text || '') + runtimeContext
-      return
-    }
-  }
+/**
+ * Volatile per-turn facts (time / front app / artifact inventory) as a standalone
+ * trailing user message. Prompt caching matches byte prefixes: splicing these facts
+ * into the last user message meant the replayed history diverged from the cached
+ * bytes at that message, invalidating the turn's tool traffic on every new turn.
+ * A separate appended message keeps every stored message byte-identical across turns,
+ * so the cache misses only the volatile note itself. Anthropic (since 2024-10) and
+ * OpenAI-compatible endpoints merge consecutive user messages into one turn.
+ */
+export function buildRuntimeContextMessage(runtimeContext: string): AgentMessage {
+  const text = runtimeContext.trim()
+  if (!text) throw new Error('runtime context must not be empty')
+  return { role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() } as AgentMessage
 }

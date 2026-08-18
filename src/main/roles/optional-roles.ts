@@ -1,9 +1,9 @@
 /**
- * 本发行版只带默认 OpenPipal Agent。
+ * 本发行版不含学习助手 / 教学助手 / 办公 / 同传四个内置角色。
  *
- * 私仓里这里是学习助手 / 教学助手 / 办公 / 设计 / 同传五个内置角色；它们依赖的
- * 设计运行时尚未完成自研替换，因此本次不随开源发行。发行裁剪脚本
- * （scripts/make-open-source-cut.mjs）把本文件换成空实现。
+ * 发行裁剪脚本（scripts/make-open-source-cut.mjs）把本文件换成空实现，
+ * role-manager 的组合处因此一行不用改。裁掉的理由见同树 OPEN-SOURCE-CUT.json
+ * 与 config/open-source-policy.json 里对应的规则。
  */
 import type { RoleConfig } from '../role-manager'
 
