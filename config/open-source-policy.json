@@ -537,7 +537,7 @@
   "ledgerExceptions": [
     {
       "rowContains": "resources/skills/*",
-      "reason": "台账行写的是 \"other than the five directories named in resources/SKILLS-NOTICE.md\"——那五个是 openai/skills 的 Apache-2.0 官方版本，各带 LICENSE.txt，SKILLS-NOTICE.md 已署名。tool-installer 不在台账的豁免措辞里，但审计确认是第一方（满篇 OpenPipal 专有路径与中文 UI 指引），**这是台账本身的缺口，应在下一轮修订 NOTICE 时补上第一方声明**。resources/SKILLS-NOTICE.md 本身被收进来是解析器的已知不精确：它在台账行里是个指针引用，不是被排除的材料，但解析器只认反引号不认语义。待办：14 个带 \"Copyright (c) OpenAI\" 文件头的文件需在 NOTICE 里显式留存（Apache-2.0 §4(c)）。",
+      "reason": "台账那一行写的是 \"other than the five directories named in resources/SKILLS-NOTICE.md and the sixteen design skills resolved below\"——解析器只认反引号里的路径，不解读散文限定语，于是被限定语排除在外的目录都会被判成「台账排除却出现在树里」。这条豁免就是那些限定语的机器可读版本。 两类，理由不同： (1) 五个 openai/skills 的 Apache-2.0 官方版本（doc / pdf / skill-creator / slides / spreadsheet），各带 LICENSE.txt，SKILLS-NOTICE.md 已署名；tool-installer 不在台账的豁免措辞里，但审计确认是第一方（满篇 OpenPipal 专有路径与中文 UI 指引），**这是台账本身的缺口，应在下一轮修订 NOTICE 时补上第一方声明**。resources/SKILLS-NOTICE.md 本身被收进来是解析器的已知不精确：它在台账行里是个指针引用，不是被排除的材料。待办：14 个带 \"Copyright (c) OpenAI\" 文件头的文件需在 NOTICE 里显式留存（Apache-2.0 §4(c)）。 (2) 十四份自研重写的设计技能（2026-08-17）。它们在台账里有对应的 Resolved 一节（「Resolved 2026-08-17 — the sixteen design skills」），行数对照与重写规程都在那里；策略侧由 keep-self-written-design-skills 收下。frontend-design 不在此列——它由 exclude-owner-local-only 排除（所有者选择只留本地，不涉及确权），本就不在发行树里。",
       "allow": [
         "resources/SKILLS-NOTICE.md",
         "resources/skills/doc/**",
@@ -545,7 +545,21 @@
         "resources/skills/skill-creator/**",
         "resources/skills/slides/**",
         "resources/skills/spreadsheet/**",
-        "resources/skills/tool-installer/**"
+        "resources/skills/tool-installer/**",
+        "resources/skills/animation-basics/**",
+        "resources/skills/dc-authoring/**",
+        "resources/skills/deck-stage/**",
+        "resources/skills/design-system-authoring/**",
+        "resources/skills/design-tokens/**",
+        "resources/skills/doc-design/**",
+        "resources/skills/flier/**",
+        "resources/skills/hi-fi-design/**",
+        "resources/skills/html-email/**",
+        "resources/skills/interactive-prototype/**",
+        "resources/skills/three-d-object/**",
+        "resources/skills/trifold-brochure/**",
+        "resources/skills/web-research/**",
+        "resources/skills/wireframe/**"
       ]
     },
     {
