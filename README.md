@@ -43,9 +43,29 @@ listed in `OPEN-SOURCE-CUT.json` — the cut is reproducible, not hand-curated.
 
 1. Grab the `.dmg` for your Mac from [Releases](https://github.com/yuanlang12/OpenPipal/releases/latest)
    (separate builds for Apple Silicon and Intel), then drag `OpenPipal.app` into `Applications`.
-2. **First launch: right-click the app → Open**, then confirm in the dialog. The build is not
-   Apple-notarized, so macOS blocks a plain double-click. You only do this once.
-3. Open **Settings → Model**, add a preset with your Base URL, API key and model name.
+2. **First launch: macOS will refuse to open it.** These builds carry an ad-hoc signature
+   rather than an Apple Developer ID, so Gatekeeper blocks them — and since macOS 15,
+   right-clicking → Open no longer gets past it. Dismiss the dialog, open **System Settings
+   → Privacy & Security**, scroll down to *Security*, and click **Open Anyway** on the
+   OpenPipal line. From a terminal it is one command instead:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/OpenPipal.app
+   ```
+
+3. **Grant the permissions it needs to dock and read windows.** Still in **System Settings →
+   Privacy & Security**, add OpenPipal under:
+
+   - **Accessibility** — follow the frontmost window so the panel can dock beside it
+   - **Screen Recording** — look at the target window when you ask it to
+   - **Automation** — focus and paste into the application you picked
+   - **Microphone** — only if you use voice input or live interpretation
+
+   macOS ties these grants to an application's code signature, and an ad-hoc signature
+   changes with every build. So after installing a new version you may find the old entry
+   stale and have to remove it and grant again. A notarized build removes that chore.
+
+4. Open **Settings → Model**, add a preset with your Base URL, API key and model name.
 
 ### Browser extension (optional)
 
