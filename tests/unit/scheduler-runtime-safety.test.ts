@@ -83,55 +83,6 @@ vi.mock('../../src/main/conversation-store', () => ({
   }
 }))
 
-vi.mock('../../src/main/pi-event-adapter', () => ({
-  createTranscriptCollector: () => {
-    const segments: string[] = []
-    const entries: any[] = []
-    let current = ''
-    const commit = () => {
-      const content = current.trim()
-      current = ''
-      if (!content) return
-      segments.push(content)
-      const last = entries.at(-1)
-      if (last?.kind === 'text') last.content += `\n\n${content}`
-      else entries.push({ kind: 'text', content })
-    }
-    return {
-      feed: (event: any) => {
-        if (event.type === 'text' && typeof event.content === 'string') {
-          current += event.content
-        } else if (event.type === 'text_flush') {
-          commit()
-        } else if (event.type === 'tool_end') {
-          commit()
-          const searchResults = typeof event.searchResults === 'string' ? event.searchResults : undefined
-          const content = typeof event.mcpResult === 'string' && event.mcpResult
-            ? event.mcpResult
-            : (searchResults || '')
-          if (event.name && (content || searchResults)) {
-            entries.push({
-              kind: 'tool',
-              toolName: String(event.name),
-              toolCallId: event.toolCallId,
-              content,
-              toolArgs: event.modelToolArgs ?? event.mcpArgs,
-              searchResults
-            })
-          }
-        }
-      },
-      finish: () => {
-        commit()
-        return segments.join('\n\n')
-      },
-      finishTranscript: () => {
-        commit()
-        return entries
-      }
-    }
-  }
-}))
 
 vi.mock('../../src/main/agent-workspace-store', () => ({
   getWorkspace: (id: string) => state.workspaces.get(id) ?? null,
@@ -526,6 +477,40 @@ describe('scheduler Runtime safety', () => {
       expect.objectContaining({ role: 'assistant', content: '然后给出结论' }),
       expect.objectContaining({ role: 'user', content: '执行下一轮' })
     ])
+  })
+
+  it('落盘 runtime-context 快照，下一轮带着 messageKind 回放（跨回合前缀缓存的前提）', async () => {
+    const snapshot = '\n\n<runtime-context>\n当前真实时间：2026年8月18日星期二 10:30。\n</runtime-context>'
+    state.tasks.set('task-1', task())
+    state.agentChat = async function* () {
+      // 主进程在 turn 开跑时广播一次。桌面由渲染层接住落盘，定时任务没有渲染层——
+      // 不在服务端自己落，磁盘上就永远没有这条快照，下一轮回放字节对不上、缓存从这里断
+      yield { type: 'runtime_context', text: snapshot }
+      yield { type: 'text', content: '第一轮完成' }
+    }
+
+    await scheduler.executeTask('task-1')
+
+    expect(state.appendCalls[0].messages.map(message => ({
+      role: message.role,
+      content: message.content,
+      messageKind: message.messageKind
+    }))).toEqual([
+      { role: 'user', content: '执行下一轮', messageKind: 'task-trigger' },
+      // 紧跟触发消息，位置与渲染层 chatStore 一致
+      { role: 'user', content: snapshot, messageKind: 'runtime-context' },
+      { role: 'assistant', content: '第一轮完成', messageKind: undefined }
+    ])
+
+    state.agentChat = async function* () {
+      yield { type: 'text', content: '第二轮完成' }
+    }
+    await scheduler.executeTask('task-1')
+
+    // 投影必须把 messageKind 带过缝，pi-message-conversion 才认得出这是快照、原样回放
+    expect(state.agentCalls[1].messages[1]).toMatchObject({
+      role: 'user', content: snapshot, messageKind: 'runtime-context'
+    })
   })
 
   it('persists and replays a tool-only scheduled turn even when assistant text is empty', async () => {

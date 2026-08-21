@@ -1,31 +1,29 @@
+import { AgentMark } from '../agent-mark'
+
 /**
- * OpenPipal 品牌标识 — 移植官方 logo(assets/logo-mark.svg / logo-lockup.svg)。
+ * OpenPipal 品牌标识 —— 官方 logo 就是 Agent Mark 的默认形态（不带配饰、中性表情）。
  *
- * 构造照 Pi 官方标识那套：所有坐标吸附在半模块网格上（64 视窗、半模块 6），
- * 纯 fill 无 stroke——品牌标识用块面，任意缩放都不会因线宽变化而失衡。
- * 形是「主面板 + 右侧贴边窄条」，即产品唯一的那个动作：贴到旁边去。
- * 这里用 token 驱动而非两份 light/inverse SVG:
- *   - 方块 fill=currentColor(父级 text-ink-primary → light #1B2429 / dark #F2F6F9)
- *   - 竖条 fill=var(--sw-brand-sage)(light #6F864F / dark #A8BB87)
- *     注意:这里刻意不用 --sw-brand-500 —— 动作色已经换成墨,而品牌 sage 必须留在标识上。
- *     官方对 logo 的描述就是「墨色方块 + 右侧贴边的 sage 窄条」,竖条一变黑,标识就没了。
- * 因此一份组件自动适配明暗 + 主题强调色,无需 asset pipeline、无闪烁。
+ * 换句话说产品和它的 Agent 共用同一个符号：用户在侧栏看到的每个 Agent，都是这个 logo
+ * 戴上了自己的配饰。所以这里不另画一套几何，直接用 <AgentMark accessory="none">，
+ * 明暗自动跟随 --sw-mark-ink / --sw-mark-paper。
+ *
+ * 静止态逐项等于 resources/brand/agent-mark-source.svg（tests/unit/agent-mark-engine.test.ts
+ * 解析那个文件来钉住）；应用图标 resources/icon.svg 是同一份几何的 1024 版本。
  */
 
 interface OpenPipalLogoProps {
   variant?: 'lockup' | 'mark' | 'wordmark'
-  /** mark SVG 像素尺寸(可见方块 ≈ size * 0.625);默认 26 */
+  /** mark 的像素尺寸；默认 26 */
   size?: number
   className?: string
+  /** 品牌位上偶尔想让它眨个眼；默认静止，列表和标题栏不该有动效 */
+  animated?: boolean
 }
 
-export function OpenPipalLogo({ variant = 'lockup', size = 26, className = '' }: OpenPipalLogoProps) {
-  const mark = (
-    <svg viewBox="0 0 64 64" width={size} height={size} fill="none" aria-hidden="true" className="shrink-0">
-      <rect x="8" y="8" width="36" height="48" fill="currentColor" />
-      <rect x="50" y="14" width="6" height="36" fill="var(--sw-brand-sage)" />
-    </svg>
-  )
+export function OpenPipalLogo({
+  variant = 'lockup', size = 26, className = '', animated = false,
+}: OpenPipalLogoProps): React.JSX.Element {
+  const mark = <AgentMark accessory="none" hue="ink" size={size} animated={animated} />
 
   const wordmark = (
     <span
@@ -41,13 +39,13 @@ export function OpenPipalLogo({ variant = 'lockup', size = 26, className = '' }:
   )
 
   if (variant === 'mark') {
-    return <span className={`inline-flex text-ink-primary ${className}`} aria-label="OpenPipal">{mark}</span>
+    return <span className={`inline-flex ${className}`} aria-label="OpenPipal">{mark}</span>
   }
   if (variant === 'wordmark') {
     return <span className={`inline-flex items-center ${className}`} aria-label="OpenPipal">{wordmark}</span>
   }
   return (
-    <span className={`inline-flex items-center gap-1.5 text-ink-primary ${className}`} aria-label="OpenPipal">
+    <span className={`inline-flex items-center gap-1.5 ${className}`} aria-label="OpenPipal">
       {mark}
       {wordmark}
     </span>

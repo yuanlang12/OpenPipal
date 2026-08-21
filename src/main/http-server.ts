@@ -8,7 +8,7 @@ import { executeExtraction } from './memory-extractor'
 import { listArchivedMemories, restoreArchivedMemory, getGlobalMemoryDir, isWithinMemoryRoot } from './memory-store'
 import { isAutoMemoryEnabled } from './config-manager'
 import { initRoles, switchRole, getAllRoles, getCurrentRole, getRoleConfig, getRoleAssetsDir, getDisabledApps, getDetectedApps, isAppFollowingEnabled, setAppFollowingEnabled, setDisabledApps } from './role-manager'
-import { listWorkspaces } from './agent-workspace-store'
+import { getWorkspace, listWorkspaces } from './agent-workspace-store'
 import { BROWSER_APPS } from './app-detector'
 import { getExtensionPageHtml } from './extension-page'
 import { attachBrowserControlWss } from './browser-control'
@@ -20,7 +20,8 @@ import { createTranscriptCollector } from './pi-event-adapter'
 import {
   listConversations, createConversation, getConversationMessages, getConversationMessagesSerialized, getConversation,
   appendMessages, deleteConversation, updateConversationTitle, updateConversationRole, updateConversationConfig, replaceMessages,
-  shouldReplayStoredMessage, StoredMessage
+  shouldReplayStoredMessage, StoredMessage, ConversationConfig, updateConversationWorkspace,
+  mutateConversationConfig
 } from './conversation-store'
 import {
   getEffectiveModelConfigForDisplay, saveModelConfig, getProviders, testConnection, hasApiKey, isUserCustomConfig, clearModelConfig,
@@ -31,6 +32,15 @@ import {
   type SessionMcpRegistration, type McpServerConfig
 } from './mcp-manager'
 import { ensureAcpMcpToken } from './acp-auth'
+import { clearConversationGoal, readConversationGoal, setConversationGoal } from './conversation-goal'
+import { subscribeConversationChanges } from './conversation-events'
+import {
+  endAcpStream,
+  forgetAcpSession,
+  noteAcpActivity,
+  noteAcpHandshake,
+  startAcpStream
+} from './acp-session-registry'
 import {
   getBrowserContext,
   markExtensionActive,
@@ -99,9 +109,11 @@ const MIME_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon'
 }
 
-// ---- 浏览器模式权限通道（与桌面 IPC 对称）----
+// ---- HTTP 模式权限通道（与桌面 IPC 对称）----
 // 当前正在跑的 /chat/stream 响应,按 conversationId 索引。权限确认气泡需要写进"正在
 // 流式的那条响应",浏览器侧栏才看得到(桌面走 webContents.send,这里走 SSE)。
+// ACP 同理:适配器收到这条事件后反向调客户端的 session/request_permission,
+// 编辑器里就地确认——此前 ACP 被挡在这里,弹窗只能落到桌面窗口,编辑器干等。
 const activeStreams = new Map<string, {
   response: ServerResponse
   executionId: string
@@ -116,7 +128,7 @@ export function writePermissionToStream(conversationId: string | undefined, requ
   if (
     !stream ||
     stream.response.destroyed ||
-    stream.source !== 'extension' ||
+    (stream.source !== 'extension' && stream.source !== 'acp') ||
     execution?.owner.entrypoint !== 'http' ||
     execution.aborted ||
     execution.executionId !== stream.executionId ||
@@ -129,6 +141,25 @@ export function writePermissionToStream(conversationId: string | undefined, requ
   } catch {
     return false
   }
+}
+
+/**
+ * ACP 适配器持的是 native 令牌（能力比浏览器令牌宽），所以它的权限回传必须钉死在
+ * "它自己那条还活着的流"上：会话有 ACP 活动流、流未销毁、executionId 与本轮一致，
+ * 三者缺一即拒。少了这层，任何本机 native 调用方都能替别的会话点"允许"。
+ */
+export function isAcpPermissionResponder(
+  conversationId: string | undefined,
+  executionId: string | undefined
+): boolean {
+  if (!conversationId || !executionId) return false
+  const stream = activeStreams.get(conversationId)
+  return (
+    !!stream &&
+    !stream.response.destroyed &&
+    stream.source === 'acp' &&
+    stream.executionId === executionId
+  )
 }
 
 // POST /api/permission 的解析器(由 index.ts 注入 ipc-handlers.resolveInlinePermission,避免循环依赖)
@@ -247,6 +278,15 @@ function serveStatic(urlPath: string, res: ServerResponse): boolean {
   } catch {
     return false
   }
+}
+
+// 当前监听中的 server（设置页要如实回答"服务开着吗"，不能拿常量 PORT 冒充）
+let activeServer: ReturnType<typeof createServer> | null = null
+
+/** 正在监听的端口；没起来（或端口被占用）时为 null。 */
+export function getHttpListeningPort(): number | null {
+  const address = activeServer?.address()
+  return typeof address === 'object' && address ? address.port : null
 }
 
 export function startHttpServer(port: number = PORT): ReturnType<typeof createServer> {
@@ -450,9 +490,38 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
 
     // ---- Agent 列表 API（合并内置角色 + 用户保存的 Agent，给 openpipal-acp 等外部 client 用） ----
     if (url === '/api/agents/list' && req.method === 'GET') {
+      // 适配器 initialize 必拉这张表——本进程"见过适配器"的唯一凭据
+      if (principal === 'native') noteAcpHandshake()
       json(res, 200, {
         builtins: getAllRoles(),
         agents: listWorkspaces()
+      })
+      return
+    }
+
+    // ---- 技能列表（给 openpipal-acp 暴露成编辑器的斜杠命令用）----
+    // 两个可选参数各管一档作用域，与模型提示词里那份索引同一套规则：
+    // workspaceId → 自定义 Agent 只带它自己的技能；role → 内置角色带全局技能 + 自己的专属技能。
+    if (pathname === '/api/skills' && req.method === 'GET') {
+      const params = new URL(url, 'http://openpipal.local').searchParams
+      const workspaceId = params.get('workspaceId') || undefined
+      const role = params.get('role') || undefined
+      // workspaceId 会被拼进 dataPath('agents', id, 'skills')。不校验就是路径拼接漏洞：
+      // `../../..` 能把数据目录外的 <任意目录>/skills 读出来（旁边那条 PATCH 一直是校验的）。
+      if (workspaceId !== undefined && !getWorkspace(workspaceId)) {
+        json(res, 400, { error: 'Unknown conversation agent' })
+        return
+      }
+      // role 同样会被拼成 resources/system-agents/<role>/skills，同样只认名单里的
+      if (role !== undefined && !getAllRoles().some(item => item.name === role)) {
+        json(res, 400, { error: 'Unknown role' })
+        return
+      }
+      const { listSkillsMeta } = await import('./skill-manager')
+      json(res, 200, {
+        skills: listSkillsMeta(workspaceId, role)
+          .filter(skill => skill.enabled)
+          .map(skill => ({ name: skill.name, description: skill.description }))
       })
       return
     }
@@ -494,6 +563,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       }
       if (req.method === 'DELETE') {
         await deleteConversation(id)
+        forgetAcpSession(id)
         json(res, 200, { ok: true })
         return
       }
@@ -504,15 +574,33 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
             json(res, 404, { error: 'Conversation not found' })
             return
           }
-          if (body.role !== undefined) {
-            if (typeof body.role !== 'string' || !getRoleConfig(body.role)) {
-              json(res, 400, { error: 'Unknown conversation role' })
-              return
-            }
-            if (!await updateConversationRole(id, body.role)) {
-              json(res, 409, { error: 'Conversation role is locked after the first message' })
-              return
-            }
+          // 校验全部先做完，再落第一笔——否则 `{role:'x', workspaceId:'不存在'}` 会
+          // 把 role 写进磁盘之后才发现 workspaceId 非法，用户看到 400 但人格已经变了。
+          if (body.role !== undefined && (typeof body.role !== 'string' || !getRoleConfig(body.role))) {
+            json(res, 400, { error: 'Unknown conversation role' })
+            return
+          }
+          // 改挂自定义 Agent（我的 Agents）。null / '' = 切回内置角色。
+          const workspaceId = body.workspaceId === null || body.workspaceId === ''
+            ? undefined
+            : body.workspaceId
+          if (
+            body.workspaceId !== undefined
+            && workspaceId !== undefined
+            && (typeof workspaceId !== 'string' || !getWorkspace(workspaceId))
+          ) {
+            json(res, 400, { error: 'Unknown conversation agent' })
+            return
+          }
+
+          if (body.role !== undefined && !await updateConversationRole(id, body.role)) {
+            json(res, 409, { error: 'Conversation role is locked after the first message' })
+            return
+          }
+          // 与 role 同一把锁：开聊后拒绝，编辑器那边会看到同样语义的 409。
+          if (body.workspaceId !== undefined && !await updateConversationWorkspace(id, workspaceId)) {
+            json(res, 409, { error: 'Conversation agent is locked after the first message' })
+            return
           }
           if (body.title && !await updateConversationTitle(id, body.title)) {
             json(res, 404, { error: 'Conversation not found' })
@@ -529,6 +617,8 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
               json(res, 404, { error: 'Conversation not found' })
               return
             }
+            // 适配器创建会话后立刻 PATCH 这个标记，等于"这条 ACP 会话刚出生"
+            if ((body.config as ConversationConfig).acp?.adapter) noteAcpActivity(id)
           }
           json(res, 200, { ok: true })
         } catch (err: any) {
@@ -537,6 +627,48 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
         return
       }
     }
+    // ---- 会话目标（`/goal` 的 HTTP 面，给 ACP 用；桌面端走 chat:set-goal IPC）----
+    // 设了目标之后每轮结束由 GoalChecker 判定有没有达成，没达成就自动继续跑（上限见
+    // GOAL_MAX_TURNS）。这里只读写状态，判定循环在 pi-agent-service 里。
+    const goalMatch = pathname.match(/^\/api\/conversations\/([^/]+)\/goal$/)
+    if (goalMatch) {
+      const id = decodeConversationRouteId(goalMatch[1])
+      if (!id) {
+        json(res, 400, { error: 'Invalid conversation id' })
+        return
+      }
+      if (!getConversation(id)) {
+        json(res, 404, { error: 'Conversation not found' })
+        return
+      }
+      if (req.method === 'GET') {
+        json(res, 200, { goal: readConversationGoal(id) })
+        return
+      }
+      if (req.method === 'POST') {
+        try {
+          const body = JSON.parse(await readBody(req))
+          if (typeof body.text !== 'string' || !body.text.trim()) {
+            json(res, 400, { error: 'Goal text is required' })
+            return
+          }
+          const goal = await setConversationGoal(id, body.text)
+          if (!goal) {
+            json(res, 404, { error: 'Conversation not found' })
+            return
+          }
+          json(res, 200, { goal })
+        } catch (err: any) {
+          json(res, requestErrorStatus(err, 400), { error: err.message })
+        }
+        return
+      }
+      if (req.method === 'DELETE') {
+        json(res, 200, { ok: await clearConversationGoal(id) })
+        return
+      }
+    }
+
     // /api/conversations/:id/messages
     const msgMatch = pathname.match(/^\/api\/conversations\/([^/]+)\/messages$/)
     if (msgMatch) {
@@ -572,6 +704,46 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       }
     }
 
+    // ---- 桌面端 → 适配器的常驻推送通道 ----
+    // 此前只有"适配器主动来问"一个方向：桌面端改了人格/标题，编辑器要等下一轮开跑
+    // 才更正。这条一直挂着的 SSE 让桌面端能立刻捅一下。只广播"哪条会话的哪类东西变了"，
+    // 内容仍以磁盘为准，由适配器自己回读——不然同一份状态就有了两个来源。
+    if (pathname === '/api/acp/events' && req.method === 'GET') {
+      if (principal !== 'native') {
+        json(res, 403, { error: 'ACP authorization required' })
+        return
+      }
+      applySecurityHeaders(res)
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'
+      })
+      res.socket?.setNoDelay(true)
+
+      const write = (payload: Record<string, unknown>): void => {
+        if (res.destroyed) return
+        try { res.write(`data: ${JSON.stringify(payload)}\n\n`) } catch { /* 关闭中 */ }
+      }
+      // 先给一条 ready：适配器据此确认通道真的建起来了，而不是卡在等第一条变更
+      write({ type: 'ready' })
+
+      const unsubscribe = subscribeConversationChanges((change) => {
+        write({ type: 'conversation_changed', ...change })
+      })
+      // 长静默会被中间层当成空闲裁掉——这条通道大部分时间就是静默的
+      const heartbeat = setInterval(() => {
+        if (!res.destroyed) { try { res.write(': ping\n\n') } catch { /* 关闭中 */ } }
+      }, 15_000)
+
+      res.once('close', () => {
+        clearInterval(heartbeat)
+        unsubscribe()
+      })
+      return
+    }
+
     // ---- ACP session-scoped MCP server 注入(标准 ACP session/new.mcpServers) ----
     // POST   /api/acp/sessions/:sessionId/mcp  body: { mcpServers: McpServer[] (ACP shape) }
     // DELETE /api/acp/sessions/:sessionId/mcp
@@ -583,6 +755,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       }
 
       const sessionId = acpMcpMatch[1]
+      if (req.method === 'DELETE') forgetAcpSession(sessionId)
       if (req.method === 'POST') {
         try {
           const body = JSON.parse(await readBody(req))
@@ -682,18 +855,21 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       return
     }
 
-    // ---- 内联权限确认回传(浏览器写操作:允许/拒绝)----
+    // ---- 内联权限确认回传(浏览器写操作 / ACP 编辑器授权:允许/拒绝)----
     // 对称于桌面 IPC permission:inline-response,落到同一个 resolver(resolveInlinePermission)。
     if (url === '/api/permission' && req.method === 'POST') {
-      if (principal !== 'browser') {
-        json(res, 403, { error: 'Browser authorization required' })
-        return
-      }
       try {
         const body = JSON.parse(await readBody(req))
         const conversationId = normalizeHttpConversationId(body.conversationId)
         if (conversationId && !isSafeConversationStorageId(conversationId)) {
           json(res, 400, { error: 'Invalid conversation id' })
+          return
+        }
+        const executionId = typeof body.executionId === 'string' ? body.executionId : undefined
+        // 浏览器主体沿用原判据;native 主体(ACP 适配器)只能回答自己那条活着的流,
+        // 否则任何本机 native 调用方都能替别的会话点"允许"。
+        if (principal !== 'browser' && !isAcpPermissionResponder(conversationId, executionId)) {
+          json(res, 403, { error: 'Authorized permission stream required' })
           return
         }
         const accepted = inlinePermissionResolver?.(
@@ -702,7 +878,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
           // A stateless HTTP turn may approve this one operation, but it can
           // never create a durable per-session tool/host grant.
           isDurableHttpTurn(conversationId) && !!body.sessionApprove,
-          typeof body.executionId === 'string' ? body.executionId : undefined,
+          executionId,
           conversationId
         ) === true
         json(res, accepted ? 200 : 409, { ok: accepted })
@@ -726,6 +902,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
         }
         if (lockedConversationId && activeStreams.get(lockedConversationId)?.response === res) {
           activeStreams.delete(lockedConversationId)
+          endAcpStream(lockedConversationId)
         }
       }
 
@@ -823,7 +1000,8 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
               .map(m => m.role === 'tool'
                 // id 一并带上：缺 toolCallId 的老记录靠它在轨迹里保持稳定标识（tool-trail.ts）
                 ? { role: 'tool' as const, content: m.content, toolName: m.toolName, toolCallId: m.toolCallId, toolArgs: m.toolArgs, id: m.id }
-                : { role: m.role as 'user' | 'assistant', content: m.content })
+                // messageKind 必须过缝：主进程据此把 runtime-context 快照原样回放（pi-message-conversion.ts）
+                : { role: m.role as 'user' | 'assistant', content: m.content, messageKind: m.messageKind })
             if (stored.length) messages.unshift(...stored)
           }
         }
@@ -848,6 +1026,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
             executionId: execution.executionId,
             source
           })
+          if (source === 'acp') startAcpStream(conversationId)
         }
         heartbeat = setInterval(() => {
           if (!res.destroyed) { try { res.write(': ping\n\n') } catch { /* 关闭中 */ } }
@@ -886,13 +1065,14 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
           // HTTP/ACP 没有桌面 IPC 那层 goal_update 持久化逻辑；先写稳 conversationConfig
           // 再把事件发给客户端，避免 UI 看见了新状态而重启后又回到旧状态。
           if (event.type === 'goal_update' && conversationId) {
-            const latestConversation = getConversation(conversationId)
-            if (latestConversation) {
-              const persisted = await updateConversationConfig(conversationId, {
-                ...(latestConversation.config || {}),
-                goal: event.goal
-              })
-              if (!persisted) throw new Error('Failed to persist conversation goal update')
+            // 必须走加锁的读改写：锁外读一份整 config 再整份写回，会把并发的
+            // `/goal clear`、preflow 写入等一起盖掉（同一个 config 对象里住着好几家）。
+            const persisted = await mutateConversationConfig(
+              conversationId,
+              (config) => ({ ...config, goal: event.goal })
+            )
+            if (!persisted && getConversation(conversationId)) {
+              throw new Error('Failed to persist conversation goal update')
             }
           }
           acpCollector?.feed(event)
@@ -925,6 +1105,15 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
             const now = Date.now()
             const toAppend: StoredMessage[] = []
             if (newUserContent) toAppend.push({ id: randomUUID(), role: 'user', content: newUserContent, timestamp: now })
+            // RC 快照紧跟本轮 user 消息落盘，位置与渲染层 chatStore 一致——下轮回放字节一致，
+            // 跨回合前缀缓存才接得上。ACP 没有 renderer，不在这里存就永远没人存。
+            const acpRc = acpCollector.finishRuntimeContext()
+            if (acpRc) {
+              toAppend.push({
+                id: randomUUID(), role: 'user', content: acpRc.text,
+                timestamp: acpRc.timestamp, messageKind: 'runtime-context'
+              })
+            }
             for (const entry of transcript) {
               toAppend.push(entry.kind === 'tool'
                 ? {
@@ -1374,10 +1563,15 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
   })
 
   server.listen(port, '127.0.0.1', () => {
+    activeServer = server
     console.log(`[HTTP] API server + 静态文件: http://127.0.0.1:${port}`)
+  })
+  server.on('close', () => {
+    if (activeServer === server) activeServer = null
   })
 
   server.on('error', (err: any) => {
+    if (activeServer === server) activeServer = null
     if (err.code === 'EADDRINUSE') {
       console.log(`[HTTP] 端口 ${port} 被占用，跳过 HTTP server`)
     } else {

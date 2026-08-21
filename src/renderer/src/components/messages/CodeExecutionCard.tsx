@@ -73,12 +73,14 @@ export function CodeExecutionCard({ message }: { message: ChatMessage }) {
           </div>
         </div>
 
-        {/* Code(collapsible) */}
+        {/* Code(collapsible)— chevron hover 才浮现,收起态只留"N 行代码"一行元信息 */}
         <button
           onClick={() => setCodeExpanded(!codeExpanded)}
-          className="w-full py-0.5 flex items-center gap-1.5 text-chat-meta text-ink-tertiary hover:text-ink-secondary transition-colors"
+          className="group/code w-full py-0.5 flex items-center gap-1.5 text-chat-meta text-ink-tertiary hover:text-ink-secondary transition-colors"
         >
-          <ChevronDown className={`w-3 h-3 transition-transform ${codeExpanded ? 'rotate-180' : ''}`} />
+          <ChevronDown
+            className={`w-3 h-3 transition duration-200 ${codeExpanded ? 'rotate-180' : ''} opacity-0 group-hover/code:opacity-100 group-focus-visible/code:opacity-100`}
+          />
           <span>{t('chat.codeExecution.codeLines', { count: exec.code.split('\n').length })}</span>
         </button>
         {codeExpanded && (

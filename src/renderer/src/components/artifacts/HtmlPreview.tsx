@@ -812,7 +812,7 @@ function computeTweakStyleDiff(fields: TweakFields, initial: TweakFields): { sty
  */
 function appendToMainInputAndFocus(text: string): void {
   if (!text) return
-  // 前缀匹配：placeholder 全文随功能提示演化（现为"输入问题...（@ 唤起技能）"），精确匹配会静默失联
+  // 前缀匹配：placeholder 全文随功能提示演化（现为"输入问题...（/ 唤起技能）"），精确匹配会静默失联
   const ta = document.querySelector<HTMLTextAreaElement>('textarea[placeholder^="输入问题"]')
   if (!ta) return
   const proto = Object.getPrototypeOf(ta)

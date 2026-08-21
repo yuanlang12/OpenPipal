@@ -124,6 +124,7 @@ module.exports = {
 
       maxWidth: {
         'msg': 'var(--sw-msg-max-width)',
+        'msg-user': 'var(--sw-user-msg-max-width)',
       },
 
       margin: {

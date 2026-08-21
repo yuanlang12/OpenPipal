@@ -105,14 +105,17 @@
       "patterns": [
         "docs/claude/anthropic-design-agent-prompt.md",
         "docs/claude/claude-design-dc-prompt.md",
-        "resources/brand/**",
+        "resources/brand/README.md",
+        "resources/brand/*.html",
+        "resources/brand/logos/**",
         "resources/dc-runtime/backup-pre-w1/**",
         "resources/skills-legacy/**",
         "tests/artifacts/**"
       ],
       "overrides": [
         "reviewed-baseline-default"
-      ]
+      ],
+      "note": "2026-08-21 收窄：resources/brand/** 改成点名 README、探索期的 logo 候选与几份展示页。agent-mark-source.svg 从这条里摘出去随发行走——App 自带捏头像（Agent Mark Studio），那份 SVG 是标识几何的事实源，属于功能材料，不是纯品牌资产。"
     },
     {
       "id": "replace-design-runtime-material",
@@ -401,12 +404,13 @@
       "scope": "candidate",
       "action": "conditional-keep",
       "patterns": [
-        "tests/unit/runtime-context-dedicated-message.test.ts"
+        "tests/unit/runtime-context-dedicated-message.test.ts",
+        "tests/unit/runtime-context-projection-seam.test.ts"
       ],
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "runtime context 从「拼进末条用户消息」改为「独立末尾 user 消息」（prompt cache 前缀稳定）这轮改动引入的唯一新文件，配套单测。晚于评审基线。第一方测试：用 pi-ai faux provider 驱动 legacy 与 pi-core 两条真实 agentChat 循环，捕获实际请求消息，断言两个回合间历史消息字节稳定、runtime-context 只以独立消息出现在载荷末尾。已核查不含任何密钥、真实端点或私有提示词——测试里的 baseUrl 是显式占位 http://localhost:0，provider 为 faux，runtime-context fixture 是一段中文时间文案。"
+      "note": "runtime context 从「拼进末条用户消息」改为「独立末尾 user 消息」（prompt cache 前缀稳定）这轮改动引入的唯一新文件，配套单测。晚于评审基线。第一方测试：用 pi-ai faux provider 驱动 legacy 与 pi-core 两条真实 agentChat 循环，捕获实际请求消息，断言两个回合间历史消息字节稳定、runtime-context 只以独立消息出现在载荷末尾。已核查不含任何密钥、真实端点或私有提示词——测试里的 baseUrl 是显式占位 http://localhost:0，provider 为 faux，runtime-context fixture 是一段中文时间文案。projection-seam 测试是同一机制的补充：把渲染层历史投影与主进程消息转换接起来跑，钉住落盘快照经投影后仍与实发字节一致（三处投影曾同时丢掉 messageKind 使机制失效）；同样是第一方测试，不含密钥、端点或私有提示词，fixture 为编造的时间与前台应用文案。"
     },
     {
       "id": "review-usage-card-and-persisted-rc-delta",
@@ -414,6 +418,7 @@
       "action": "conditional-keep",
       "patterns": [
         "src/main/context-usage-stats.ts",
+        "src/main/token-estimate.ts",
         "tests/unit/context-usage-stats.test.ts",
         "tests/unit/usage-log-today.test.ts",
         "tests/unit/real-api-cache.acceptance.test.ts",
@@ -422,7 +427,7 @@
       "overrides": [
         "reviewed-baseline-default"
       ],
-      "note": "「runtime-context 快照落盘回放 + 上下文用量信息卡」这轮改动引入的新文件，晚于评审基线。context-usage-stats.ts 是用量卡分区估算的纯函数模块；四份测试分别是分区估算单测、usage-log 今日聚合单测、真实 API 缓存验收（默认跳过，仅 OPENPIPAL_REAL_API=1 时运行）与卡片 e2e。已逐份核查：不含任何密钥或内置端点——真实 API 验收测试的模型与密钥在运行时从用户自己的 ~/.openpipal/config.json 读取且打印时脱敏（baseUrl 打码 host、key 永不输出），文件内唯一的地址字面量是示例占位 http://localhost:0 与临时目录；e2e 的 mock 数据为编造的模型名与用量数字。"
+      "note": "「runtime-context 快照落盘回放 + 上下文用量信息卡」这轮改动引入的新文件，晚于评审基线。context-usage-stats.ts 是用量卡分区估算的纯函数模块；token-estimate.ts 是从 history-compactor 抽出的零依赖纯函数（字符口径 token 粗估，压缩预算与用量卡共用同一把尺子）；四份测试分别是分区估算单测、usage-log 今日聚合单测、真实 API 缓存验收（默认跳过，仅 OPENPIPAL_REAL_API=1 时运行）与卡片 e2e。已逐份核查：不含任何密钥或内置端点——真实 API 验收测试的模型与密钥在运行时从用户自己的 ~/.openpipal/config.json 读取且打印时脱敏（baseUrl 打码 host、key 永不输出），文件内唯一的地址字面量是示例占位 http://localhost:0 与临时目录；e2e 的 mock 数据为编造的模型名与用量数字。"
     },
     {
       "id": "keep-self-written-design-runtime",
@@ -529,6 +534,59 @@
         "replace-design-instruction-material"
       ],
       "note": "所有者自著的判断层技能（做前端视觉时的审美方向指南），**不涉及确权**——排除的理由是所有者选择只在本地项目保留，2026-08-17 明确。与本文件里其它 exclude 条目性质不同：那些是「不能公开」，这条是「不想公开」，两者都合法但理由要分清，免得将来有人以为它有归属问题。 它单向引用 design-tokens 三个概念（oklch 推色板、字体备选清单、刻度），反向无人引用它，所以裁掉不产生断链——已核实：全仓除它自身外零引用。"
+    },
+    {
+      "id": "exclude-brand-exploration-and-internal-process-docs",
+      "scope": "candidate",
+      "action": "exclude",
+      "patterns": [
+        "docs/acp-review-backlog.md",
+        "docs/brand/**",
+        "resources/brand/README.md",
+        "resources/brand/*.html",
+        "resources/brand/logos/**"
+      ],
+      "overrides": [
+        "reviewed-baseline-default",
+        "remove-private-history-and-qa",
+        "exclude-renamed-private-material"
+      ],
+      "note": "评审基线之后新增的私有材料，判断与既有规则同源，只是作用在候选域。resources/brand 下点名的是探索期材料——README、22 个没选上的 logo 候选、几份展示页，与项目功能无关，别人拿去也用不到；它们是 remove-private-history-and-qa 那条的候选域另一半。**agent-mark-source.svg 不在其列，随发行走**：App 自带捏头像功能，那份 SVG 是标识几何的事实源，代码（agent-mark/geometry.ts、expressions.ts）逐项对着它写，tests/unit/agent-mark-engine.test.ts 直接解析它做回归，所以素材与测试一起发行。docs/brand/** 是官网换标任务书，website/** 已整体不公开，讲怎么换官网素材的文档同理。docs/acp-review-backlog.md 是三个评审 agent 跑出来的内部待办（15 条未修项带 file:line），属于过程物，与 exclude-design-rewrite-process 同一判断：过程留私仓，交付物才发行。"
+    },
+    {
+      "id": "review-acp-agent-mark-and-composer-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "resources/brand/agent-mark-source.svg",
+        "src/main/acp-adapter-launch.ts",
+        "src/main/acp-session-registry.ts",
+        "src/main/acp-status.ts",
+        "src/main/agent-mark-store.ts",
+        "src/main/conversation-events.ts",
+        "src/main/conversation-goal.ts",
+        "src/renderer/src/components/AcpConnections.tsx",
+        "src/renderer/src/components/ThinkingStream.tsx",
+        "src/renderer/src/components/agent-mark/**",
+        "src/renderer/src/components/shared/WorkingDirBar.tsx",
+        "src/renderer/src/components/shared/useComposerFileIntake.ts",
+        "src/shared/acp-status-contract.ts",
+        "tests/e2e/acp-connections.spec.ts",
+        "tests/e2e/acp-desktop-live.spec.ts",
+        "tests/e2e/model-settings-layout.spec.ts",
+        "tests/e2e/onboarding.spec.ts",
+        "tests/e2e/slash-panel.spec.ts",
+        "tests/e2e/welcome-upload.spec.ts",
+        "tests/e2e/working-dir-bar.spec.ts",
+        "tests/unit/acp-integration-spec.test.ts",
+        "tests/unit/acp-status.test.ts",
+        "tests/unit/agent-mark-engine.test.ts",
+        "tests/unit/conversation-config-atomicity.test.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ],
+      "note": "这一轮（首启四步引导、工作目录条、模型页主从两栏、ACP 接入、技能改打 / 唤起、Agent Mark）新增的第一方产品源码与其回归用例，晚于评审基线。ACP 一组是把编辑器/其他 AI 接进来的适配层：adapter-launch 只拼本地启动命令、session-registry 管会话映射、acp-status 是状态机，对端地址与凭证全部来自用户自己配的连接，代码里没有任何内置端点。agent-mark/ 是标识的代码实现（几何、表情、配饰、驱动），素材 SVG 不随发行走，形状在代码里。已逐文件核查这 34 份文件：无 API Key、无 Base URL、无内置模型名、无个人路径与邮箱，与 CLAUDE.md 红线一致。测试侧的 mock 用的都是占位值。 后补（所有者 2026-08-21 决定）：resources/brand/agent-mark-source.svg 与解析它的tests/unit/agent-mark-engine.test.ts 一并发行——捏头像是产品功能，标识素材是它的事实源。同目录其余品牌材料仍不发行，见 exclude-brand-exploration-and-internal-process-docs。"
     }
   ],
   "classificationOnly": true,

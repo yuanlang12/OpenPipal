@@ -56,7 +56,7 @@ import type {
   OpenPipalAgentRuntime
 } from './contracts'
 import {
-  buildRuntimeContextMessage,
+  buildRuntimeContextPrompt,
   convertHistoryToPiMessages,
   runtimeInputToPrompt
 } from './pi-message-conversion'
@@ -73,12 +73,7 @@ import {
   resolveOpenPipalWorkingDirectory
 } from './openpipal-prompt-core'
 import { loadPiCoreSkillCatalog } from './pi-core-skills'
-import {
-  buildContextUsageSegments,
-  estimateTextTokens,
-  estimateToolTokens,
-  isMcpToolName
-} from '../context-usage-stats'
+import { buildContextUsageSegments, buildSegmentBaseline } from '../context-usage-stats'
 
 const MODEL_STALL_TIMEOUT_MS = resolveModelStallTimeoutMs(process.env.OPENPIPAL_STALL_TIMEOUT_MS)
 
@@ -382,13 +377,12 @@ async function* runPiCoreAgentChat(
     disabledTools: workspace.disabledTools,
     mcpServers: workspace.mcpServers
   })
-  // 用量卡分区：组装期各估算一次，与 legacy 同口径（context-usage-stats.ts）
-  const segmentEstimate = {
-    systemPromptTokens: estimateTextTokens(systemPrompt),
-    skillTokens: estimateTextTokens(skillCatalog.promptSection),
-    builtinToolTokens: estimateToolTokens(builtTools.tools.filter((t: any) => !isMcpToolName(t.name))),
-    mcpToolTokens: estimateToolTokens(builtTools.tools.filter((t: any) => isMcpToolName(t.name)))
-  }
+  // 用量卡分区：组装期估算一次，与 legacy 共用同一份分桶策略（context-usage-stats.ts）
+  const segmentEstimate = buildSegmentBaseline({
+    systemPrompt,
+    skillSection: skillCatalog.promptSection,
+    tools: builtTools.tools
+  })
   let recordStreamBoundary: (phase: StreamBoundaryPhase, attempt: number) => void = () => {}
   const models = createOpenPipalPiCoreModels(model, modelConfig, {
     onStreamBoundary: (phase, attempt) => recordStreamBoundary(phase, attempt)
@@ -664,9 +658,6 @@ async function* runPiCoreAgentChat(
     }
   }
 
-  const seedMessages = (projection: ChatMessage[]): AgentMessage[] =>
-    convertHistoryToPiMessages(projection, overrides?.conversationId)
-
   const withRuntimeContext = (prompt: PromptInput): PromptInput =>
     runtimeContext ? { ...prompt, runtimeContext } : prompt
 
@@ -698,17 +689,8 @@ async function* runPiCoreAgentChat(
     currentWatchdog.arm()
     const messageStart = bundle.agent.state.messages.length
     turnActive = true
-    // 带 runtimeContext 时逐字节复刻 Agent.normalizePromptInput(text, images) 的
-    // 形状，再追加独立上下文消息——保证与不带上下文路径的序列化字节完全一致。
     const task = prompt.runtimeContext
-      ? bundle.agent.prompt([
-          {
-            role: 'user',
-            content: [{ type: 'text', text: prompt.text }, ...(prompt.images ?? [])],
-            timestamp: Date.now()
-          } as AgentMessage,
-          buildRuntimeContextMessage(prompt.runtimeContext)
-        ])
+      ? bundle.agent.prompt(buildRuntimeContextPrompt(prompt.text, prompt.images, prompt.runtimeContext))
       : bundle.agent.prompt(prompt.text, prompt.images)
     let reply: AssistantMessage | undefined
     try {
@@ -861,7 +843,7 @@ async function* runPiCoreAgentChat(
 
   const runTask = (async (): Promise<void> => {
     try {
-      let bundle = await createBundle(seedMessages(historyForModel))
+      let bundle = await createBundle(convertHistoryToPiMessages(historyForModel, overrides?.conversationId))
       activeBundle = bundle
 
       // 快照原文广播一次：渲染层据此落盘隐藏 runtime-context 消息，下轮回放字节一致
@@ -910,7 +892,7 @@ async function* runPiCoreAgentChat(
           historyForModel = compacted
           historyCompacted = true
           trailMeasure = measureToolTrail(compacted)
-          bundle = await createBundle(seedMessages(compacted))
+          bundle = await createBundle(convertHistoryToPiMessages(compacted, overrides?.conversationId))
           activeBundle = bundle
           if (!bundle.prompt) return
           reply = await runPrompt(bundle, withRuntimeContext(bundle.prompt))

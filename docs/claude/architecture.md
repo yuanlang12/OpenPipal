@@ -162,17 +162,110 @@ When a browser becomes frontmost, desktop app does NOT follow it. Instead:
 | `/extension` | GET | Extension install guide page |
 | `/role/*` | GET/POST | Role management API |
 | `/api/acp/sessions/:id/mcp` | POST/DELETE | ACP session 级 MCP 注入/注销（session/new.mcpServers） |
+| `/api/permission` | POST | 内联权限裁决回传（浏览器侧栏 / ACP 适配器共用同一个 resolver） |
 | `/*` | GET | Static files (serves built React renderer) |
 
 ### ACP 会话数据流（openpipal-acp 适配器，2026-07 联调定稿）
 
 `source` 三值语义：`desktop`/`extension` 的会话由 renderer 落盘；**`acp` 的 renderer 不在场，
-落盘归服务端**——`/chat/stream` 对 acp 来源在请求侧从会话存储重建历史（只取 user/assistant 文本，
-工具消息不回放），流结束后 `appendMessages` 落盘本轮 user+assistant 增量。ACP 客户端每轮**只应发送
-最新一条消息**（历史由服务端自带；客户端再内联一份=纯冗余）。已知代价：跨轮第 2 轮起有一次
-"上一轮末条消息 RC 有界失配"（同桌面路径的 P1 设计），表现为该轮缓存命中偏低，功能无影响。
+落盘归服务端**——`/chat/stream` 对 acp 来源在请求侧从会话存储重建历史（取材口径
+`shouldReplayStoredMessage`：user/assistant 正文 **+ finalized 工具轨迹一并回放**，跨轮工具记忆靠它），
+流结束后 `appendMessages` 落盘本轮 user + RC 快照 + 正文/工具轨迹增量。ACP 客户端每轮**只应发送
+最新一条消息**（历史由服务端自带；客户端再内联一份=纯冗余）。曾经的已知代价“跨轮第 2 轮起一次
+RC 有界失配、该轮缓存命中偏低”已在 2026-08-18 补齐，**读写两侧分两次修**：读侧是三处历史投影
+携带 `messageKind`（55c8646），写侧是 `createTranscriptCollector.finishRuntimeContext()` 接住
+本轮快照、由 ACP/scheduler 各自紧跟 user 消息落盘。至此这两条无渲染层的路径与桌面同构——
+**新增任何"没有渲染层"的入口，落盘时都要自己补这条快照**，否则缓存只在这条路上静默失效。
 外部客户端（taco_ultra，2026-07-16）实测：新 tarball 部署即落盘生效、跨轮记忆通过（青竹-4729 测试）、
 Clio 风格结构化任务正常出结果。
+
+### ACP 权限确认往返（2026-08-20）
+
+工具授权在**发起的那条传输上**确认，不回落到桌面窗口：`writePermissionToStream` 把权限事件写进
+该会话正在流式的响应（extension 与 acp 同等对待），适配器收到后反向调客户端的
+`session/request_permission`（v1/v2 都是 client baseline 方法），用户在编辑器里就地选择，
+裁决经 `POST /api/permission` 回到与桌面 IPC 同一个 `resolveInlinePermission`。
+
+三条不变量：
+- **主体收窄**：浏览器主体沿用原判据；ACP 持的是 native 令牌（能力更宽），必须过
+  `isAcpPermissionResponder`——会话有 ACP 活动流、流未销毁、`executionId` 与本轮一致，
+  三者缺一即 403。
+- **fail closed**：客户端不支持、报错或取消，适配器一律按"拒绝"回传；不回传的话桌面端
+  这一轮会永远 block 在等裁决。
+- **传输没了就拒绝**：`entrypoint === 'http'` 的执行（extension / ACP）在活动流消失后自动拒绝，
+  不再 `webContents.send` 到桌面窗口——那会冒出一个用户不知来路的确认框（ACP 此前正是卡在这里，
+  编辑器只显示"运行中"，弹窗躺在桌面 App 里）。
+
+### ACP 人格选择：内置角色与自定义 Agent 同一个下拉（2026-08-20）
+
+编辑器的 mode / configOption 选择器是用户唯一够得着的入口（`_meta` 没有任何编辑器 UI 会去填），
+所以两类人格合并成一个 `openpipal.role` 选项：内置角色用裸名，自定义 Agent 用 `agent:<uuid>`。
+
+- 落盘写法：内置角色 → `PATCH { role, workspaceId: null }`（**必须同时清空 workspace 绑定**，
+  否则 workspace 的 systemPrompt 仍然压过角色，"切回去"等于没切）；自定义 Agent →
+  `PATCH { workspaceId }`，`role` 留着当工具基线。
+- 同一把锁：`updateConversationWorkspace` 与 `updateConversationRole` 共用"开聊后拒绝"的判据。
+  桌面端 AgentSwitcher 选 Agent 也是**开新会话**而不是把在聊的这条改头换面，ACP 如实把 409
+  转成协议错误，不自作主张替用户开新会话。
+- resume 以磁盘为准：`session/resume` 从落盘的 `workspaceId` 恢复人格，不信适配器内存里那份。
+- 外部改动回推走**两条腿**，缺一条也不出错：
+  1. **常驻推送（即时）**：`conversation-events.ts` 是"谁改了会话"的唯一出口，发布点钉在
+     `conversation-store` 的四个写函数里；`GET /api/acp/events`（native 主体专用）把它转成一条
+     一直挂着的 SSE，适配器 `runDesktopEventLoop` 订阅，收到即回读磁盘并推协议通知。
+     **事件只带"哪条会话的哪类东西变了"，不带内容**——内容塞进事件等于让同一份状态有两个来源。
+  2. **开跑前对账（兜底）**：`syncPersonaFromDisk` 每轮仍对一次。通道断线/桌面端重启时它接住；
+     推送已经对齐过的话这次就是 no-op，不会重复推同一件事（真机用例钉了这条）。
+  发布是 fire-and-forget 且吞掉订阅者异常：它在 `serializeWrite` 内部被调用，抛出去会把落盘一起带走。
+
+### ACP v2 的三条流式/列表能力（2026-08-20）
+
+| 能力 | 落点 | 关键判据 |
+|---|---|---|
+| `session/list` 分页 | `agent.ts` `listV2Sessions` + `encode/decodeSessionCursor` | 游标是 **keyset**（updatedAt 降序 + id 升序破平）不是 offset：翻页期间删条/改条只会让"刚被改过"的那条重新出现在更早的页里，不漏不死循环。排序必须全序，只按 updatedAt 会漏掉同毫秒的另一条 |
+| `tool_call_content_chunk` | `translator.ts` `artifact_delta` / `visualizer_delta` 分支 | 唯一有真增量正文的事件源就是这两个（`tool_progress` 只有字符数，没有内容）。空 delta（开面板信号）不产出 chunk。v1 没有这个通道，回落 `_meta` 透传 |
+| `/goal`（会话目标 + 自动续跑） | `conversation-goal.ts`（构造与读写单一来源，桌面 IPC 与 ACP 共用）+ `http-server.ts` `GET/POST/DELETE /api/conversations/:id/goal` + `agent.ts` `handleGoalCommand`（拦在 executePrompt 最前，**不进模型、不占一轮**）；终态由 translator 的 `goal_update` 分支说人话 |
+| `available_commands_update` | `http-server.ts` `GET /api/skills` + `agent.ts` `publishCommands` / `applySkillCommand` | 命令列表是**通知**，必须排在 session/new 的响应之后（客户端得先有 sessionId），所以 `schedulePublishCommands` 走 setTimeout(0)。`/技能名` 翻成 `<skill-request>名</skill-request>`——与渲染层 `expandSkillMentions` / `composeSkillRequest` 同一份措辞，认不出的斜杠开头原样送走 |
+
+真机验收（真 Electron + 真适配器 + `scripts/qa/openai-compatible-fixture.mjs` 本地模型）：
+`tests/e2e/acp-desktop-live.spec.ts`。**那一跑逮到的东西离线测试全看不见**：改了 main 却忘了
+`electron-vite build`（`out/main` 还是旧的，新路由 404 成 HTML）、fixture 一次性发完 tool 参数
+所以测不出任何增量链路、`latestUserText` 被 runtime-context 快照挡住（它按设计就排在用户消息之后）。
+
+### ACP 连接状态面板（设置 →「连接」tab，2026-08-20）
+
+`acp:get-status` 每次调用现算一份快照，三个来源各答各的、互不复制：
+
+| 问题 | 谁回答 |
+|---|---|
+| 有哪些 ACP 会话、来自哪个编辑器、什么协议版本 | 会话存储的 `config.acp`（适配器 `session/new` 后 PATCH 上去，`ConversationConfig.acp`） |
+| 此刻在不在跑、上次活动什么时候 | `acp-session-registry.ts` 纯内存 Map（进程重启即清空） |
+| 有没有权限在等你点头 | `ipc-handlers.listPendingPermissionRequests()`（只出 tool/risk，args 不进设置页） |
+| 服务在不在监听 | `http-server.getHttpListeningPort()`（现问 server.address()，不拿常量 PORT 冒充） |
+
+拼装在 `acp-status.ts`（不 import electron，可直接单测）。UI 是与「应用」平级的独立 tab；「复制给 AI」拼的是**本机 API 对接说明**（往哪儿发 / 怎么带令牌 / 收发什么格式），散文走 i18n、URL 与 JSON 保持字面量——那是接口本身，翻译它等于写错。变更走推送不轮询：注册表的每个
+mutator 调 `notifyAcpStatusChanged()` → `acp:status-changed` → 渲染层重新取快照。
+权限请求的摘除只在**结算回调**里通知（`ipc-handlers` 的 `setPermissionRequestSettlementHandler`）——
+应答/中止/超时/发送失败四条终结路径全经过那里，通知放别处必漏（此前中止与超时就不推，
+"等你确认 (N)" 会一直挂着）。
+**这份状态一律不落盘**——它描述的是此刻，存下来只会留下过期的假象；描述性字段本来就在
+会话存储里，再存一份就是两个真相。
+
+### 适配器随包分发（2026-08-21）
+
+编辑器接 ACP 要的是一条能 spawn 的命令。此前用户得先自己装 Node、再 `npm i -g openpipal-acp`，
+装不上就只能放弃；现在适配器跟着 App 一起装进来：
+
+| 环节 | 做法 |
+|---|---|
+| 进包 | `electron-builder.yml` extraResources：`openpipal-acp/dist/index.js` → `acp/openpipal-acp.mjs`（asar 之外） |
+| 为什么改名 `.mjs` | Resources 目录下没有 package.json，`.js` 会被 Node 当成 CommonJS，第一行 import 直接语法报错 |
+| 为什么一个文件就够 | tsup `noExternal: ['@agentclientprotocol/sdk']`，其余只依赖 Node 内置；不用带 node_modules |
+| 谁来产出 dist | `package.json` 的 `build:acp`，三条打包脚本各自在 electron-builder 之前跑一次（漏一条就会把上一次的 dist 当新的装进去） |
+| 拿什么当 Node | App 自己：`process.execPath` + `ELECTRON_RUN_AS_NODE=1`，所以用户机器不需要装 Node |
+| 文件不在时 | `acp-adapter-launch.ts` 返回 null，面板与说明书都不提这条命令——宁可说没带，也不给一条跑不通的命令 |
+
+真机验收方式（比任何离线断言都硬）：`npm run build:unpack` 之后把打好的 App 当 Node 用，
+拿它跑 Resources 里那份适配器，喂一条 `initialize` 看回不回 agentCapabilities。
 
 ## YouTube Subtitle Extraction
 

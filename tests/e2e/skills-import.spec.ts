@@ -89,11 +89,16 @@ async function openSkillsTab(page: Page): Promise<void> {
   await page.addInitScript({ content: MOCK_API })
   await page.goto('/')
   await page.waitForLoadState('networkidle')
-  // 侧栏有 icon/展开两种形态,合并选择器都能命中
-  await page.locator('button[title="技能和工具"], button:has-text("技能和工具")').first().click()
-  await expect(page.getByRole('heading', { name: '技能和工具' })).toBeVisible({ timeout: 5000 })
-  // 默认 tab 是「插件」,切到「技能」tab 再等列表渲染
-  await page.getByRole('button', { name: '技能', exact: true }).click()
+  // 侧栏有 icon/展开两种形态,合并选择器都能命中。
+  // 入口从「技能和工具」改名成「插件」(shell.navigation.plugins / toolsHub.title)之后,
+  // 这里一直点不到,四条用例全卡在这一步 —— 改名时测试没跟着改。
+  await page.locator('button[title="插件"], button:has-text("插件")').first().click()
+  // 「插件」现在既是页面标题也是第一个 tab 名,用 first() 收敛掉 strict 模式冲突
+  await expect(page.getByRole('heading', { name: '插件' }).first()).toBeVisible({ timeout: 5000 })
+  // 默认 tab 是「插件」,切到「技能」tab 再等列表渲染。
+  // tab 是 role="tab" 不是 button —— 早先它确实是普通按钮,加上 tablist 语义之后
+  // getByRole('button') 就再也命中不到了。
+  await page.getByRole('tab', { name: '技能', exact: true }).click()
   await expect(page.getByText('skill-creator').first()).toBeVisible({ timeout: 5000 })
 }
 
@@ -108,7 +113,7 @@ test.describe('技能导入与删除', () => {
     console.log('[skills-1] 三种来源标签 + 导入按钮渲染 - 通过')
 
     // 删除按钮只出现在 source==='user' 的行(my-notes),内置/MCP 不可删
-    await expect(page.locator('button[title="删除"]')).toHaveCount(1)
+    await expect(page.locator('button[title^="删除技能"]')).toHaveCount(1)
     console.log('[skills-1] 删除按钮仅自定义技能可见 - 通过')
 
     await page.screenshot({ path: `${ARTIFACTS_DIR}/list.png` })
@@ -158,12 +163,13 @@ test.describe('技能导入与删除', () => {
   test('删除自定义技能: 行内二次确认 → 反馈 + 列表移除', async ({ page }) => {
     await openSkillsTab(page)
 
-    await page.locator('button[title="删除"]').click()
+    await page.locator('button[title^="删除技能"]').click()
     await expect(page.getByText('确认删除？')).toBeVisible()
     // 确认按钮是「确认删除？」的紧邻兄弟,避免误命中垃圾桶按钮(title 同为「删除」)
     await page.getByText('确认删除？').locator('xpath=following-sibling::button[1]').click()
 
-    await expect(page.getByText('已删除技能「my-notes」')).toBeVisible({ timeout: 5000 })
+    // 文案以 toolsHub.skills.deleted 为准:用的是中文弯引号“”,不是直角引号「」
+    await expect(page.getByText('已删除技能“my-notes”')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=个人笔记整理流程')).toHaveCount(0)
     console.log('[skills-4] 删除自定义技能 + 反馈 + 列表移除 - 通过')
     await page.screenshot({ path: `${ARTIFACTS_DIR}/after-delete.png` })

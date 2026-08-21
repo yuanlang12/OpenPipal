@@ -3,36 +3,19 @@ productName: OpenPipal
 directories:
   buildResources: resources
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  # Root-only development configuration must not leak into app.asar.
-  - '!{eslint.config.mjs,playwright.config.ts,postcss.config.js,tailwind.config.js,vitest.config.ts}'
-  # Development MCP configuration is intentionally distinct from the sanitized extraResource below.
-  - '!mcp-servers.json'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-  # 必须排除的本地密钥与开发工件 —— 严禁随包分发
-  - '!.env'
-  - '!.env.example'
-  - '!openpipal-acp/**'
-  - '!openpipal-extension/**'
-  - '!verify-*.js'
-  - '!tests/**'
-  - '!playwright-report/**'
-  - '!test-results/**'
-  # Never nest historical release artifacts when a build uses a custom output directory.
-  - '!dist/**'
-  # QA 打包留下的 dist-qa* 里各躺着一个完整 .app；不排除会被整个塞进 app.asar
-  # （实测把 152MB 的包吹成 1.2GB）。dist 的排除不覆盖它们，名字不一样。
-  - '!dist-qa*/**'
-  - '!release/**'
-  - '!docs/**'
-  - '!.claude/**'
-  - '!.serena/**'
-  - '!.playwright-mcp/**'
-  - '!CLAUDE.md'
-  - '!scripts/**'
+  # 正向白名单 —— 只有这里列出的才进 app.asar。
+  # 为什么不是排除列表：同一个洞撞过三次（dist-qa* 把 152MB 的包吹成 1.2GB / 48K 品牌素材 zip /
+  # 一次诊断命令落在仓库根的 2.5MB 散落 chunk）。排除列表要求预测未来会出现什么文件；
+  # 白名单只要求列清运行时需要什么 —— 后者是封闭、可枚举、可证明的集合。
+  # 依据：package.json 的 main = out/main/index.js；其余运行时资源（dc-runtime / skills /
+  # tray / system-agents）一律走 process.resourcesPath，属于 extraResources，在 asar 之外。
+  # 改这里必须重跑 asar list 对照实验，确认差集只有预期项（见 .claude/skills/release）。
+  - 'out/**'
+  - 'node_modules/**'
+  - 'package.json'
+  # 主动保留：许可合规随包分发
+  - 'LICENSE'
+  - 'THIRD_PARTY_NOTICES.md'
   # 运行时编译器（artifact-store/ds-compile 的 require('esbuild'|'typescript')）进包但裁剪：
   # typescript 只需 lib/typescript.js —— createSourceFile 纯语法解析，不加载默认库/locale/tsc
   - '!node_modules/typescript/lib/_ts*.js'
@@ -101,6 +84,14 @@ extraResources:
   # 仓库根的 mcp-servers.json 仅在 dev 模式 (__dirname/../../) 被读到,二者独立。
   - from: resources/mcp-servers.json
     to: mcp-servers.json
+  # ACP 适配器 —— 编辑器直接 spawn 它接管 ACP 协议（见 src/main/acp-adapter-launch.ts）。
+  # 随包分发是为了让用户不必先装 Node 再 npm i -g：App 自带的 Electron 就是 Node
+  # （ELECTRON_RUN_AS_NODE=1）。dist/index.js 是 tsup 打好的单文件，ACP SDK 已内联，
+  # 只依赖 Node 内置模块，所以一个文件就够，不用带 node_modules。
+  # 改名 .mjs 是必需的：Resources 目录下没有 package.json，.js 会被当成 CommonJS，
+  # 第一行 import 直接语法报错。源文件由 package.json 的 build:acp 在打包前产出。
+  - from: openpipal-acp/dist/index.js
+    to: acp/openpipal-acp.mjs
   # Localized macOS privacy prompts. The top-level Info.plist values above remain the fallback.
   - from: resources/mac/en.lproj/InfoPlist.strings
     to: en.lproj/InfoPlist.strings

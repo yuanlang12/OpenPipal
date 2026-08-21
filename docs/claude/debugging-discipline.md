@@ -191,3 +191,26 @@ CLAUDE.md 只保留规范条文，具体案例沉在这里。每条案例对应�
 **先 `npx electron-vite build`**；做控制实验时，**破坏与还原两侧都要各构建一次**，
 否则两次跑的是同一份产物，实验没有对照。
 纯 chromium 的 spec（走 vite dev server）不受此影响，别把这条规则乱推广。
+
+## 共享文件只提交自己那部分：验"求值后的形状"，不是验"语法过不过"
+多个会话同时改一个大文件（典型是 `src/shared/i18n/resources.ts`）时，只把自己的 hunk
+`git apply --cached` 进索引是对的做法——但**索引里那份组合体从没被任何人编译或运行过**，
+必须单独验。
+
+**踩坑现场**（2026-08-21，dfbf013）：往 resources.ts 加连接页文案，只 stage 自己的 4 个
+hunk。提交前用 TypeScript parser 验了：0 个 parse error、`connections` 块 zh/en 各一个，
+于是提交。实际上整块 `connections: { … }` 插进了 `tabs: {` 里面：
+`settings.tabs` 出现两个同名键（字符串 + 对象，后写的对象赢），`settings.connections`
+**根本不存在**，英文那边 `search/apps/memory/about` 整个掉到 tabs 外面。
+从 HEAD 构建出的包里连接页一条文案都取不到、四个 tab 没标签；工作区那份一直是对的，
+所以 dev 和打包全程正常，没人发现。
+
+**为什么 parser 抓不到**：键插深一层、键重复，**语法都完全合法**。
+parse error 数为 0 说明的只是"能解析"，与"结构对不对"无关。
+
+**纪律**：提交前把 `git show :<路径>` 取出来**求值**，比对形状而不是比对语法——
+i18n 就是把两个 messages 对象 require 进来，打印关键路径上的键与类型
+（`Object.keys(settings.tabs)` 全是字符串、`settings.connections` 存在、新键取得到值）。
+tsc 的 TS1117（重复键）也只有真跑一次才看得到。同理适用于任何"部分暂存"的结构化文件：
+package.json、各类 config、schema。
+

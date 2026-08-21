@@ -73,9 +73,12 @@ describe('renderer shell i18n', () => {
     ])
     expect(getRoleAvatarAriaLabel('writer', 'idle', i18n.t)).toBe('Office Assistant · Idle')
 
+    // 两条渲染路径都要报出角色+状态：用户上传的 <img> 走 alt，其余走 AgentMark 的 aria-label
     const roleAvatar = read('src/renderer/src/components/shared/RoleAvatar.tsx')
     expect(roleAvatar).toContain('alt={ariaLabel}')
-    expect(roleAvatar.match(/aria-label=\{ariaLabel\}/g)).toHaveLength(2)
+    expect(roleAvatar).toContain('ariaLabel={ariaLabel}')
+    const agentMark = read('src/renderer/src/components/agent-mark/AgentMark.tsx')
+    expect(agentMark).toContain('aria-label={ariaLabel}')
   })
 
   it('exposes localized conversation status dots to assistive technology', () => {

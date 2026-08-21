@@ -1138,6 +1138,13 @@ export async function registerSessionMcpServers(
   return result
 }
 
+/** 某 sessionId 下已连上的注入 server（设置页「外部连接」只读展示用）。 */
+export function listSessionMcpServers(sessionId: string): { name: string; toolCount: number }[] {
+  return servers
+    .filter(s => s.sessionId === sessionId)
+    .map(s => ({ name: s.name, toolCount: s.tools.length }))
+}
+
 /** 注销并关闭某 sessionId 下所有 server。ACP 进程退出 / session 显式结束时调。 */
 export async function unregisterSessionMcpServers(sessionId: string): Promise<void> {
   const toClose: ConnectedServer[] = []

@@ -51,6 +51,8 @@ export interface RoleInfo {
   layoutManifest?: LayoutManifest
   /** 角色头像 data URL(system-agents/<role>/avatar.* 存在时);无则渲染端回落 Lucide */
   avatarDataUrl?: string
+  /** 捏头像的配饰组合 —— 来自 system-agents/<role>/mark.json，文件式 opt-in */
+  mark?: { accessory?: string; hue?: string }
 }
 
 export interface PermissionRequestData {
@@ -127,6 +129,9 @@ export interface ChatMessage {
   askFields?: { label: string; placeholder?: string; type?: string; options?: string[]; required?: boolean }[]
   // 思考内容（持久化）
   thinkingContent?: string
+  /** 这段思考真正花了多久（ms）——thinking_end 到达时按 timestamp 差写死并随消息落盘。
+   *  没有它就没法在重开会话后写出"已思考 12 秒";缺失 = 这段思考没有正常收尾（旧数据/中断）。 */
+  thinkingMs?: number
   // 可视化 HTML 内容（持久化，用于重载后渲染）
   visualizerHtml?: string
   visualizerHeight?: number

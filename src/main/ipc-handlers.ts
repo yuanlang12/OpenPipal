@@ -13,6 +13,11 @@ import {
   updateConversationConfig, setTitleUpdateCallback, StoredMessage
 } from './conversation-store'
 import type { ConversationConfig } from './conversation-store'
+import { mutateConversationConfig } from './conversation-store'
+import type { AcpPendingPermission } from '../shared/acp-status-contract'
+import { buildAcpStatus } from './acp-status'
+import { clearConversationGoal, readConversationGoal, setConversationGoal } from './conversation-goal'
+import { notifyAcpStatusChanged, setAcpStatusListener } from './acp-session-registry'
 import { readTodayUsageByModel } from './usage-log'
 import { saveConversationAttachment, loadConversationAttachment, type AttachmentKind } from './attachment-store'
 import type { ConversationGoal } from './goal-checker'
@@ -66,6 +71,7 @@ import { executeExtraction } from './memory-extractor'
 import { executeAgentDreaming } from './agent-dreamer'
 import { executeAutoDream, forceAutoDream } from './memory-dreamer'
 import { isAutoMemoryEnabled, setAutoMemoryEnabled } from './config-manager'
+import { readMark, writeMark, type MarkScope } from './agent-mark-store'
 import { getCurrentRole, getRoleConfig, getRoleAssetsDir, listRoleAssets, listRoleSystemFolders, listRoleSystemTree, listDesignSystems, getDesignSystemManifest, readRoleManifest, getDsReview, saveDsReview, DsReview } from './role-manager'
 import { getDesignSystemResourceCapability, readDesignSystemJsonResource, readDesignSystemResource } from './design-system-resource'
 import { scanMemoryFiles, readMemoryFile, deleteMemoryFile, getGlobalMemoryDir, getMemoryRoot, listArchivedMemories, restoreArchivedMemory, isWithinMemoryRoot } from './memory-store'
@@ -114,6 +120,8 @@ const pendingPermissionTools = new Map<string, {
   approvalScope?: SessionApprovalScope
   conversationId?: string
   executionId?: string
+  risk?: string
+  requestedAt: number
 }>()
 // 浏览器写命令的权限请求 ID → {对话, 目标 host}（"本次会话允许"时按站点授权,而非按工具）
 const pendingBrowserGrant = new Map<string, {
@@ -182,6 +190,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   setPermissionRequestSettlementHandler(({ requestId }) => {
     pendingPermissionTools.delete(requestId)
     pendingBrowserGrant.delete(requestId)
+    // 这里是唯一一条"权限请求结束了"的汇合点（应答 / 中止 / 超时 / 发送失败都经过）。
+    // 通知放在别处就必然漏：此前只有应答那条路推了，中止和超时不推，设置页那块
+    // 琥珀色"等你确认 (N)"于是一直挂着，直到用户重新进一次设置页才消失。
+    notifyAcpStatusChanged()
   })
 
   // 注入桌面权限处理器（dialog 弹窗）。Runtime Host 会在惰性加载前暂存，
@@ -404,11 +416,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
           case 'goal_update':
             // 持久化到 conversationConfig + 通过通用 artifact-update 通道把进度推给 renderer
             if (conversationId) {
-              const conv = getConversation(conversationId)
-              if (conv) {
-                const merged: ConversationConfig = { ...(conv.config || {}), goal: event.goal }
-                updateConversationConfig(conversationId, merged)
-              }
+              // 加锁的读改写 + 不许浮空：锁外整份写回会盖掉并发的 `/goal clear`，
+              // 而丢掉 promise 意味着写失败时连日志都没有。
+              void mutateConversationConfig(conversationId, (config: ConversationConfig) => ({ ...config, goal: event.goal }))
+                .catch((error: unknown) => {
+                  console.warn('[Goal] 进度落盘失败:', (error as Error)?.message)
+                })
               mainWindow.webContents.send('chat:artifact-update', conversationId, {
                 id: `goal-${conversationId}`,
                 type: 'goal',
@@ -544,55 +557,44 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   // ---- Goal slash 命令 IPC ----
   // /goal <text> 在 InputBar 拦截后,走这三条通道(不混进 chat:send)
   ipcMain.on('chat:set-goal', (_event, conversationId: string, text: string) => {
-    const mainWindow = getWindow()
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    if (!conversationId || !text?.trim()) return
-    const conv = getConversation(conversationId)
-    if (!conv) return
-    const goal: ConversationGoal = {
-      text: text.trim(),
-      maxTurns: 8,
-      turnsUsed: 0,
-      status: 'active',
-      consecutiveBlocks: 0,
-      createdAt: Date.now()
-    }
-    updateConversationConfig(conversationId, { ...(conv.config || {}), goal })
-    mainWindow.webContents.send('chat:artifact-update', conversationId, {
-      id: `goal-${conversationId}`,
-      type: 'goal',
-      title: tMain('runtimeChrome.artifacts.goalTitle'),
-      content: JSON.stringify(goal)
+    if (!getWindow()) return
+    // 目标对象的形状（尤其 maxTurns）是 goal loop 的行为契约，与 ACP 走同一份构造
+    void setConversationGoal(conversationId, text).then((goal) => {
+      if (!goal) return
+      const mainWindow = getWindow()
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      mainWindow.webContents.send('chat:artifact-update', conversationId, {
+        id: `goal-${conversationId}`,
+        type: 'goal',
+        title: tMain('runtimeChrome.artifacts.goalTitle'),
+        content: JSON.stringify(goal)
+      })
+      console.log(`[Goal] /goal set: "${goal.text.slice(0, 60)}"`)
     })
-    console.log(`[Goal] /goal set: "${goal.text.slice(0, 60)}"`)
   })
 
   ipcMain.on('chat:clear-goal', (_event, conversationId: string) => {
-    const mainWindow = getWindow()
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    if (!conversationId) return
-    const conv = getConversation(conversationId)
-    if (!conv) return
-    const rest = { ...(conv.config || {}) }
-    delete (rest as any).goal
-    updateConversationConfig(conversationId, rest as ConversationConfig)
-    mainWindow.webContents.send('chat:artifact-update', conversationId, {
-      id: `goal-${conversationId}`,
-      type: 'goal',
-      title: '',
-      content: '',
-      removed: true
+    if (!getWindow()) return
+    void clearConversationGoal(conversationId).then((cleared) => {
+      if (!cleared) return
+      const mainWindow = getWindow()
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      mainWindow.webContents.send('chat:artifact-update', conversationId, {
+        id: `goal-${conversationId}`,
+        type: 'goal',
+        title: '',
+        content: '',
+        removed: true
+      })
+      console.log(`[Goal] /goal clear`)
     })
-    console.log(`[Goal] /goal clear`)
   })
 
   ipcMain.on('chat:show-goal', (_event, conversationId: string) => {
     const mainWindow = getWindow()
     if (!mainWindow || mainWindow.isDestroyed()) return
     if (!conversationId) return
-    const conv = getConversation(conversationId)
-    if (!conv) return
-    const goal = conv.config?.goal
+    const goal = readConversationGoal(conversationId)
     if (!goal) {
       // 无 goal:啥也不做,UI 不会自动打开侧栏(用户没设过就没东西可看)
       console.log(`[Goal] /goal show but no goal in conversation ${conversationId}`)
@@ -1315,6 +1317,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return readRoleManifest(roleName, 'preflow.json')
   })
 
+  // 捏头像：内置角色和自建 Agent 走同一对 IPC，scope 决定落哪个根目录
+  ipcMain.handle('mark:get', (_event, scope: MarkScope, id: string) => readMark(scope, id))
+  ipcMain.handle('mark:save', (_event, scope: MarkScope, id: string, config: unknown) =>
+    writeMark(scope, id, config))
+
   ipcMain.handle('assets:upload-to-category', async (_event, sourcePath: string, category: 'brand' | 'refs' | 'docs' | 'kits' | 'design-system') => {
     // category 只用于对 agent 的元数据标签（写入 conversationConfig.initialAssets），不作为文件夹
     if (category && !['brand', 'refs', 'docs', 'kits', 'design-system'].includes(category)) {
@@ -1702,6 +1709,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.on('permission:clear-session', (_event, conversationId?: string) => {
     clearSessionApprovals(conversationId)
   })
+
+  // ---- 外部连接（ACP）只读状态 ----
+  // 每次调用现算：端口现问 http-server，"在不在跑"现问内存注册表，待确认权限
+  // 现读权限队列。没有缓存，也没有任何一处落盘。
+  ipcMain.handle('acp:get-status', () => buildAcpStatus(listPendingPermissionRequests()))
+  setAcpStatusListener(() => {
+    const win = getWindow()
+    if (win && !win.isDestroyed()) win.webContents.send('acp:status-changed')
+  })
 }
 
 // ---- 内联权限响应处理（IPC 与 HTTP/SSE 共用）----
@@ -1720,8 +1736,10 @@ export function resolveInlinePermission(
   const owner = grant || entry
   if (!owner) return false
   if (!pendingPermissionResolvers.has(requestId)) {
+    // 早退也在摘条目，同样要让设置页的计数跟上（这条不经过结算回调）
     pendingPermissionTools.delete(requestId)
     pendingBrowserGrant.delete(requestId)
+    notifyAcpStatusChanged()
     return false
   }
 
@@ -1753,6 +1771,7 @@ export function resolveInlinePermission(
   // single-use even if a client retries the same HTTP/IPC response.
   pendingPermissionTools.delete(requestId)
   pendingBrowserGrant.delete(requestId)
+  // 通知由结算回调统一发（resolvePermissionRequest → settlement handler），这里不重复
   resolvePermissionRequest(requestId, approved)
   if (approved && sessionApprove) {
     if (grant && grant.host) {
@@ -1763,6 +1782,19 @@ export function resolveInlinePermission(
     }
   }
   return true
+}
+
+/**
+ * 还在等用户点头的权限请求（设置页「外部连接」只读展示用）。
+ * 只出参数以外的元信息——args 可能带路径、命令和页面内容，不进设置页。
+ */
+export function listPendingPermissionRequests(): AcpPendingPermission[] {
+  return Array.from(pendingPermissionTools.values(), entry => ({
+    tool: entry.tool,
+    risk: entry.risk,
+    conversationId: entry.conversationId,
+    requestedAt: entry.requestedAt
+  }))
 }
 
 // ---- 内联权限请求发送（供 pi-security 使用）----
@@ -1782,8 +1814,11 @@ export function sendInlinePermissionRequest(getWindow: () => BrowserWindow | nul
     args: request.args,
     approvalScope: request.approvalScope,
     conversationId: request.conversationId,
-    executionId: execution?.executionId
+    executionId: execution?.executionId,
+    risk: request.risk,
+    requestedAt: Date.now()
   })
+  notifyAcpStatusChanged()
   // 浏览器写命令:记下目标 host,"本次会话允许"时按站点(而非按工具)授权
   if (isBrowserWriteTool(request.tool)) {
     pendingBrowserGrant.set(request.requestId, {
@@ -1833,10 +1868,10 @@ export function sendInlinePermissionRequest(getWindow: () => BrowserWindow | nul
   // 浏览器(SSE)优先:命中正在流式的会话则只写浏览器流,避免桌面窗口冒出一个无关会话的气泡。
   // 桌面 /chat 走 IPC、不登记活动流,故 desktop 请求这里返回 false → 回退到 webContents.send。
   if (writePermissionToStream(request.conversationId, safePayload)) return
-  // Extension-owned requests must never fall through to an unrelated desktop
-  // window if their SSE transport disappeared. ACP has no browser permission
-  // response protocol, so it deliberately falls back to the trusted desktop.
-  if (execution?.owner.entrypoint === 'http' && execution.owner.ownerId === 'extension') {
+  // HTTP 拥有的请求(extension / ACP)都在自己的传输上确认——ACP 现在也走
+  // session/request_permission 反向问编辑器。传输没了就 fail closed:回落到桌面
+  // 窗口只会冒出一个用户不知来路的确认框(ACP 此前正是卡在这)。
+  if (execution?.owner.entrypoint === 'http') {
     console.warn('[Security] HTTP 权限流已不可用，自动拒绝:', request.tool)
     pendingPermissionTools.delete(request.requestId)
     pendingBrowserGrant.delete(request.requestId)

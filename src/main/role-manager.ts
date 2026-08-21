@@ -46,6 +46,11 @@ export interface RoleConfig {
    */
   avatarDataUrl?: string
   /**
+   * 捏头像存的配饰组合 —— 派生字段(非 agent.md 持久配置)。
+   * 来源:system-agents/<role>/mark.json 存在即读。眼型是核心符号,不在这里,也不许改。
+   */
+  mark?: { accessory?: string; hue?: string }
+  /**
    * 文件式角色级记忆开关——agent.md frontmatter `memory: off` 关闭注入+抽取。
    * 缺省/其它值 = true（记忆照常）。design 关闭：跨会话偏好走设计系统/资产显式通道，
    * 隐式记忆（每轮注入 + 自动抽取任务过程内容）与其严格会话隔离哲学冲突。
@@ -171,6 +176,10 @@ function resolveRole(roleName: string): RoleConfig | null {
       }
     }
   }
+
+  // 捏头像的配饰组合 —— mark.json 存在即覆盖角色默认(文件式 opt-in,同 layout.json)
+  const mark = readRoleManifest(roleName, 'mark.json')
+  if (mark && typeof mark === 'object') result = { ...result, mark }
 
   // 头像 —— system-agents/<role>/avatar.* 存在即读成 data URL(文件式 opt-in,同 layout.json)
   const avatarDataUrl = readRoleAvatarDataUrl(roleName)
@@ -670,5 +679,45 @@ export function readRoleManifest(roleName: string, fileName: string): any | null
   } catch (err) {
     console.warn(`[Role] 读取 ${roleName}/${fileName} 失败:`, (err as any)?.message)
     return null
+  }
+}
+
+/**
+ * 写角色的可选 manifest 文件（目前只有 mark.json —— 捏头像的配饰组合）。
+ *
+ * 与 readRoleManifest 同一套硬化：角色名白名单、文件名字符集、basename 相等、
+ * 落盘前 realpath 校验目录没被软链接劫持到 system-agents/ 之外。
+ * 值本身不做枚举校验 —— 配饰和色号的目录在渲染层，主进程只保证「是个短 slug」，
+ * 认不出的 id 由渲染层退回默认（ACCESSORY_BY_ID 查不到就用 none）。
+ * 确定性（路径安全）归代码，判断力（这个配饰存不存在）归渲染层。
+ */
+const SLUG = /^[a-z][a-z0-9-]{0,31}$/
+
+export function writeRoleManifest(
+  roleName: string,
+  fileName: string,
+  value: Record<string, unknown>,
+): boolean {
+  if (!isBuiltinRoleName(roleName)) return false
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.json$/.test(fileName) || basename(fileName) !== fileName) return false
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const clean: Record<string, string> = {}
+  for (const [k, v] of Object.entries(value)) {
+    if (!SLUG.test(k)) return false
+    if (typeof v !== 'string' || !SLUG.test(v)) return false
+    clean[k] = v
+  }
+  const root = dataPath('system-agents')
+  const roleDir = join(root, roleName)
+  try {
+    fs.mkdirSync(roleDir, { recursive: true })
+    const realRoot = fs.realpathSync(root)
+    const realRoleDir = fs.realpathSync(roleDir)
+    if (realRoleDir !== join(realRoot, roleName)) return false
+    fs.writeFileSync(join(realRoleDir, fileName), `${JSON.stringify(clean, null, 2)}\n`, 'utf8')
+    return true
+  } catch (err) {
+    console.warn(`[Role] 写 ${roleName}/${fileName} 失败:`, (err as any)?.message)
+    return false
   }
 }

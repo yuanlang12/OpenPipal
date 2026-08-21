@@ -226,7 +226,7 @@ export function SubagentCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className="flex justify-start mb-msg animate-fade-in">
-      <div className="max-w-msg w-full rounded-lg border border-brand-200/60 dark:border-brand-700/60 bg-brand-50/40 dark:bg-brand-900/20 overflow-hidden">
+      <div className="group/sub max-w-msg w-full rounded-lg border border-brand-200/60 dark:border-brand-700/60 bg-brand-50/40 dark:bg-brand-900/20 overflow-hidden">
         {/* 顶部：profile + status + via modelId */}
         <div className="min-w-0 flex items-center gap-2 px-3 py-2 border-b border-brand-100/60 dark:border-brand-800/60">
           <Sparkles className="w-3.5 h-3.5 text-brand-500 shrink-0" />
@@ -296,7 +296,7 @@ export function SubagentCard({ message }: { message: ChatMessage }) {
             <button
               onClick={() => setExpanded(!expanded)}
               aria-expanded={expanded}
-              className="ml-auto flex items-center gap-1 px-2 py-0.5 text-chat-meta font-medium text-brand-600 dark:text-brand-400 hover:bg-brand-100/60 dark:hover:bg-brand-900/40 rounded transition-colors"
+              className={`ml-auto flex items-center gap-1 px-2 py-0.5 text-chat-meta font-medium text-brand-600 dark:text-brand-400 hover:bg-brand-100/60 dark:hover:bg-brand-900/40 rounded transition-all opacity-0 group-hover/sub:opacity-100 group-has-[:focus-visible]/sub:opacity-100`}
               title={expanded ? t('chat.subagent.collapseTitle') : t('chat.subagent.expandTitle')}
             >
               <ChevronDown

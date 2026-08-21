@@ -12,9 +12,9 @@
  * one step. The cap is applied from the first model-visible projection and
  * never changes with message age, so it remains prompt-cache friendly.
  */
-
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { ToolResultMessage } from '@earendil-works/pi-ai/compat'
+import { estimateTokens } from './token-estimate'
 
 /** Codex's documented example uses 12k tokens; Pi's built-ins use a similar 50KB ceiling. */
 export const MAX_TOOL_RESULT_TOKENS = 12_000
@@ -41,26 +41,19 @@ function normalizeAssistantUsage(message: AgentMessage): AgentMessage {
   return { ...(message as any), usage: zeroAssistantUsage() } as AgentMessage
 }
 
-export function estimateContextTextTokens(text: string): number {
-  let ascii = 0
-  let other = 0
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) < 128) ascii++
-    else other++
-  }
-  return Math.ceil(ascii / 4 + other / 1.6)
-}
+/** 公式住在零依赖叶子 token-estimate.ts；此处沿用既有导出名（两份单测按此名引用） */
+export { estimateTokens as estimateContextTextTokens } from './token-estimate'
 
 function takeWithinTokenBudget(text: string, budget: number, fromEnd: boolean): string {
   if (budget <= 0 || !text) return ''
-  if (estimateContextTextTokens(text) <= budget) return text
+  if (estimateTokens(text) <= budget) return text
 
   let low = 0
   let high = text.length
   while (low < high) {
     const mid = Math.ceil((low + high) / 2)
     const candidate = fromEnd ? text.slice(text.length - mid) : text.slice(0, mid)
-    if (estimateContextTextTokens(candidate) <= budget) low = mid
+    if (estimateTokens(candidate) <= budget) low = mid
     else high = mid - 1
   }
   return fromEnd ? text.slice(text.length - low) : text.slice(0, low)
@@ -75,11 +68,11 @@ export function capToolResultText(
   text: string,
   maxTokens = MAX_TOOL_RESULT_TOKENS
 ): string {
-  const estimated = estimateContextTextTokens(text)
+  const estimated = estimateTokens(text)
   if (estimated <= maxTokens) return text
 
   const marker = `\n\n…[单条工具结果已确定性限长：原 ${text.length} 字符，约 ${estimated} tokens；保留头尾]…\n\n`
-  const available = Math.max(0, maxTokens - estimateContextTextTokens(marker))
+  const available = Math.max(0, maxTokens - estimateTokens(marker))
   const headBudget = Math.floor(available * 0.6)
   const tailBudget = available - headBudget
   const head = takeWithinTokenBudget(text, headBudget, false)

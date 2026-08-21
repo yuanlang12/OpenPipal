@@ -1,15 +1,16 @@
 import { useState } from 'react'
-import { Cpu, Mic, Monitor, Brain, Info, Palette, Search } from 'lucide-react'
+import { Cpu, Mic, Monitor, Brain, Info, Palette, Search, Plug } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ModelSettings } from './ModelSettings'
 import { VoiceSettings } from './VoiceSettings'
 import { SearchSettings } from './SearchSettings'
 import { AppSettings } from './AppSettings'
+import { AcpConnections } from './AcpConnections'
 import { MemorySettings } from './MemorySettings'
 import { AboutSection } from './AboutSection'
 import { AppearanceSettings } from './AppearanceSettings'
 
-type SettingsTab = 'appearance' | 'model' | 'voice' | 'search' | 'apps' | 'memory' | 'about'
+type SettingsTab = 'appearance' | 'model' | 'voice' | 'search' | 'apps' | 'connections' | 'memory' | 'about'
 
 const TABS: { key: SettingsTab; icon: React.ReactNode }[] = [
   { key: 'appearance', icon: <Palette className="w-4 h-4" /> },
@@ -17,6 +18,7 @@ const TABS: { key: SettingsTab; icon: React.ReactNode }[] = [
   { key: 'voice', icon: <Mic className="w-4 h-4" /> },
   { key: 'search', icon: <Search className="w-4 h-4" /> },
   { key: 'apps', icon: <Monitor className="w-4 h-4" /> },
+  { key: 'connections', icon: <Plug className="w-4 h-4" /> },
   { key: 'memory', icon: <Brain className="w-4 h-4" /> },
   { key: 'about', icon: <Info className="w-4 h-4" /> },
 ]
@@ -58,6 +60,7 @@ export function SettingsPanel() {
         {activeTab === 'voice' && <VoiceSettings />}
         {activeTab === 'search' && <SearchSettings />}
         {activeTab === 'apps' && <AppSettings />}
+        {activeTab === 'connections' && <AcpConnections />}
         {activeTab === 'memory' && <MemorySettings />}
         {activeTab === 'about' && <AboutSection />}
       </div>

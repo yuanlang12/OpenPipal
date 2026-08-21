@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Eye, EyeOff, Check, X, Plus, Trash2, Edit2, Brain, ChevronLeft, ChevronDown, Search, RefreshCw } from 'lucide-react'
+import { Eye, EyeOff, Check, Plus, Trash2, Edit2, Brain, ChevronLeft, ChevronRight, ChevronDown, Search, RefreshCw, Box } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toDisplayError, renderDisplayError, type DisplayError } from '../utils/mainError'
 import { displayModelEntryName } from '../utils/modelDisplay'
@@ -200,6 +200,9 @@ interface CatalogProviderEntry { name: string; baseUrl: string; models: CatalogM
 /** 目录里没有"自定义"这一项——它不是一个服务商，是"目录里找不到时自己填" */
 const CUSTOM_PROVIDER_ENTRY: CatalogProviderEntry = { name: '', baseUrl: '', models: [] }
 
+/** 左栏"未分组"伪服务商(providerId 悬空的历史配置) */
+const UNGROUPED_KEY = '__ungrouped__'
+
 /** 下拉里最多列多少个模型：openrouter 一家就有 300+，全量渲染既慢又没法看 */
 const MODEL_SUGGESTION_LIMIT = 60
 
@@ -257,21 +260,19 @@ export function ModelSettings() {
   const [presets, setPresets] = useState<ModelPreset[]>([])
   const [providers, setProviders] = useState<ProviderEntity[]>([])
   const [showForm, setShowForm] = useState(false)
-  // 服务商卡片折叠态。默认全收起,只把「当前在用的模型」所在那张卡自动展开 ——
-  // 用户进设置最常见的目的是确认/切换现在用的是哪个,而不是通读全部配置。
-  const [openProviders, setOpenProviders] = useState<Set<string>>(new Set())
-  // 只在首次拿到数据时自动展开一次,之后完全交给用户 —— 否则用户手动收起后,
-  // 下一次 presets 变化又会把它顶开。
-  const seededOpenRef = useRef(false)
-  const toggleProvider = (id: string): void => setOpenProviders(prev => {
-    const next = new Set(prev)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    return next
-  })
+  // 主从两栏:左栏选中的服务商(UNGROUPED_KEY = 悬空模型的伪分组)。
+  // 首次拿到数据时自动选中「当前在用的模型」所在的服务商 —— 用户进设置最常见的
+  // 目的是确认/切换现在用的是哪个,而不是通读全部配置。之后完全交给用户。
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const seededSelectRef = useRef(false)
+  // 窄容器(侧栏形态)退化成「列表 → 点进详情」两级推进
+  const [wide, setWide] = useState(true)
+  const [narrowDetail, setNarrowDetail] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
-  // 服务商编辑（换 key/网关一处生效）：null = 关闭；apiKey 空串 = 保留原 key
-  const [editingProvider, setEditingProvider] = useState<{
+  // 详情栏的服务商草稿(换 key/网关一处生效):apiKey 空串 = 保留原 key。
+  // 只在切换选中项/保存成功后重建,期间 presets 刷新不清用户正在改的字段。
+  interface ProviderDraft {
     id: string
     name: string
     baseUrl: string
@@ -280,7 +281,36 @@ export function ModelSettings() {
     thinkingFormat: 'auto' | 'openai' | 'qwen' | 'deepseek' | 'zai'
     thinkingBudgetMode: ThinkingBudgetMode
     thinkingBudgetDraft: ThinkingBudgetDraft
-  } | null>(null)
+  }
+  const [draft, setDraft] = useState<ProviderDraft | null>(null)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [confirmDeleteProv, setConfirmDeleteProv] = useState(false)
+  // 表单入口:从「添加服务商」进来标题叫服务商,从服务商下「添加模型」进来叫模型
+  const [formEntry, setFormEntry] = useState<'provider' | 'model'>('provider')
+
+  const draftOf = (prov: ProviderEntity): ProviderDraft => ({
+    id: prov.id,
+    name: prov.name,
+    baseUrl: prov.baseUrl,
+    apiKey: '',
+    apiFormat: prov.apiFormat || '',
+    thinkingFormat: prov.thinkingFormat || 'auto',
+    thinkingBudgetMode: budgetModeOf(prov.thinkingBudgets),
+    thinkingBudgetDraft: budgetDraftOf(prov.thinkingBudgets)
+  })
+
+  const selectProvider = (key: string, prov?: ProviderEntity): void => {
+    setSelectedKey(key)
+    setDraft(prov && !prov.builtin ? draftOf(prov) : null)
+    setAdvancedOpen(false)
+    setRenaming(false)
+    setConfirmDeleteProv(false)
+    setNarrowDetail(true)
+    // 表单开着时点别的服务商 = 放弃表单,右栏回到详情
+    setShowForm(false)
+    setEditingId(null)
+  }
 
   // 表单状态
   const [provider, setProvider] = useState('custom')
@@ -339,6 +369,23 @@ export function ModelSettings() {
     if (models) setPresets(models)
     const provs = await (window.api as any).listModelProviders?.().catch(() => null)
     if (provs) setProviders(provs)
+    // 首次两份数据都到齐后再选中(用 effect 播会踩到"模型已到、服务商还没到"的
+    // 中间态,把选中项误播成「未分组」):优先活动模型所在的服务商,只播一次。
+    if (!seededSelectRef.current && models && models.length > 0) {
+      seededSelectRef.current = true
+      const provList: ProviderEntity[] = provs || []
+      const withModels = provList.filter(pr => models.some((m: ModelPreset) => m.providerId === pr.id))
+      const activeProviderId = models.find((m: ModelPreset) => m.active)?.providerId
+      const target = withModels.find(pr => pr.id === activeProviderId)
+        ?? withModels.find(pr => !pr.builtin) ?? withModels[0]
+      if (target) {
+        setSelectedKey(target.id)
+        setDraft(target.builtin ? null : draftOf(target))
+      } else if (models.some((m: ModelPreset) => !m.providerId || !provList.some(x => x.id === m.providerId))) {
+        setSelectedKey(UNGROUPED_KEY)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 目录只在挂载时取一次：它来自 Pi 的静态表，一个会话内不会变
@@ -553,6 +600,7 @@ export function ModelSettings() {
         : 'openai'
     )
     setCtxDetection({ kind: 'idle' })
+    setFormEntry('model')
     setShowForm(true)
     setConnectionStatus('idle')
     setThinkingStatus('idle')
@@ -579,22 +627,35 @@ export function ModelSettings() {
     if (prov.apiFormat === 'anthropic' || prov.apiFormat === 'openai-responses') {
       setApiFormat(prov.apiFormat)
     }
+    setFormEntry('model')
     setShowForm(true)
   }
 
   const handleSaveProvider = async () => {
-    if (!editingProvider) return
-    const parsedBudgets = thinkingBudgetValue(editingProvider.thinkingBudgetMode, editingProvider.thinkingBudgetDraft)
-    if (editingProvider.thinkingBudgetMode === 'custom' && !parsedBudgets) return
-    await (window.api as any).updateModelProvider?.(editingProvider.id, {
-      name: editingProvider.name,
-      baseUrl: editingProvider.baseUrl,
-      apiKey: editingProvider.apiKey, // 空串 = 主进程保留原 key
-      apiFormat: editingProvider.apiFormat,
-      thinkingFormat: editingProvider.thinkingFormat,
-      thinkingBudgets: editingProvider.thinkingBudgetMode === 'auto' ? 'auto' : parsedBudgets
+    if (!draft) return
+    const parsedBudgets = thinkingBudgetValue(draft.thinkingBudgetMode, draft.thinkingBudgetDraft)
+    if (draft.thinkingBudgetMode === 'custom' && !parsedBudgets) return
+    await (window.api as any).updateModelProvider?.(draft.id, {
+      name: draft.name,
+      baseUrl: draft.baseUrl,
+      apiKey: draft.apiKey, // 空串 = 主进程保留原 key
+      apiFormat: draft.apiFormat,
+      thinkingFormat: draft.thinkingFormat,
+      thinkingBudgets: draft.thinkingBudgetMode === 'auto' ? 'auto' : parsedBudgets
     })
-    setEditingProvider(null)
+    // key 已入库,草稿归位成"保留原 key";其余字段就是刚存的值,原样即是新基线
+    setDraft(d => (d ? { ...d, apiKey: '' } : d))
+    setRenaming(false)
+    await loadPresets()
+  }
+
+  /** 服务商级删除 = 删掉它名下全部模型(没有独立的服务商删除 IPC,空壳自然消失) */
+  const handleDeleteProvider = async (provId: string, modelIds: string[]) => {
+    for (const id of modelIds) await window.api.deleteModelPreset?.(id)
+    setConfirmDeleteProv(false)
+    setSelectedKey(null)
+    seededSelectRef.current = false // 让选中项按新数据重播一次
+    setNarrowDetail(false)
     await loadPresets()
   }
 
@@ -625,23 +686,63 @@ export function ModelSettings() {
     setShowModelDropdown(false)
   }
 
-  // 按服务商分组：服务商实体顺序在前，providerId 悬空的进"未分组"尾部
+  // 宽窄断点:≥520px 内容宽走左右两栏,更窄退化成两级推进(侧栏形态)
   useEffect(() => {
-    if (seededOpenRef.current) return
-    // 数据还没到之前不算用掉这次机会 —— effect 首次运行时 presets 还是空数组,
-    // 在那里置位会让唯一一次播种被空跑消耗掉,卡片永远不会自动展开。
-    if (presets.length === 0) return
-    // 拿到数据后无条件置位:活动模型是「未分组」(providerId 悬空)时若早返回不置位,
-    // 「只播种一次」的契约就永远不生效,之后每次 presets 变化都会重新展开用户刚收起的卡。
-    seededOpenRef.current = true
-    const activeProviderId = presets.find(preset => preset.active)?.providerId
-    if (!activeProviderId) return
-    setOpenProviders(new Set([activeProviderId]))
-  }, [presets])
+    const el = rootRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width ?? 0
+      setWide(w >= 520)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [showForm])
 
+  // 按服务商分组：服务商实体顺序在前，providerId 悬空的进"未分组"尾部
   const grouped = providers.map(prov => ({ prov, models: presets.filter(p => p.providerId === prov.id) }))
     .filter(g => g.models.length > 0)
   const ungrouped = presets.filter(p => !p.providerId || !providers.some(x => x.id === p.providerId))
+  const builtinGroups = grouped.filter(g => g.prov.builtin)
+  const customGroups = grouped.filter(g => !g.prov.builtin)
+
+  // 选中的服务商被删空后自动落到下一个可选项
+  const selectedGroup = grouped.find(g => g.prov.id === selectedKey) ?? null
+  const selectionValid = selectedGroup !== null || (selectedKey === UNGROUPED_KEY && ungrouped.length > 0)
+  useEffect(() => {
+    if (selectedKey === null || selectionValid) return
+    const fallback = customGroups[0] ?? builtinGroups[0]
+    if (fallback) selectProvider(fallback.prov.id, fallback.prov)
+    else if (ungrouped.length > 0) selectProvider(UNGROUPED_KEY)
+    else setSelectedKey(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionValid, selectedKey, providers, presets])
+
+  // 草稿与选中项对齐:seed/fallback 之外的任何路径漏设草稿时兜底
+  const selectedProvId = selectedGroup?.prov.id
+  useEffect(() => {
+    const prov = selectedGroup?.prov
+    if (prov && !prov.builtin && (!draft || draft.id !== prov.id)) setDraft(draftOf(prov))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProvId])
+
+  /** 草稿相对已存值的脏位:决定保存钮亮不亮、要不要给「还原」 */
+  const draftDirty = (() => {
+    const prov = selectedGroup?.prov
+    if (!draft || !prov || prov.builtin) return false
+    const budgetsChanged = draft.thinkingBudgetMode !== budgetModeOf(prov.thinkingBudgets)
+      || (draft.thinkingBudgetMode === 'custom'
+        && JSON.stringify(parseThinkingBudgets(draft.thinkingBudgetDraft))
+          !== JSON.stringify(isThinkingBudgets(prov.thinkingBudgets) ? prov.thinkingBudgets : null))
+    return draft.name !== prov.name
+      || draft.baseUrl !== prov.baseUrl
+      || draft.apiKey !== ''
+      || (draft.apiFormat || 'openai') !== (prov.apiFormat || 'openai')
+      || draft.thinkingFormat !== (prov.thinkingFormat || 'auto')
+      || budgetsChanged
+  })()
+  const draftBudgetsInvalid = !!draft
+    && draft.thinkingBudgetMode === 'custom'
+    && !parseThinkingBudgets(draft.thinkingBudgetDraft)
   const locale = i18n.resolvedLanguage || i18n.language
   const contextHelp = ctxDetection.kind === 'testing'
     ? t('settings.model.context.detecting')
@@ -704,12 +805,10 @@ export function ModelSettings() {
 
   const closeForm = (): void => { setShowForm(false); setEditingId(null) }
 
-  // 新建/编辑走下级页:整块内容区换成表单,左上角返回。
-  // 之前表单挂在列表最底下,服务商一多就滚不到,用户会以为根本没有新建入口。
-  // 表单只在表单路由构建 —— 原来提成 const 会让这 300 行 JSX(含 57 处 t() 查表、
-  // 一次 PROVIDER_PRESETS.map)在列表视图的每次渲染里白建一遍再丢掉。
-  if (showForm) {
-    return (
+  // 新建/编辑不再整页跳转:表单渲染在右栏详情区(窄窗则占满内容区),左栏还在,
+  // 点别的服务商即放弃表单回详情。仍然只在表单打开时构建 —— 关着也建会让这
+  // 300 行 JSX(含 57 处 t() 查表)在列表视图的每次渲染里白建一遍再丢掉。
+  const formView = !showForm ? null : (
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <button
@@ -721,7 +820,11 @@ export function ModelSettings() {
             {t('common.actions.back')}
           </button>
           <span className="text-[13px] font-medium text-surface-700">
-            {editingId ? t('settings.model.form.editTitle') : t('settings.model.form.addTitle')}
+            {editingId
+              ? t('settings.model.form.editTitle')
+              : formEntry === 'provider'
+                ? t('settings.model.form.addProviderTitle')
+                : t('settings.model.form.addTitle')}
           </span>
         </div>
       <div className="p-4 rounded-lg border border-surface-100 space-y-2.5">
@@ -1151,238 +1254,342 @@ export function ModelSettings() {
             <p className="text-[11px] text-surface-400">{t('settings.model.status.thinkingNotDetectedHelp')}</p>
           )}
         </div>
-  
+
       </div>
     )
-  }
 
-  return (
-    <div className="space-y-3">
-      {/* 顶部常驻工具条 —— 新建按钮不再沉在列表最底下 */}
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[12px] text-surface-400">
-          {t('settings.model.provider.summaryCount', { providers: grouped.length, models: presets.length })}
+  // ── 主从两栏:左栏服务商列表 ──────────────────────────────────────────
+  const activeIn = (models: ModelPreset[]): boolean => models.some(m => m.active)
+
+  const railRow = (key: string, label: string, models: ModelPreset[], prov?: ProviderEntity): JSX.Element => (
+    <button
+      key={key}
+      onClick={() => selectProvider(key, prov)}
+      data-testid={`select-provider-${key}`}
+      aria-current={selectedKey === key ? 'true' : undefined}
+      className={`w-full rounded-md px-2 py-2 transition-colors ${
+        selectedKey === key && wide
+          ? 'bg-surface-100'
+          : 'hover:bg-surface-50 dark:hover:bg-surface-100/60'
+      }`}
+    >
+      <span className="flex flex-1 min-w-0 items-center gap-2 text-left">
+        <Box className="w-3.5 h-3.5 shrink-0 text-surface-400" />
+        <span className="text-[12.5px] font-medium text-surface-600 truncate">{label}</span>
+        <span className="ml-auto flex items-center gap-1.5 shrink-0">
+          {/* 绿点 = 当前在用的模型住在这家 */}
+          {activeIn(models) && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+          {!wide && <ChevronRight className="w-3.5 h-3.5 text-surface-300" />}
         </span>
+      </span>
+    </button>
+  )
+
+  const rail = (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex-1 min-h-0 overflow-y-auto p-1.5 space-y-3">
+        {builtinGroups.length > 0 && (
+          <div>
+            <div className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-surface-300">
+              {t('settings.model.provider.builtinGroup')}
+            </div>
+            <div className="space-y-0.5">
+              {builtinGroups.map(g => {
+                const host = hostOf(g.prov.baseUrl)
+                return railRow(g.prov.id, providerLabel(g.prov, t, host, providerHasCustomName(g.prov, host)), g.models, g.prov)
+              })}
+            </div>
+          </div>
+        )}
+        <div>
+          <div className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-surface-300">
+            {t('settings.model.provider.customGroup')}
+          </div>
+          <div className="space-y-0.5">
+            {customGroups.map(g => {
+              const host = hostOf(g.prov.baseUrl)
+              return railRow(g.prov.id, providerLabel(g.prov, t, host, providerHasCustomName(g.prov, host)), g.models, g.prov)
+            })}
+            {ungrouped.length > 0 && railRow(UNGROUPED_KEY, t('settings.model.provider.ungrouped'), ungrouped)}
+            {customGroups.length === 0 && ungrouped.length === 0 && (
+              <p className="px-2 py-1 text-[11px] text-surface-300">{t('settings.model.preset.empty')}</p>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="p-1.5 border-t border-surface-100">
         <button
-          onClick={() => { resetForm(); setShowForm(true) }}
+          onClick={() => { resetForm(); setFormEntry('provider'); setShowForm(true) }}
           data-testid="model-add-new"
-          className="flex items-center gap-1 shrink-0 px-2.5 py-1.5 rounded-md text-[12px] font-medium bg-brand-500 text-ink-on-accent hover:bg-brand-600 transition-colors"
+          className="w-full flex items-center justify-center gap-1 rounded-md border border-dashed border-surface-200 py-1.5 text-[12px] text-surface-500 hover:text-brand-600 hover:border-brand-300 transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
-          {t('settings.model.provider.addProviderAndModel')}
+          {t('settings.model.provider.addProvider')}
         </button>
       </div>
+    </div>
+  )
 
-      {/* 服务商卡片：默认折叠,只留名字 + 已配模型摘要;连接信息和模型行都在展开区。
-          之前所有服务商的 URL / key / 模型行全部平铺,一屏放不下三个服务商。 */}
-      <div className="space-y-2">
-        {presets.length === 0 ? (
-          <p className="text-[12px] text-surface-400 py-4 text-center">{t('settings.model.preset.empty')}</p>
-        ) : (
-          <>
-            {grouped.map(({ prov, models }) => {
-              const open = openProviders.has(prov.id)
-              // 一次解析,三处复用:providerLabel / providerHasCustomName / 第二行域名
-              // 原来每张卡每次渲染要 new URL() 三到四遍。
-              const host = hostOf(prov.baseUrl)
-              const named = providerHasCustomName(prov, host)
-              return (
-              <div key={prov.id} className="rounded-lg border border-surface-100 overflow-hidden">
-                {/* 第一行:服务商。名字没自定义过就显示域名;自定义过则「名字 + 域名(次要)」,
-                    改名走行尾那支铅笔(服务商编辑表单里的名称字段)。 */}
-                <div className="flex items-center gap-2 px-3 pt-2.5">
-                  <button
-                    onClick={() => toggleProvider(prov.id)}
-                    data-testid={`toggle-provider-${prov.id}`}
-                    aria-expanded={open}
-                    className="flex flex-1 min-w-0 items-center gap-2 text-left"
+  // ── 右栏:选中服务商的详情 ─────────────────────────────────────────────
+  const detail = ((): JSX.Element | null => {
+    if (selectedKey === UNGROUPED_KEY) {
+      return (
+        <div>
+          <h3 className="text-[15px] font-semibold text-surface-800">{t('settings.model.provider.ungrouped')}</h3>
+          <div className="mt-4 space-y-2">{ungrouped.map(renderPresetRow)}</div>
+        </div>
+      )
+    }
+    if (!selectedGroup) return null
+    const { prov, models } = selectedGroup
+    const host = hostOf(prov.baseUrl)
+    const named = providerHasCustomName(prov, host)
+    const label = providerLabel(prov, t, host, named)
+    const inUse = activeIn(models)
+    const inUsePill = (
+      <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/[0.08] text-brand-500 shrink-0">
+        {t('settings.model.provider.inUse')}
+      </span>
+    )
+
+    // 红线:内置服务商的连接信息既不可见也不可改 —— 详情栏只列模型
+    if (prov.builtin) {
+      return (
+        <div>
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-[15px] font-semibold text-surface-800 truncate">{label}</h3>
+            {inUse && inUsePill}
+          </div>
+          <p className="mt-1 text-[11px] text-surface-400">{t('settings.model.provider.builtinManaged')}</p>
+          <div className="mt-4">
+            <div className="mb-2 text-[11px] text-surface-400">{t('settings.model.provider.modelsLabel')}</div>
+            <div className="space-y-2">{models.map(renderPresetRow)}</div>
+          </div>
+        </div>
+      )
+    }
+    if (!draft || draft.id !== prov.id) return null // 切换瞬间的空档,effect 马上补上草稿
+
+    return (
+      <div>
+        {/* 头:名称(铅笔改名) + 使用中 + 删除(两击确认) */}
+        <div className="flex items-center gap-2 min-w-0">
+          {renaming ? (
+            <input
+              autoFocus
+              value={draft.name}
+              onChange={e => setDraft({ ...draft, name: e.target.value })}
+              onKeyDown={e => { if (e.key === 'Enter') setRenaming(false) }}
+              placeholder={t('settings.model.provider.namePlaceholder')}
+              data-testid={`rename-provider-${prov.id}`}
+              className="flex-1 min-w-0 text-[15px] font-semibold text-surface-800 bg-surface-50 border border-surface-200 rounded-md px-2 py-1 outline-none focus:border-brand-400"
+            />
+          ) : (
+            <h3 className="text-[15px] font-semibold text-surface-800 truncate">{draft.name.trim() || label}</h3>
+          )}
+          <button
+            onClick={() => setRenaming(r => !r)}
+            className="text-surface-300 hover:text-surface-500 transition-colors p-0.5 shrink-0"
+            title={t('settings.model.provider.editTitle')}
+          >
+            <Edit2 className="w-3.5 h-3.5" />
+          </button>
+          {inUse && inUsePill}
+          <button
+            onClick={() => {
+              if (!confirmDeleteProv) { setConfirmDeleteProv(true); return }
+              void handleDeleteProvider(prov.id, models.map(m => m.id))
+            }}
+            onBlur={() => setConfirmDeleteProv(false)}
+            data-testid={`delete-provider-${prov.id}`}
+            className={`ml-auto shrink-0 flex items-center gap-1 p-1 rounded-md transition-colors ${
+              confirmDeleteProv ? 'text-red-500 bg-red-500/10' : 'text-surface-300 hover:text-red-400'
+            }`}
+            title={t('settings.model.provider.deleteTitle')}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {confirmDeleteProv && (
+              <span className="text-[10.5px]">{t('settings.model.provider.deleteConfirm', { count: models.length })}</span>
+            )}
+          </button>
+        </div>
+        <p className="mt-0.5 text-[11px] text-surface-400 font-mono truncate">{host}</p>
+
+        {/* 连接信息:常驻可编辑,改了保存钮才亮 */}
+        <div className="mt-4 space-y-3">
+          <div>
+            <label className="block text-[11px] text-surface-400 mb-1">Base URL</label>
+            <input
+              value={draft.baseUrl}
+              onChange={e => setDraft({ ...draft, baseUrl: e.target.value })}
+              data-testid={`provider-base-url-${prov.id}`}
+              className="w-full text-[12.5px] font-mono text-surface-700 bg-surface-50 border border-surface-100 rounded-md px-2.5 py-1.5 outline-none focus:border-brand-400 transition-colors"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] text-surface-400 mb-1">{t('settings.model.provider.apiFormatLabel')}</label>
+            <select
+              value={draft.apiFormat || 'openai'}
+              onChange={e => setDraft({ ...draft, apiFormat: e.target.value })}
+              className="w-full text-[12.5px] text-surface-700 bg-surface-50 border border-surface-100 rounded-md px-2.5 py-1.5 outline-none focus:border-brand-400"
+            >
+              <option value="openai">OpenAI Chat Completions</option>
+              <option value="anthropic">Anthropic Messages</option>
+              <option value="openai-responses">OpenAI Responses</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[11px] text-surface-400 mb-1">{t('settings.model.form.apiKeyLabel')}</label>
+            <input
+              type="password"
+              value={draft.apiKey}
+              onChange={e => setDraft({ ...draft, apiKey: e.target.value })}
+              placeholder={t('settings.model.provider.apiKeyKeepPlaceholder', {
+                value: prov.apiKeyMasked || t('settings.model.provider.apiKeyOriginal'),
+              })}
+              data-testid={`provider-api-key-${prov.id}`}
+              className="w-full text-[12.5px] font-mono text-surface-700 bg-surface-50 border border-surface-100 rounded-md px-2.5 py-1.5 outline-none focus:border-brand-400 transition-colors"
+            />
+          </div>
+
+          {/* 高级:思考协议与预算(testid 沿用 edit-provider-*,既有回归不动) */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen(o => !o)}
+              data-testid={`edit-provider-${prov.id}`}
+              aria-expanded={advancedOpen}
+              className="flex items-center gap-1 text-[11.5px] text-surface-500 hover:text-surface-700 transition-colors"
+            >
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? '' : '-rotate-90'}`} />
+              {t('settings.model.provider.advancedToggle')}
+              {prov.thinkingBudgets !== undefined && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-surface-100 text-surface-400">
+                  {prov.thinkingBudgets === null
+                    ? t('settings.model.provider.qwenToggleBadge')
+                    : `Qwen ${prov.thinkingBudgets.low / 1024}K/${prov.thinkingBudgets.medium / 1024}K/${prov.thinkingBudgets.high / 1024}K`}
+                </span>
+              )}
+            </button>
+            {advancedOpen && (
+              <div className="mt-2 space-y-2">
+                <label className="block space-y-1">
+                  <span className="block text-[10.5px] text-surface-400">{t('settings.model.provider.defaultThinkingProtocol')}</span>
+                  <select
+                    value={draft.thinkingFormat}
+                    onChange={e => setDraft({ ...draft, thinkingFormat: e.target.value as ProviderDraft['thinkingFormat'] })}
+                    data-testid={`provider-thinking-format-${prov.id}`}
+                    className="w-full px-2.5 py-1.5 text-[12px] rounded-md border border-surface-200 bg-surface-0 dark:bg-surface-50"
                   >
-                    <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-surface-300 transition-transform ${open ? '' : '-rotate-90'}`} />
-                    <span className="text-[12px] font-medium text-surface-600 truncate">{providerLabel(prov, t, host, named)}</span>
-                    {named && (
-                      <span className="text-[11px] text-surface-300 truncate min-w-0 font-mono">{host}</span>
-                    )}
-                    {models.some(m => m.active) && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-brand-500/[0.08] text-brand-500 shrink-0">
-                        {t('settings.model.provider.inUse')}
-                      </span>
-                    )}
-                  </button>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {!prov.builtin && (
-                      <>
-                        {prov.thinkingBudgets !== undefined && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-surface-100 text-surface-400 shrink-0">
-                            {prov.thinkingBudgets === null
-                              ? t('settings.model.provider.qwenToggleBadge')
-                              : `Qwen ${prov.thinkingBudgets.low / 1024}K/${prov.thinkingBudgets.medium / 1024}K/${prov.thinkingBudgets.high / 1024}K`}
-                          </span>
-                        )}
-                        <button
-                          onClick={() => {
-                            // 编辑表单渲染在 {open && …} 里,折叠态下点铅笔原本什么都不会发生。
-                            // 打开编辑的同时把卡片展开,让动作总有可见结果。
-                            setOpenProviders(prev => new Set(prev).add(prov.id))
-                            setEditingProvider({
-                            id: prov.id,
-                            name: prov.name,
-                            baseUrl: prov.baseUrl,
-                            apiKey: '',
-                            apiFormat: prov.apiFormat || '',
-                            thinkingFormat: prov.thinkingFormat || 'auto',
-                            thinkingBudgetMode: budgetModeOf(prov.thinkingBudgets),
-                            thinkingBudgetDraft: budgetDraftOf(prov.thinkingBudgets)
-                            })
-                          }}
-                          data-testid={`edit-provider-${prov.id}`}
-                          className="text-surface-300 hover:text-surface-500 transition-colors p-0.5 shrink-0"
-                          title={t('settings.model.provider.editTitle')}
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                  {!prov.builtin && (
-                    <button
-                      onClick={() => handleAddUnderProvider(prov.id)}
-                      className="flex items-center gap-1 text-[11px] text-brand-600 dark:text-brand-400 hover:text-brand-700 transition-colors shrink-0"
-                      title={t('settings.model.provider.addTitle')}
-                    >
-                      <Plus className="w-3 h-3" />
-                      {t('settings.model.provider.addModel')}
-                    </button>
-                  )}
+                    <option value="auto">{t('settings.model.provider.autoByModel')}</option>
+                    <option value="qwen">Qwen</option>
+                    <option value="zai">GLM / Z.AI</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="openai">OpenAI</option>
+                  </select>
+                </label>
+                <div className="rounded-md bg-surface-50 dark:bg-surface-50/40 p-2.5 space-y-1.5">
+                  <span className="block text-[10.5px] font-medium text-surface-500">
+                    {t('settings.model.provider.qwenBudgetTitle')}
+                  </span>
+                  <ThinkingBudgetEditor
+                    mode={draft.thinkingBudgetMode}
+                    draft={draft.thinkingBudgetDraft}
+                    onModeChange={thinkingBudgetMode => setDraft({ ...draft, thinkingBudgetMode })}
+                    onDraftChange={thinkingBudgetDraft => setDraft({ ...draft, thinkingBudgetDraft })}
+                    autoLabelKey="settings.model.provider.autoModelStudio"
+                    testIdPrefix={`provider-thinking-budget-${prov.id}`}
+                  />
+                  <p className="text-[10px] text-surface-400">
+                    {t('settings.model.provider.inheritanceHelp')}
+                  </p>
                 </div>
-                {/* 第二行:模型标签。只在折叠时出现 —— 展开后下面就是完整的模型行,
-                    再挂一排标签只是重复。缩进对齐第一行的名字,不对齐箭头。 */}
-                {!open && models.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1 px-3 pb-2.5 pt-1.5 pl-[34px]">
-                    {models.map(m => (
-                      <span
-                        key={m.id}
-                        className={`text-[11px] px-2 py-0.5 rounded-full truncate max-w-[220px] ${
-                          m.active
-                            ? 'bg-brand-500/[0.08] text-brand-500'
-                            : 'bg-surface-100 text-surface-500'
-                        }`}
-                      >
-                        {displayModelEntryName(m, t, 'settings.model.preset.builtinModel')}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {open && <div className="pb-0.5" />}
-                {open && (
-                <>
-                {/* 连接信息属于细节,只在展开时露出 —— 长 URL 平铺在标题行上
-                    正是「一屏只放得下三个服务商」的直接原因 */}
-                {!prov.builtin && (
-                  <div className="px-3 pb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-surface-300">
-                    <span className="min-w-0 break-all font-mono">{prov.baseUrl}</span>
-                    <span className="break-all font-mono">{prov.apiKeyMasked}</span>
-                  </div>
-                )}
-                {/* 服务商编辑内联表单 */}
-                {editingProvider?.id === prov.id && (
-                  <div className="mx-3 mb-2 p-3 rounded-lg border border-brand-200 dark:border-brand-700 space-y-2">
-                    <input
-                      value={editingProvider.name}
-                      onChange={e => setEditingProvider({ ...editingProvider, name: e.target.value })}
-                      placeholder={t('settings.model.provider.namePlaceholder')}
-                      className="w-full px-2.5 py-1.5 text-[12px] rounded-md border border-surface-200 bg-transparent"
-                    />
-                    <input
-                      value={editingProvider.baseUrl}
-                      onChange={e => setEditingProvider({ ...editingProvider, baseUrl: e.target.value })}
-                      placeholder="Base URL"
-                      className="w-full px-2.5 py-1.5 text-[12px] rounded-md border border-surface-200 bg-transparent font-mono"
-                    />
-                    <input
-                      type="password"
-                      value={editingProvider.apiKey}
-                      onChange={e => setEditingProvider({ ...editingProvider, apiKey: e.target.value })}
-                      placeholder={t('settings.model.provider.apiKeyKeepPlaceholder', {
-                        value: prov.apiKeyMasked || t('settings.model.provider.apiKeyOriginal'),
-                      })}
-                      className="w-full px-2.5 py-1.5 text-[12px] rounded-md border border-surface-200 bg-transparent font-mono"
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <label className="space-y-1">
-                        <span className="block text-[10.5px] text-surface-400">{t('settings.model.provider.apiFormatLabel')}</span>
-                        <select
-                          value={editingProvider.apiFormat || 'openai'}
-                          onChange={e => setEditingProvider({ ...editingProvider, apiFormat: e.target.value })}
-                          className="w-full px-2.5 py-1.5 text-[12px] rounded-md border border-surface-200 bg-surface-0 dark:bg-surface-50"
-                        >
-                          <option value="openai">OpenAI Chat Completions</option>
-                          <option value="anthropic">Anthropic Messages</option>
-                          <option value="openai-responses">OpenAI Responses</option>
-                        </select>
-                      </label>
-                      <label className="space-y-1">
-                        <span className="block text-[10.5px] text-surface-400">{t('settings.model.provider.defaultThinkingProtocol')}</span>
-                        <select
-                          value={editingProvider.thinkingFormat}
-                          onChange={e => setEditingProvider({
-                            ...editingProvider,
-                            thinkingFormat: e.target.value as typeof editingProvider.thinkingFormat
-                          })}
-                          data-testid={`provider-thinking-format-${prov.id}`}
-                          className="w-full px-2.5 py-1.5 text-[12px] rounded-md border border-surface-200 bg-surface-0 dark:bg-surface-50"
-                        >
-                          <option value="auto">{t('settings.model.provider.autoByModel')}</option>
-                          <option value="qwen">Qwen</option>
-                          <option value="zai">GLM / Z.AI</option>
-                          <option value="deepseek">DeepSeek</option>
-                          <option value="openai">OpenAI</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div className="rounded-md bg-surface-50 dark:bg-surface-50/40 p-2.5 space-y-1.5">
-                      <span className="block text-[10.5px] font-medium text-surface-500">
-                        {t('settings.model.provider.qwenBudgetTitle')}
-                      </span>
-                      <ThinkingBudgetEditor
-                        mode={editingProvider.thinkingBudgetMode}
-                        draft={editingProvider.thinkingBudgetDraft}
-                        onModeChange={thinkingBudgetMode => setEditingProvider({ ...editingProvider, thinkingBudgetMode })}
-                        onDraftChange={thinkingBudgetDraft => setEditingProvider({ ...editingProvider, thinkingBudgetDraft })}
-                        autoLabelKey="settings.model.provider.autoModelStudio"
-                        testIdPrefix={`provider-thinking-budget-${prov.id}`}
-                      />
-                      <p className="text-[10px] text-surface-400">
-                        {t('settings.model.provider.inheritanceHelp')}
-                      </p>
-                    </div>
-                    <div className="flex gap-2 justify-end">
-                      <button onClick={() => setEditingProvider(null)} className="px-2.5 py-1 text-[11px] text-surface-400 hover:text-surface-600">{t('settings.model.provider.cancel')}</button>
-                      <button
-                        onClick={handleSaveProvider}
-                        disabled={editingProvider.thinkingBudgetMode === 'custom' && !parseThinkingBudgets(editingProvider.thinkingBudgetDraft)}
-                        data-testid={`save-provider-${prov.id}`}
-                        className="px-2.5 py-1 text-[11px] rounded-md bg-brand-500 text-ink-on-accent hover:bg-brand-600 disabled:opacity-40"
-                      >
-                        {t('settings.model.provider.saveApplies', { count: prov.modelCount })}
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <div className="px-3 pb-3 space-y-2">{models.map(renderPresetRow)}</div>
-                </>
-                )}
-              </div>
-              )
-            })}
-            {ungrouped.length > 0 && (
-              <div className="space-y-2">
-                <span className="text-[12px] font-medium text-surface-500 px-1">{t('settings.model.provider.ungrouped')}</span>
-                {ungrouped.map(renderPresetRow)}
               </div>
             )}
-          </>
-        )}
+          </div>
+
+          {/* 保存条:常驻,没改动时置灰;有改动多给一个「还原」 */}
+          <div className="flex items-center justify-end gap-2">
+            {draftDirty && (
+              <button
+                onClick={() => { setDraft(draftOf(prov)); setRenaming(false) }}
+                className="px-2.5 py-1 text-[11px] text-surface-400 hover:text-surface-600 transition-colors"
+              >
+                {t('settings.model.provider.revert')}
+              </button>
+            )}
+            <button
+              onClick={handleSaveProvider}
+              disabled={!draftDirty || draftBudgetsInvalid}
+              data-testid={`save-provider-${prov.id}`}
+              className="px-2.5 py-1 text-[11px] rounded-md bg-brand-500 text-ink-on-accent hover:bg-brand-600 disabled:opacity-40 transition-colors"
+            >
+              {t('settings.model.provider.saveApplies', { count: prov.modelCount })}
+            </button>
+          </div>
+        </div>
+
+        {/* 模型列表 */}
+        <div className="mt-5">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] text-surface-400">{t('settings.model.provider.modelsLabel')}</span>
+            <button
+              onClick={() => handleAddUnderProvider(prov.id)}
+              className="flex items-center gap-1 text-[11px] text-brand-600 dark:text-brand-400 hover:text-brand-700 transition-colors"
+              title={t('settings.model.provider.addTitle')}
+            >
+              <Plus className="w-3 h-3" />
+              {t('settings.model.provider.addModel')}
+            </button>
+          </div>
+          <div className="space-y-2">{models.map(renderPresetRow)}</div>
+        </div>
       </div>
+    )
+  })()
+
+  return (
+    <div ref={rootRef} className="h-full min-h-0 flex flex-col">
+      {presets.length === 0 ? (
+        showForm ? (
+          <div className="flex-1 min-h-0 overflow-y-auto">{formView}</div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3">
+            <p className="text-[12px] text-surface-400">{t('settings.model.preset.empty')}</p>
+            <button
+              onClick={() => { resetForm(); setFormEntry('provider'); setShowForm(true) }}
+              data-testid="model-add-new"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-[12px] font-medium bg-brand-500 text-ink-on-accent hover:bg-brand-600 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {t('settings.model.provider.addProviderAndModel')}
+            </button>
+          </div>
+        )
+      ) : wide ? (
+        <div className="flex-1 min-h-0 flex rounded-xl border border-surface-100 overflow-hidden">
+          <aside className="w-48 shrink-0 border-r border-surface-100 bg-surface-50/60 dark:bg-surface-50/30 min-h-0">
+            {rail}
+          </aside>
+          <section className="flex-1 min-w-0 overflow-y-auto p-4">{showForm ? formView : detail}</section>
+        </div>
+      ) : showForm ? (
+        <div className="flex-1 min-h-0 overflow-y-auto">{formView}</div>
+      ) : narrowDetail && selectionValid ? (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <button
+            onClick={() => setNarrowDetail(false)}
+            data-testid="model-detail-back"
+            className="flex items-center gap-1 -ml-1 mb-3 px-1.5 py-1 rounded-md text-[12px] text-surface-500 hover:text-surface-700 hover:bg-surface-50 transition-colors"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+            {t('common.actions.back')}
+          </button>
+          {detail}
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 rounded-xl border border-surface-100 overflow-hidden">{rail}</div>
+      )}
     </div>
   )
 }

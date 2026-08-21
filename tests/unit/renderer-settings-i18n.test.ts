@@ -13,6 +13,7 @@ const MIGRATED_FILES = [
   'src/renderer/src/components/AppSettings.tsx',
   'src/renderer/src/components/MemorySettings.tsx',
   'src/renderer/src/components/AboutSection.tsx',
+  'src/renderer/src/components/AcpConnections.tsx',
 ]
 
 const read = (path: string): string => readFileSync(resolve(path), 'utf8')
@@ -31,8 +32,8 @@ describe('renderer settings and process i18n', () => {
     expect(english.t('settings.model.form.addTitle')).toBe('Add model')
     expect(english.t('settings.voice.actions.testConnection')).toBe('Test connection')
     expect(english.t('settings.memory.globalCount', { count: 2 })).toBe('Global memory (2 items)')
-    expect(english.t('chat.process.toolCount', { count: 2 })).toBe('2 tools')
-    expect(english.t('chat.streaming.deepThinking')).toContain('complex questions')
+    expect(english.t('chat.process.exploreFiles', { count: 2 })).toBe('2 files')
+    expect(english.t('chat.process.thoughtDuration', { duration: '3s' })).toBe('Thought for 3s')
     expect(chinese.t('settings.apps.workingDirectory.choose')).toBe('选择')
     expect(chinese.t('settings.apps.following.master.off')).toContain('不会跟随任何应用')
     expect(english.t('settings.apps.following.master.off')).toContain('will not follow any app')
@@ -43,6 +44,32 @@ describe('renderer settings and process i18n', () => {
     expect(english.t('toolsHub.mcp.httpHeaders')).toBe('HTTP Headers')
     expect(read('src/renderer/src/components/ToolsHub.tsx'))
       .toContain("t('toolsHub.mcp.httpHeaders')")
+  })
+
+  it('describes ACP connections in both locales without inventing a connected state', async () => {
+    const english = await createRendererI18n('en')
+    const chinese = await createRendererI18n('zh-CN')
+
+    expect(chinese.t('settings.connections.title')).toBe('外部连接')
+    expect(english.t('settings.connections.title')).toBe('External connections')
+    expect(chinese.t('settings.connections.service.listening', { port: 3031 })).toContain('127.0.0.1:3031')
+    expect(english.t('settings.connections.service.off')).toContain('nothing can connect')
+    expect(chinese.t('settings.connections.pending.title', { count: 2 })).toBe('等你确认（2）')
+    expect(english.t('settings.connections.pending.title', { count: 2 })).toBe('Waiting for your approval (2)')
+    expect(chinese.t('settings.connections.pending.hint')).toContain('编辑器')
+    expect(english.t('settings.connections.session.clientLine', { client: 'Zed', version: 2 })).toBe('Zed · ACP v2')
+    expect(chinese.t('settings.connections.session.agent', { agent: '我的法务助手' })).toBe('使用 Agent：我的法务助手')
+    expect(english.t('settings.connections.session.agent', { agent: 'Legal helper' })).toBe('Using agent: Legal helper')
+    // 「没装好」和「装好了没用」是两个不同的下一步，空状态不能只有一句
+    expect(chinese.t('settings.connections.empty')).not.toBe(chinese.t('settings.connections.emptyAfterHandshake'))
+    expect(english.t('settings.connections.emptyAfterHandshake')).toContain('not started a session')
+
+    // 面板只描述"此刻"：不缓存、不落盘，主进程推变更就重新取一次快照
+    const panel = read('src/renderer/src/components/AcpConnections.tsx')
+    expect(panel).toContain('window.api.getAcpStatus()')
+    expect(panel).toContain('window.api.onAcpStatusChanged?.(load)')
+    expect(panel).toContain("data-testid=\"acp-pending-permissions\"")
+    expect(panel).not.toMatch(/setInterval|localStorage/)
   })
 
   it('keeps the global app-following switch and disables only the per-app controls while paused', () => {

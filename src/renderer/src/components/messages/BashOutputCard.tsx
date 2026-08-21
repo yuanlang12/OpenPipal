@@ -28,8 +28,8 @@ export function BashOutputCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className="flex justify-start mb-msg animate-fade-in">
-      <div className="max-w-[92%] sm:max-w-[85%] w-full">
-        {/* Header */}
+      <div className="group/bash max-w-msg w-full">
+        {/* Header — chevron hover 才浮现,展开态常显 */}
         <button
           onClick={() => setExpanded(!expanded)}
           className="w-full flex items-center gap-2 rounded-t-lg px-3 py-2 bg-surface-800 dark:bg-[#0a0a0a] text-left"
@@ -43,7 +43,9 @@ export function BashOutputCard({ message }: { message: ChatMessage }) {
               {output.slice(0, 40)}
             </span>
           )}
-          <ChevronDown className={`w-3.5 h-3.5 text-surface-500 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          <ChevronDown
+            className={`w-3.5 h-3.5 text-surface-500 shrink-0 transition duration-200 ${expanded ? 'rotate-180' : ''} opacity-0 group-hover/bash:opacity-100 group-has-[:focus-visible]/bash:opacity-100`}
+          />
         </button>
 
         {/* Output */}

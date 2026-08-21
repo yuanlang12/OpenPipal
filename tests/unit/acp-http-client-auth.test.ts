@@ -10,7 +10,7 @@ import {
   registerSessionMcpServers,
   streamChat,
   unregisterSessionMcpServers,
-  updateConversationRole,
+  updateConversationPersona,
 } from '../../openpipal-acp/src/http-client'
 
 const token = 'a'.repeat(43)
@@ -20,6 +20,7 @@ const received: Array<{
   token?: string
   source?: string
   role?: string
+  workspaceId?: string | null
 }> = []
 const baseUrl = 'http://openpipal.test'
 let previousToken: string | undefined
@@ -42,6 +43,7 @@ beforeEach(() => {
       token: headers.get('x-openpipal-acp-token') || undefined,
       source: body?.source,
       role: body?.role,
+      workspaceId: body?.workspaceId,
     })
     const responseBody = url.pathname === '/chat/stream'
       ? 'data: {"type":"done"}\n\n'
@@ -87,7 +89,8 @@ describe('ACP HTTP client authorization', () => {
     await getConversation('session-1', baseUrl)
     await getConversationMessages('session-1', baseUrl)
     await deleteConversation('session-1', baseUrl)
-    await updateConversationRole('session-1', 'general', baseUrl)
+    await updateConversationPersona('session-1', { role: 'general', workspaceId: null }, baseUrl)
+    await updateConversationPersona('session-1', { workspaceId: 'agent-1' }, baseUrl)
     await listAgents(baseUrl)
 
     expect(received.map(({ method, path, token: supplied }) => ({ method, path, token: supplied }))).toEqual([
@@ -98,17 +101,27 @@ describe('ACP HTTP client authorization', () => {
       { method: 'GET', path: '/api/conversations/session-1/messages', token },
       { method: 'DELETE', path: '/api/conversations/session-1', token },
       { method: 'PATCH', path: '/api/conversations/session-1', token },
+      { method: 'PATCH', path: '/api/conversations/session-1', token },
       { method: 'GET', path: '/api/agents/list', token },
     ])
     expect(received).not.toContainEqual(expect.objectContaining({ path: '/role/switch' }))
+    // 切回内置角色必须同时清空 workspace 绑定,否则自定义 Agent 的 systemPrompt 仍然压过角色
     expect(received).toContainEqual(expect.objectContaining({
       method: 'PATCH',
       path: '/api/conversations/session-1',
       role: 'general',
+      workspaceId: null,
+    }))
+    // 切到自定义 Agent 只动 workspaceId,role 留着当工具基线
+    expect(received).toContainEqual(expect.objectContaining({
+      method: 'PATCH',
+      path: '/api/conversations/session-1',
+      role: undefined,
+      workspaceId: 'agent-1',
     }))
   })
 
-  it('preserves the desktop role-lock message from a failed conversation PATCH', async () => {
+  it('preserves the desktop persona-lock message from a failed conversation PATCH', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
       error: 'Conversation role is locked after the first message',
     }), {
@@ -117,13 +130,13 @@ describe('ACP HTTP client authorization', () => {
       headers: { 'Content-Type': 'application/json' },
     }))
 
-    await expect(updateConversationRole('session-locked', 'design', baseUrl))
+    await expect(updateConversationPersona('session-locked', { role: 'design', workspaceId: null }, baseUrl))
       .rejects.toThrow('Conversation role is locked after the first message')
     const [input, init] = vi.mocked(fetch).mock.calls.at(-1)!
     expect(input).toBe(`${baseUrl}/api/conversations/session-locked`)
     expect(init?.method).toBe('PATCH')
     expect(new Headers(init?.headers).get('x-openpipal-acp-token')).toBe(token)
-    expect(JSON.parse(String(init?.body))).toEqual({ role: 'design' })
+    expect(JSON.parse(String(init?.body))).toEqual({ role: 'design', workspaceId: null })
   })
 
   it('keeps the health probe public', async () => {

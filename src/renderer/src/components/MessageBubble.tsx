@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, memo } from 'react'
-import { RefreshCw, Shield, ShieldAlert, Check, X, FileText, FileCode, FileSpreadsheet, FileImage, ChevronDown, Bot } from 'lucide-react'
+import { RefreshCw, Shield, ShieldAlert, Check, X, FileText, FileCode, FileSpreadsheet, FileImage, ChevronDown, Bot, Brain } from 'lucide-react'
 import { Markdown } from './shared/Markdown'
 import { ChatMessage, FileAttachmentData } from '../types'
 import { fmtSize } from '../utils/format'
@@ -13,6 +13,7 @@ import { FileResultCard } from './messages/FileResultCard'
 import { CodeExecutionCard } from './messages/CodeExecutionCard'
 import { SubagentCard } from './messages/SubagentCard'
 import { EditableUserMessage, renderUserContent } from './messages/UserMessage'
+import { ThinkingStream } from './ThinkingStream'
 import { CopyButton } from './messages/shared/CopyButton'
 import { VoiceReplayButton } from './messages/shared/VoiceReplayButton'
 import { PasteButton } from './messages/shared/PasteButton'
@@ -33,6 +34,9 @@ interface MessageBubbleProps {
   /** 本消息是否为"当前正在流式输出的最后一条 assistant 消息"——由 ChatPanel 统一算好传入
    *  (而非本组件各自订阅 store),否则任意新消息追加都会让全部历史消息重渲染,见下方 memo comparator 注释。 */
   isLastStreaming?: boolean
+  /** 本条渲染在 ProcessGroup 展开区里(过程栏)—— 去掉页脚操作行/时间戳:整轮耗时已经写在
+   *  分割线上,过程里只留内容本身,一列到底全部左对齐。复制/重新生成属于台面上的结论。 */
+  inProcess?: boolean
 }
 
 export function formatMessageTime(timestamp: number, locale: string): string {
@@ -81,6 +85,7 @@ function messageBubblePropsEqual(prev: MessageBubbleProps, next: MessageBubblePr
     prev.onEditAndResend === next.onEditAndResend &&
     prev.onSaveAsAgent === next.onSaveAsAgent &&
     prev.isLastStreaming === next.isLastStreaming &&
+    prev.inProcess === next.inProcess &&
     messagesRenderEqual(prev.message, next.message)
   )
 }
@@ -258,84 +263,43 @@ function FileAttachmentCard({ file, isUser }: { file: FileAttachmentData; isUser
 }
 
 // 折叠式思考内容组件
-function ThinkingCollapsible({ content, live }: { content: string; live?: boolean }) {
+/**
+ * 旧数据回放用的思考折叠行 —— assistant 消息自带 thinkingContent 的那种形态。
+ * 现在的流式协议把 thinking 落成独立消息,由过程栏的 ThinkGroup 渲染;这里**没有 live 态**
+ * (它曾经有一整套扫光/定格逻辑,但走不到,已删)。要改进行中的思考 UI 请去 ProcessGroup。
+ */
+function ThinkingCollapsible({ content }: { content: string }) {
   const { t } = useTranslation()
+  // 思考内容量大,默认折叠成一行,点开才看全文
   const [expanded, setExpanded] = useState(false)
-  // 流式更新中自动展开，结束后保持用户选择
-  const isExpanded = live || expanded
-  // Phase B 流式协议:live → false 转换时,"思考过程"闪一次 cadenced-shimmer 收尾定格
-  const [justFinished, setJustFinished] = useState(false)
-  const prevLive = useRef(live)
-  useEffect(() => {
-    if (prevLive.current && !live) {
-      setJustFinished(true)
-      const t = setTimeout(() => setJustFinished(false), 1100)
-      prevLive.current = live
-      return () => clearTimeout(t)
-    }
-    prevLive.current = live
-  }, [live])
-
-  const labelClass = live
-    ? 'sw-loading-shimmer'         // streaming 中:文本扫光
-    : justFinished
-      ? 'sw-cadenced-shimmer'      // 刚结束:一次性扫光定格
-      : ''
+  const isExpanded = expanded
 
   return (
-    <div className="mb-2">
+    <div className="group/think mb-2">
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-1.5 text-chat-small font-medium text-surface-300 uppercase tracking-wider hover:text-surface-400 transition-colors"
+        aria-expanded={isExpanded}
       >
-        {live ? (
-          <div className="flex gap-0.5">
-            <div className="w-1 h-1 bg-surface-300 rounded-full animate-pulse-soft" />
-            <div className="w-1 h-1 bg-surface-300 rounded-full animate-pulse-soft" style={{ animationDelay: '0.2s' }} />
-            <div className="w-1 h-1 bg-surface-300 rounded-full animate-pulse-soft" style={{ animationDelay: '0.4s' }} />
-          </div>
-        ) : (
-          <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
-        )}
-        <span className={labelClass}>{live ? t('chat.message.thinking') : t('chat.message.thoughtProcess')}</span>
+        {/* 展开控件一律排在文字**后面**,隐身时也不占位,左边界因此恒定。 */}
+        <Brain className="w-3 h-3 shrink-0" strokeWidth={1.75} />
+        <span>{t('chat.message.thoughtProcess')}</span>
+        <ChevronDown
+          className={`w-3 h-3 shrink-0 transition duration-200 ${isExpanded ? 'rotate-180' : ''} opacity-0 group-hover/think:opacity-100 group-has-[:focus-visible]/think:opacity-100`}
+        />
       </button>
       {isExpanded && (
-        /* D 第二批:thinking 内部展开容器也去外框,改成左 border 浅竖线 */
-        <div className="mt-1 pl-2 py-1 border-l border-border animate-fade-in">
-          <div className="sw-chat-reasoning text-ink-tertiary whitespace-pre-wrap max-h-[200px] overflow-y-auto">
-            {content}
-          </div>
+        /* D 第二批:thinking 内部展开容器也去外框,改成左 border 浅竖线(与过程栏嵌套竖轨同款);
+           限高裁切处上下渐隐 —— 让"还有更多、不是断了"这件事自己说清楚 */
+        <div className="mt-1 ml-1.5 pl-3 border-l border-border animate-fade-in">
+          <ThinkingStream content={content} maxHeightClass="max-h-[200px]" />
         </div>
       )}
     </div>
   )
 }
 
-function ThinkingMessageCard({ message }: { message: ChatMessage; roleIcon?: string }) {
-  const { i18n } = useTranslation()
-  const isThinking = useChatStore(s => s.isThinking)
-  // 稳定的 primitive selector — 只在最后一条消息变化时触发重渲染
-  const lastMessageId = useChatStore(s => s.messages[s.messages.length - 1]?.id)
-  const isLive = isThinking && lastMessageId === message.id
-
-  return (
-    /* Phase E:隐藏 avatar,thinking 直接贴左 timeline 协议 */
-    <div className="flex justify-start mb-msg animate-fade-in">
-      <div className="w-full max-w-msg pl-3 pr-2 py-1.5 border-l border-border">
-        <ThinkingCollapsible content={message.thinkingContent || ''} live={isLive} />
-        {!isLive && (
-          <div className="flex justify-end">
-            <span className="text-chat-small text-surface-300">
-              {formatMessageTime(message.timestamp, i18n.resolvedLanguage || i18n.language)}
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenerate, onEditAndResend, onSaveAsAgent, isLastStreaming = false }: MessageBubbleProps) {
+function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenerate, onEditAndResend, onSaveAsAgent, isLastStreaming = false, inProcess = false }: MessageBubbleProps) {
   const { t, i18n } = useTranslation()
   const messageKind = getMessageKind(message)
   const isUser = message.role === 'user'
@@ -390,9 +354,8 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
     )
   }
 
-  if (messageKind === 'thinking' && message.thinkingContent) {
-    return <ThinkingMessageCard message={message} />
-  }
+  // 注:messageKind === 'thinking' 不在这里处理 —— thinking 一律由过程栏的
+  // ThinkGroup 渲染(classifyRaw 把它归 process,buildProcessRenderItems 再折成一组)。
 
   // 消息插队 turn 边界通知:左对齐细灰字一行
   // Phase E:无 avatar 后,缩进 pl-3 即可贴左,跟其他 timeline 节点对齐
@@ -419,8 +382,8 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-msg animate-fade-in`}>
       <div className={`group ${
         isUser
-          ? 'max-w-msg rounded-xl sw-chat-user-bubble bg-surface-100 text-ink-primary'
-          : 'w-full text-ink-primary'
+          ? 'max-w-msg-user rounded-xl sw-chat-user-bubble bg-surface-100 text-ink-primary'
+          : 'max-w-msg w-full text-ink-primary'
       }`}>
         {/* Images */}
         {(message.images?.length || message.screenshot) && (
@@ -486,7 +449,8 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
           </div>
         )}
 
-        {/* Footer: copy/paste/regenerate + timestamp */}
+        {/* Footer: copy/paste/regenerate + timestamp —— 过程栏里的中间叙述不带页脚 */}
+        {!inProcess && (
         <div className={`flex items-start gap-1.5 mt-1.5 ${isUser ? 'justify-end' : 'justify-between'}`}>
           {!isUser && message.content && !message.askOptions && (
             <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-0.5 gap-y-1">
@@ -519,6 +483,7 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
             {formatMessageTime(message.timestamp, i18n.resolvedLanguage || i18n.language)}
           </span>
         </div>
+        )}
       </div>
     </div>
   )

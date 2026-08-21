@@ -155,9 +155,15 @@ test.describe('2. 消息发送测试', () => {
     expect(calls.length).toBe(1)
     expect(calls[0].method).toBe('sendChat')
 
-    // 2.5 验证思考中动画出现（三个跳动点，isStreaming=true 但无 streamingContent）
-    const thinkingDots = page.locator('.animate-pulse-soft')
-    await expect(thinkingDots.first()).toBeVisible({ timeout: 3000 })
+    // 2.5 验证"正在处理"的反馈出现（isStreaming=true 但一个字节都还没回来）。
+    // 曾经是三个跳动点组成的带边框气泡，2026-08-18 按用户要求删掉了——
+    // 计时分割线自己就在扫光、还带真实秒数，方框点点是同一件事说两遍。
+    const liveBar = page.locator('[data-testid="process-group-toggle"][data-active="true"]')
+    await expect(liveBar).toBeVisible({ timeout: 3000 })
+    // 此刻模型还一个字节都没回来 —— 只写「连接模型…」,不报秒数(用户实锤:
+    // "发了消息就计时,其实模型还没通")。收到第一个模型事件后才切成「处理中 N 秒」。
+    await expect(liveBar).toContainText('连接模型')
+    await expect(page.locator('.animate-pulse-soft')).toHaveCount(0)
     await page.screenshot({ path: `${ARTIFACTS_DIR}/02-03-thinking-indicator.png` })
 
     // 2.6 模拟 AI 流式回复
@@ -200,7 +206,10 @@ test.describe('3. 工具调用测试（搜索）', () => {
     // 3.2 模拟工具调用 - 搜索中
     await simulateSearchTool(page)
 
-    // 3.3 验证搜索结果卡片出现
+    // 3.3 验证搜索结果卡片直接可见。
+    // 探索类步骤只有 **≥2 条**才并成"探索 · N 搜索"那一行(门槛与 file-group / archive-group 对齐);
+    // 本例只搜了一次,所以结果卡原样铺在过程栏里,不必再点开一层。
+    await expect(page.locator('[data-testid="process-explore-group"]')).toHaveCount(0)
     const searchResultCard = page.locator('text=搜索结果')
     await expect(searchResultCard).toBeVisible({ timeout: 5000 })
     await page.screenshot({ path: `${ARTIFACTS_DIR}/03-02-search-results-card.png` })
@@ -323,7 +332,7 @@ test.describe('5. 清空对话测试', () => {
 
     // 5.6 验证回到 WelcomePage —— 新架构下清空/新建后停在欢迎页(onboarding 块已删,
     // 用 WelcomePage 特征输入框 placeholder 断言)
-    const welcomeInput = page.locator('textarea[placeholder="输入问题，或分配一个任务..."]')
+    const welcomeInput = page.locator('textarea[placeholder*="分配一个任务"]')
     await expect(welcomeInput).toBeVisible({ timeout: 5000 })
     await page.screenshot({ path: `${ARTIFACTS_DIR}/05-03-empty-state-restored.png` })
 

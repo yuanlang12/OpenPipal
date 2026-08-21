@@ -7,6 +7,7 @@ import { useChatStore } from '../stores/chatStore'
 import { useAppStore } from '../stores/appStore'
 import { AgentTemplateEditor } from './AgentTemplateEditor'
 import { formatLocaleDate } from '../i18n/formatters'
+import { useAgentMarkStudio, MarkStudioAffordance, WorkspaceAvatar } from './agent-mark'
 
 export function AgentsPanel() {
   const { t: translate, i18n } = useTranslation()
@@ -15,6 +16,7 @@ export function AgentsPanel() {
   const { newConversationFromAgent, newConversationFromWorkspace } = useChatStore()
   const { setActiveView } = useAppStore()
   const roleName = useAppStore(s => s.currentRole?.name || 'learner')
+  const { openMarkStudio, markStudio } = useAgentMarkStudio()
 
   const [editing, setEditing] = useState<AgentTemplate | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
@@ -116,6 +118,7 @@ export function AgentsPanel() {
                       }}
                       onDelete={() => deleteWorkspace(w.id)}
                       onConfirmDelete={() => { setConfirmDeleteId(w.id); setTimeout(() => setConfirmDeleteId(null), 3000) }}
+                      onCustomizeMark={() => openMarkStudio({ scope: 'agent', roleName: w.id, displayName: w.name })}
                     />
                   ))}
                 </div>
@@ -181,13 +184,14 @@ export function AgentsPanel() {
           </div>
         )}
       </div>
+      {markStudio}
     </div>
   )
 }
 
 // ---- Workspace 卡片组件 ----
 
-function WorkspaceCard({ workspace: w, confirmDeleteId, translate, locale, onStartChat, onDelete, onConfirmDelete }: {
+function WorkspaceCard({ workspace: w, confirmDeleteId, translate, locale, onStartChat, onDelete, onConfirmDelete, onCustomizeMark }: {
   workspace: WorkspaceSummary
   confirmDeleteId: string | null
   translate: TFunction
@@ -195,11 +199,20 @@ function WorkspaceCard({ workspace: w, confirmDeleteId, translate, locale, onSta
   onStartChat: () => void
   onDelete: () => void
   onConfirmDelete: () => void
+  /** 捏头像入口 —— 改的是这张卡所属角色的标识，不动 workspace 自己的 emoji 图标 */
+  onCustomizeMark: () => void
 }) {
   return (
     <div className="group flex flex-col p-5 rounded-lg border border-brand-100 dark:border-brand-800 bg-brand-50/30 dark:bg-brand-900/10 hover:border-brand-300 dark:hover:border-brand-600 transition-colors cursor-pointer" onClick={onStartChat}>
       <div className="flex items-start gap-3 mb-3">
-        <span className="text-2xl">{w.icon}</span>
+        <span className="relative shrink-0 grid h-7 w-7 place-items-center text-2xl">
+          <WorkspaceAvatar workspaceId={w.id} icon={w.icon} size={26} />
+          <MarkStudioAffordance
+            size={18}
+            label={translate('agentMark.entry')}
+            onClick={onCustomizeMark}
+          />
+        </span>
         <div className="flex-1 min-w-0">
           <h3 className="text-[14px] font-semibold text-surface-700 break-words">{w.name}</h3>
           {w.description && <p className="text-[12px] text-surface-400 mt-0.5 line-clamp-2 break-words">{w.description}</p>}

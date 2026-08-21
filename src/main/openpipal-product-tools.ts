@@ -1458,7 +1458,7 @@ function createManageTaskTool(
 ): AgentTool {
   return {
     name: 'manage_task',
-    label: '任务',
+    label: '自动化',
     description: '创建、查看、修改或删除任务。任务让 Agent 具备被触发的能力（时间/事件/门控），触发时执行 prompt。当用户提到"提醒我"、"定时"、"每天"、"每周"、"每隔"时使用。',
     parameters: Type.Object({
       action: Type.Union([

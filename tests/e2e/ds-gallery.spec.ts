@@ -313,7 +313,7 @@ test.describe('设计系统画廊 侧栏渲染', () => {
     await page.locator('[data-testid="ds-files-row"]').filter({ hasText: 'hero.html' }).first().click()
     await expect(page.locator('[data-testid="ds-files-preview-frame"]')).toHaveAttribute(
       'src',
-      /\/design-systems\/wildcreek\/preview\/hero\.html$/
+      /\/design-systems\/[A-Za-z0-9_-]{20,}\/wildcreek\/preview\/hero\.html$/
     )
 
     await page.screenshot({ path: `${ARTIFACTS_DIR}/t4-files-split.png`, fullPage: true })
@@ -342,7 +342,7 @@ test.describe('设计系统画廊 侧栏渲染', () => {
     await expect(page.locator('[data-testid="ds-files-list"]')).toHaveCount(0)
     await expect(page.locator('[data-testid="ds-files-preview-frame"]')).toHaveAttribute(
       'src',
-      /\/design-systems\/wildcreek\/components\/button\.html$/
+      /\/design-systems\/[A-Za-z0-9_-]{20,}\/wildcreek\/components\/button\.html$/
     )
 
     // 返回 → 回到列表态(窄版不自动重选)

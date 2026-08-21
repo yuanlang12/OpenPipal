@@ -64,12 +64,20 @@ describe('local OpenAI-compatible QA provider fixture', () => {
     const call = result.chunks[0].choices[0].delta.tool_calls[0]
     expect(call.id).toBe('call-openpipal-qa-artifact-1')
     expect(call.function.name).toBe('create_artifact')
-    expect(JSON.parse(call.function.arguments)).toMatchObject({
+    // 参数分片投递（真实服务商就是这样）——拼回去才是完整 JSON
+    const assembledArguments = result.chunks
+      .flatMap((chunk: any) => chunk.choices?.[0]?.delta?.tool_calls || [])
+      .map((toolCall: any) => toolCall.function?.arguments || '')
+      .join('')
+    expect(result.chunks.filter((chunk: any) => chunk.choices?.[0]?.delta?.tool_calls).length)
+      .toBeGreaterThan(1)
+    expect(JSON.parse(assembledArguments)).toMatchObject({
       type: 'svg',
       title: 'OpenPipal QA Design Artifact',
       language: 'svg'
     })
-    expect(result.chunks[1].choices[0].finish_reason).toBe('tool_calls')
+    const finishChunk = result.chunks.filter((chunk: any) => chunk.choices?.[0]).at(-1)
+    expect(finishChunk.choices[0].finish_reason).toBe('tool_calls')
   })
 
   it('finishes the Design turn only after receiving the matching tool result', () => {

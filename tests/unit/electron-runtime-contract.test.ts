@@ -36,7 +36,10 @@ describe('Electron Runtime release contract', () => {
   it('declares Electron 43 macOS support in the package contract', () => {
     const builderConfig = fs.readFileSync(path.resolve('electron-builder.yml'), 'utf8')
     expect(builderConfig).toContain("minimumSystemVersion: '12.0'")
-    expect(builderConfig).toContain("- '!dist/**'")
-    expect(builderConfig).toContain("- '!release/**'")
+    // 历史产物出不出得去，由**正向白名单**决定（files 只列运行时需要的那几类），
+    // 不再靠 `!dist/**` 这种排除条目——那要求预测未来会出现什么文件。
+    // 白名单本身的边界断言在 electron-builder-release-boundary.test.ts。
+    expect(builderConfig).not.toContain("- 'dist/**'")
+    expect(builderConfig).not.toContain("- 'release/**'")
   })
 })

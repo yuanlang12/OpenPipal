@@ -1,9 +1,13 @@
 /**
  * 技能选择 = 单条消息内的强调，不是会话级过滤器。
  *
- * 用户在输入框用 @ 内联插入技能（`@技能名 ` 纯文本，与正文自然混排），发送时把命中的
- * token 就地换成标签（模型看到的就是原始文本），发完即清空。system prompt 里的技能索引
- * 永远全量注入，不随选择变化——既保证模型始终知道自己有哪些技能，又让前缀缓存不被逐轮翻转。
+ * 用户在输入框打 `/` 唤起快捷指令面板，选中即插入 `/技能名 ` 纯文本，与正文自然混排；
+ * 发送时把命中的 token 就地换成标签（模型看到的就是原始文本），发完即清空。system prompt
+ * 里的技能索引永远全量注入，不随选择变化——既保证模型始终知道自己有哪些技能，又让前缀缓存
+ * 不被逐轮翻转。
+ *
+ * 触发符用 `/` 而不是 `@`：ACP 适配器早就把技能报成编辑器的斜杠命令，桌面端本来也有
+ * `/goal`，一个产品只该有一种说法；`@` 空出来留给"引用某个对象"（文件 / 画布元素 / Agent）。
  *
  * 格式契约（本文件写、UserMessage 解析成 pill）：<skill-request>技能名</skill-request>
  */
@@ -25,8 +29,11 @@ export function composeSkillRequest(text: string, skills: string[]): string {
     : `请使用技能 ${tags} 来帮我完成`
 }
 
+/** 快捷指令触发符 */
+export const SKILL_TRIGGER = '/'
+
 export interface SkillMention {
-  /** '@' 在原文里的下标 */
+  /** '/' 在原文里的下标 */
   start: number
   /** token 结束下标（不含），即 start + 1 + name.length */
   end: number
@@ -36,17 +43,22 @@ export interface SkillMention {
 /** 技能名尾字符是 ASCII 词字符时才要求右边界——中文名后面直接接中文正文是常态 */
 const ASCII_WORD = /[A-Za-z0-9_-]/
 
+/** 只有行首或空白后的 `/` 才是指令触发符——否则 `src/main`、`https://x` 全成了 token */
+export function isTriggerBoundary(text: string, index: number): boolean {
+  return index === 0 || /\s/.test(text[index - 1])
+}
+
 /**
- * 在文本里找出 `@技能名` token。**只认已知名单**（名字可含中文/空格/·，无法用 \w+ 猜边界），
- * 同一位置多个候选取最长匹配（`@pdf-pro` 不会被 `pdf` 抢走）。
- * 未命中的 @ 一律不算 token（`@pdfx`、邮箱等原样保留）。
+ * 在文本里找出 `/技能名` token。**只认已知名单**（名字可含中文/空格/·，无法用 \w+ 猜边界），
+ * 同一位置多个候选取最长匹配（`/pdf-pro` 不会被 `pdf` 抢走）。
+ * 未命中的 `/` 一律不算 token（`/pdfx`、路径、URL 都原样保留）。
  */
 export function findSkillMentions(text: string, knownSkills: string[]): SkillMention[] {
   if (!text || knownSkills.length === 0) return []
   const names = knownSkills.filter(Boolean).sort((a, b) => b.length - a.length)
   const out: SkillMention[] = []
   for (let i = 0; i < text.length; i++) {
-    if (text[i] !== '@') continue
+    if (text[i] !== SKILL_TRIGGER || !isTriggerBoundary(text, i)) continue
     for (const name of names) {
       if (!text.startsWith(name, i + 1)) continue
       const after = text[i + 1 + name.length]
@@ -60,7 +72,7 @@ export function findSkillMentions(text: string, knownSkills: string[]): SkillMen
 }
 
 /**
- * 发送时转换：把正文里的 `@技能名` 换成 <skill-request> 标签。
+ * 发送时转换：把正文里的 `/技能名` 换成 <skill-request> 标签。
  * - 有正文：token 留在用户自己的行文位置，不额外加引导句
  * - 只有 token 没正文：套兜底句（复用 composeSkillRequest 的句式）
  */

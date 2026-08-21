@@ -199,7 +199,7 @@ function ensureConversation(task: Task): EnsuredConversation {
   }
   // 新建会话：使用任务记录的 role，缺失则 fallback 到当前活跃 role
   const role = task.role || getCurrentRole()?.name || 'learner'
-  const conv = createConversation(role, `[任务] ${task.name}`, task.agentId, task.workspaceId)
+  const conv = createConversation(role, `[自动化] ${task.name}`, task.agentId, task.workspaceId)
 
   // persistent 模式首次执行：绑定会话
   if (task.conversationMode === 'persistent') {
@@ -315,6 +315,8 @@ function storedMessageToChatMessage(message: StoredMessage): ChatMessage {
     id: message.id,
     role: message.role,
     content: message.content,
+    // 必须过缝：主进程据此把 runtime-context 快照原样回放（pi-message-conversion.ts）
+    messageKind: message.messageKind,
     screenshot: message.screenshot,
     screenshotRef: message.screenshotRef,
     images: message.images,
@@ -493,6 +495,15 @@ async function runTaskInConversation(
         messageKind: 'task-trigger'  // 让 UI 识别：任务触发产生的"系统内部消息"，可隐藏/折叠
       }
     ]
+    // RC 快照紧跟触发消息落盘，位置与渲染层 chatStore 一致——下轮回放字节一致，
+    // 跨回合前缀缓存才接得上。定时任务没有 renderer，不在这里存就永远没人存。
+    const taskRc = collector.finishRuntimeContext()
+    if (taskRc) {
+      toAppend.push({
+        id: randomUUID(), role: 'user', content: taskRc.text,
+        timestamp: taskRc.timestamp, messageKind: 'runtime-context'
+      })
+    }
     for (const entry of transcript) {
       const timestamp = Date.now()
       toAppend.push(entry.kind === 'tool'

@@ -92,10 +92,10 @@ export function FileResultCard({ message }: { message: ChatMessage }) {
   if (isSkillLoad) {
     return (
       <div className="flex justify-start mb-msg animate-fade-in">
-        <div className="max-w-msg w-full">
+        <div className="group/file max-w-msg w-full">
           <button
             onClick={() => setExpanded(!expanded)}
-            className="w-full flex items-center gap-2 pl-2.5 pr-2 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200/70 dark:border-amber-800/40 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors text-left"
+            className="w-full flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200/70 dark:border-amber-800/40 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors text-left"
           >
             <BookOpen className="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-400" strokeWidth={1.75} />
             <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-200/70 dark:bg-amber-800/50 text-amber-800 dark:text-amber-200">
@@ -106,7 +106,7 @@ export function FileResultCard({ message }: { message: ChatMessage }) {
             </span>
             {isError && <span className="shrink-0 text-chat-meta text-red-400">{t('chat.fileResult.failed')}</span>}
             <ChevronDown
-              className={`w-3.5 h-3.5 text-amber-500/70 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+              className={`w-3.5 h-3.5 text-amber-500/70 shrink-0 transition duration-200 ${expanded ? 'rotate-180' : ''} opacity-0 group-hover/file:opacity-100 group-has-[:focus-visible]/file:opacity-100`}
             />
           </button>
           {expandedBlock}
@@ -128,11 +128,11 @@ export function FileResultCard({ message }: { message: ChatMessage }) {
     const title = isSystem ? `${archive.groupName} · ${docName}` : docName
     return (
       <div className="flex justify-start mb-msg animate-fade-in">
-        <div className="max-w-msg w-full">
+        <div className="group/file max-w-msg w-full">
           <button
             data-testid="archive-file-card"
             onClick={() => setExpanded(!expanded)}
-            className="w-full flex items-center gap-2 pl-2.5 pr-2 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200/70 dark:border-emerald-800/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-colors text-left"
+            className="w-full flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200/70 dark:border-emerald-800/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-colors text-left"
           >
             <BookOpen className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" strokeWidth={1.75} />
             <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-200/70 dark:bg-emerald-800/50 text-emerald-800 dark:text-emerald-200">
@@ -143,7 +143,7 @@ export function FileResultCard({ message }: { message: ChatMessage }) {
             </span>
             {isError && <span className="shrink-0 text-chat-meta text-red-400">{t('chat.fileResult.failed')}</span>}
             <ChevronDown
-              className={`w-3.5 h-3.5 text-emerald-500/70 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+              className={`w-3.5 h-3.5 text-emerald-500/70 shrink-0 transition duration-200 ${expanded ? 'rotate-180' : ''} opacity-0 group-hover/file:opacity-100 group-has-[:focus-visible]/file:opacity-100`}
             />
           </button>
           {expandedBlock}
@@ -166,27 +166,31 @@ export function FileResultCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className="flex justify-start mb-msg animate-fade-in">
-      <div className="max-w-msg w-full">
+      <div className="group/file max-w-msg w-full">
         <div className="flex items-center gap-1">
           <button
             onClick={() => setExpanded(!expanded)}
             className="flex-1 min-w-0 flex items-center gap-2 pl-3 pr-2 py-1.5 border-l border-border hover:bg-surface-50 dark:hover:bg-surface-50/50 rounded-r transition-colors text-left"
           >
             <Icon className={`w-3.5 h-3.5 shrink-0 ${iconColor}`} />
-            <span className="text-chat-label font-medium text-surface-600 truncate flex-1">
+            {/* 文件名与路径**左侧紧挨**(不是一左一右顶开):路径是文件名的补语,隔半屏读起来
+                要来回扫。名字优先给宽度,路径吃剩下的并截断。 */}
+            <span className="text-chat-label font-medium text-surface-600 truncate shrink-0 max-w-[60%]">
               {label}: {fileName}
             </span>
             {!expanded && (
-              <span className="text-chat-meta text-surface-400 truncate max-w-[30%]">
+              <span className="text-chat-meta text-surface-400 truncate min-w-0 flex-1">
                 {filePath}
               </span>
             )}
-            <ChevronDown className={`w-3.5 h-3.5 text-surface-300 dark:text-surface-500 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+            <ChevronDown
+              className={`w-3.5 h-3.5 text-surface-300 dark:text-surface-500 shrink-0 transition duration-200 ${expanded ? 'rotate-180' : ''} opacity-0 group-hover/file:opacity-100 group-has-[:focus-visible]/file:opacity-100`}
+            />
           </button>
           {canPreview && (
             <button
               onClick={() => openInWorkspace(filePath, { title: fileName })}
-              className="shrink-0 h-[28px] px-2 rounded-lg bg-surface-50 border border-surface-100 hover:bg-surface-100 transition-colors text-surface-600 text-chat-meta flex items-center gap-1"
+              className="shrink-0 h-[28px] px-2 rounded-lg bg-surface-50 border border-surface-100 hover:bg-surface-100 transition-all text-surface-600 text-chat-meta flex items-center gap-1 opacity-0 group-hover/file:opacity-100 group-has-[:focus-visible]/file:opacity-100"
               title={t('chat.fileResult.actions.previewTitle')}
             >
               <Eye className="w-3 h-3" />{t('chat.fileResult.actions.preview')}

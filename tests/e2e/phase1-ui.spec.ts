@@ -213,8 +213,8 @@ test.describe('1.4 工具卡片折叠与摘要', () => {
     const toolCard = page.locator('text=保存记忆').first()
     await expect(toolCard).toBeVisible({ timeout: 3000 })
 
-    // 默认折叠 — 展开后的 Input/Output 标签不可见
-    const outputLabel = page.locator('text=Output')
+    // 默认折叠 — 展开后的 输入/输出 标签不可见(spec 锁 zh-CN,按中文文案断言)
+    const outputLabel = page.locator('text=输出')
     await expect(outputLabel).toHaveCount(0)
 
     await page.screenshot({ path: `${ARTIFACTS_DIR}/tool-card-collapsed.png` })
@@ -223,8 +223,8 @@ test.describe('1.4 工具卡片折叠与摘要', () => {
     await toolCard.click()
     await page.waitForTimeout(300)
 
-    // 展开后可见 Input/Output
-    await expect(page.locator('text=Output').first()).toBeVisible()
+    // 展开后可见 输入/输出
+    await expect(page.locator('text=输出').first()).toBeVisible()
 
     await page.screenshot({ path: `${ARTIFACTS_DIR}/tool-card-expanded.png` })
     console.log('[1.4] 工具卡片折叠摘要 - 通过')

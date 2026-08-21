@@ -315,6 +315,19 @@
   box-shadow: var(--glass-shadow-lg);
 }
 
+/* 工作目录条 —— 从输入框边缘露出来的一层。
+   比输入框窄一点、跟输入框一样浮着(同一档阴影),两块才读作同一个物件的两层;
+   底色比输入框深一档,才看得出是压在下面那层。压进去的那一边被输入框盖住,
+   所以只有露出来的两个角需要圆。 */
+.op-dir-bar {
+  background: var(--bg-muted);
+  box-shadow: var(--glass-shadow-md);
+  transition: box-shadow var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out);
+}
+.op-dir-bar:hover {
+  box-shadow: var(--glass-shadow-lg);
+}
+
 /* =========================================================================
    窗口本体 —— 整扇窗就是那块玻璃。
    BrowserWindow 已经是 transparent + frame:false + hasShadow:false,

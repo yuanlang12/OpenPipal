@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, ClipboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, Zap, FolderOpen, X } from 'lucide-react'
+import { ArrowUp, FileText, X } from 'lucide-react'
 import { ModelControl } from './shared/ModelControl'
 import { VoiceCallInline } from './VoiceCallInline'
 import type { VoiceSessionState } from '../types'
@@ -9,9 +9,13 @@ import { useChatStore } from '../stores/chatStore'
 import { useAgentStore } from '../stores/agentStore'
 import { RolePreflowPanel, type PreflowManifest } from './RolePreflowPanel'
 import { RoleAvatar } from './shared/RoleAvatar'
+import { useAgentMarkStudio, MarkStudioAffordance } from './agent-mark'
 import { extractPastedImages } from '../utils/pasteImages'
 import { expandSkillMentions } from '../chat/skillRequest'
 import { useSkillMentions, type SkillInfo } from './shared/SkillMention'
+import { WorkingDirBar } from './shared/WorkingDirBar'
+import { useComposerFileIntake } from './shared/useComposerFileIntake'
+import { fmtSize } from '../utils/format'
 import { getBuiltinRoleNameKey } from '../../../shared/i18n/resources'
 
 // 只有 teacher / design 有副标题,其余角色不展示 —— 一张 6 个角色、
@@ -51,8 +55,9 @@ export function WelcomePage({
   onHangupVoice
 }: WelcomePageProps = {}) {
   const { t } = useTranslation()
+  const { openMarkStudio, markStudio } = useAgentMarkStudio()
   const { currentRole, allRoles, switchRole } = useAppStore()
-  const { sendMessage, conversationConfig, setConversationWorkingDir, setConversationBrief, setConversationModelPreset, newConversationFromAgent, switchConversation } = useChatStore()
+  const { sendMessage, conversationConfig, setConversationBrief, setConversationModelPreset, newConversationFromAgent, switchConversation } = useChatStore()
   const agentTemplates = useAgentStore(s => s.templates)
   const loadTemplates = useAgentStore(s => s.loadTemplates)
 
@@ -75,7 +80,6 @@ export function WelcomePage({
 
   const [input, setInput] = useState('')
   const [interpretLangs, setInterpretLangs] = useState<{ targetLanguages: string[]; current: string } | null>(null)
-  const [showSkillPicker, setShowSkillPicker] = useState(false)
   const [allSkills, setAllSkills] = useState<SkillInfo[]>([])
   const [modelName, setModelName] = useState('')
   const [modelIsBuiltin, setModelIsBuiltin] = useState(false)
@@ -94,8 +98,8 @@ export function WelcomePage({
     }
   }, [])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const skillPickerRef = useRef<HTMLDivElement>(null)
-  // @ 触发技能补全 + 内联 token 着色（与对话页 InputBar 同一套）
+  // `/` 快捷指令面板 + 内联 token 着色（与对话页 InputBar 同一套）。
+  // 欢迎页不给内置命令：`/goal` 这类改的是会话状态，这里还没有会话可改。
   const mentions = useSkillMentions({
     skills: allSkills,
     value: input,
@@ -106,6 +110,14 @@ export function WelcomePage({
   // 粘贴的剪贴板图片（base64，无 data: 前缀）——与聊天 InputBar 同一管道
   const [images, setImages] = useState<string[]>([])
   const setActiveView = useAppStore(s => s.setActiveView)
+
+  // 上传：进料规则（图片内联 / study 进知识库 / 其余挂附件）与对话页共用一份
+  const pendingFileAttachments = useChatStore(s => s.pendingFileAttachments)
+  const removePendingFileAttachment = useChatStore(s => s.removePendingFileAttachment)
+  const clearPendingFileAttachments = useChatStore(s => s.clearPendingFileAttachments)
+  const { handleFile, handleFileUpload } = useComposerFileIntake(
+    (base64) => setImages(prev => [...prev, base64])
+  )
 
   useEffect(() => { loadTemplates() }, [])
   useEffect(() => {
@@ -120,15 +132,6 @@ export function WelcomePage({
     window.api.getInterpretLangs?.().then(setInterpretLangs).catch(() => setInterpretLangs(null))
   }, [selectedRole])
 
-  useEffect(() => {
-    if (!showSkillPicker) return
-    const handler = (e: MouseEvent) => {
-      if (skillPickerRef.current && !skillPickerRef.current.contains(e.target as Node)) setShowSkillPicker(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showSkillPicker])
-
   // 欢迎页可能背后已有一条空会话，也可能尚未物化会话；两种路径都必须把显式选择放进
   // conversationConfig。只改全局默认会让胶囊显示新模型、首条请求却继续使用出生时的旧模型。
   const sessionPresetId = conversationConfig?.modelPresetId
@@ -142,24 +145,39 @@ export function WelcomePage({
   const effectiveSupportsDial = sessionPreset ? !!sessionPreset.supportsEffortDial : modelSupportsDial
   const handleSwitchModel = (id: string) => setConversationModelPreset(id)
 
-  const selectedDir = conversationConfig?.workingDir || ''
   // 思考开关/档位 UI 已抽到 shared/ThinkingControl（与对话页 InputBar 共用）
-  const handleSelectDir = async () => { const dir = await window.api.selectDirectory?.(); if (dir) setConversationWorkingDir(dir) }
+  // 工作目录选择在 shared/WorkingDirBar，自己连 chatStore，这里不再持有
   const handleSetInterpretTarget = (lang: string) => {
     setInterpretLangs(prev => (prev ? { ...prev, current: lang } : prev))
     window.api.setInterpretTarget?.(lang)
   }
+  // 附件也算内容：只挂了一个文件就该能发（正文留空时补一句默认请求）
+  const hasContent = input.trim().length > 0 || images.length > 0 || pendingFileAttachments.length > 0
   const handleSend = () => {
-    const t = input.trim()
-    if (!t && images.length === 0) return
-    sendMessage(expandSkillMentions(t, allSkills.map(s => s.name)), roleName, images.length ? images : undefined)
-    setInput(''); setImages([])
+    const trimmed = input.trim()
+    if (!hasContent) return
+    // 文件不进正文——只传路径，AI 用自有工具读取（与对话页同一契约）
+    const filesMeta = pendingFileAttachments.map(f => ({
+      fileName: f.fileName, fileType: f.fileType, sizeBytes: f.sizeBytes, path: f.path
+    }))
+    // 正文留空时的默认请求（"请分析这个文件"）由 chatStore.sendMessage 统一补，这里不重复
+    sendMessage(
+      expandSkillMentions(trimmed, allSkills.map(s => s.name)),
+      roleName,
+      images.length ? images : undefined,
+      filesMeta.length ? filesMeta : undefined
+    )
+    setInput(''); setImages([]); clearPendingFileAttachments()
   }
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentions.handleKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); handleSend() }
   }
-  const handlePaste = (e: ClipboardEvent) => extractPastedImages(e, (b64) => setImages(prev => [...prev, b64]))
+  const handlePaste = (e: ClipboardEvent) => extractPastedImages(
+    e,
+    (b64) => setImages(prev => [...prev, b64]),
+    { onFilePath: (p) => { void handleFile(p) } }
+  )
 
   // ---- 通用角色前置页（Preflow）----
   // 当选中的角色在 ~/.openpipal/system-agents/<role>/preflow.json 有 manifest 时
@@ -263,46 +281,67 @@ export function WelcomePage({
         {/* 角色头像群 — 固定占位，选中放大；未选中保留原色并降低透明度，不给头像增加外框 */}
         {/* flex-wrap 不是装饰:6 个 64px 头像 + 间距 ≈ 444px,挂靠态内容列只有 ~350px,
             不换行就会横向溢出(底部冒出滚动条、两侧头像被裁)。 */}
-        <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
+        <div className="flex flex-wrap items-center justify-center gap-8 mb-6">
           {/* 通用助手（默认） */}
-          <button
-            onClick={() => pickRole('general')}
-            aria-pressed={selectedRole === 'general'}
-            className="group relative flex h-16 w-16 items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
-            title={t('welcome.generalRoleTitle')}
-          >
-            <RoleAvatar
-              role={{ name: 'general', avatarDataUrl: allRoles.find(r => r.name === 'general')?.avatarDataUrl }}
-              size={64}
-              className={`sw-welcome-avatar ${
-                selectedRole === 'general'
-                  ? 'sw-welcome-avatar--active'
-                  : 'sw-welcome-avatar--inactive'
-              }`}
+          <div className="group relative h-11 w-11">
+            <button
+              onClick={() => pickRole('general')}
+              aria-pressed={selectedRole === 'general'}
+              className="flex h-11 w-11 items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+              title={t('welcome.generalRoleTitle')}
+            >
+              <RoleAvatar
+                role={{
+                  name: 'general',
+                  avatarDataUrl: allRoles.find(r => r.name === 'general')?.avatarDataUrl,
+                  mark: allRoles.find(r => r.name === 'general')?.mark,
+                }}
+                size={44}
+                className={`sw-welcome-avatar ${
+                  selectedRole === 'general'
+                    ? 'sw-welcome-avatar--active'
+                    : 'sw-welcome-avatar--inactive'
+                }`}
+              />
+            </button>
+            <MarkStudioAffordance
+              size={16}
+              label={t('agentMark.entry')}
+              onClick={() => openMarkStudio({ roleName: 'general', displayName: t('welcome.generalRoleTitle') })}
             />
-          </button>
+          </div>
 
           {/* general 由上面硬编码的 ✦ 按钮渲染，这里过滤掉避免重复 */}
           {allRoles.filter(r => r.name !== 'general').map(role => {
             const isActive = role.name === selectedRole
             return (
-              <button
-                key={role.name}
-                onClick={() => pickRole(role.name)}
-                aria-pressed={isActive}
-                className="group relative flex h-16 w-16 items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
-                title={roleDisplayName(role)}
-              >
-                <RoleAvatar
-                  role={{ name: role.name, avatarDataUrl: role.avatarDataUrl }}
-                  size={64}
-                  className={`sw-welcome-avatar ${
-                    isActive
-                      ? 'sw-welcome-avatar--active'
-                      : 'sw-welcome-avatar--inactive'
-                  }`}
+              <div key={role.name} className="group relative h-11 w-11">
+                <button
+                  onClick={() => pickRole(role.name)}
+                  aria-pressed={isActive}
+                  className="flex h-11 w-11 items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+                  title={roleDisplayName(role)}
+                >
+                  <RoleAvatar
+                    role={{ name: role.name, avatarDataUrl: role.avatarDataUrl, mark: role.mark }}
+                    size={44}
+                    className={`sw-welcome-avatar ${
+                      isActive
+                        ? 'sw-welcome-avatar--active'
+                        : 'sw-welcome-avatar--inactive'
+                    }`}
+                  />
+                </button>
+                <MarkStudioAffordance
+                  size={16}
+              label={t('agentMark.entry')}
+                  onClick={() => openMarkStudio({
+                    roleName: role.name,
+                    displayName: roleDisplayName(role),
+                    initial: role.mark as never,
+                  })}
                 />
-              </button>
+              </div>
             )
           })}
         </div>
@@ -340,21 +379,23 @@ export function WelcomePage({
         {/* 欢迎页底下没有消息流穿过去,所以这里用实心变体(官方 Composer 的
             glass={false})。玻璃只出现在有内容从底下流过去的地方 —— 这条克制
             正是玻璃在会话页里读得出来的原因。 */}
-        <div className="op-composer-solid mb-5">
-          {/* 已选配置 pills */}
-          {selectedDir && (
+        <div className="op-composer-solid relative z-10">
+          {pendingFileAttachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-4 pt-3">
-              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-surface-50 text-[11px] text-surface-500">
-                <FolderOpen className="w-3 h-3" />
-                {selectedDir.split('/').pop()}
-                <button
-                  onClick={() => setConversationWorkingDir('')}
-                  aria-label={t('welcome.input.removeDirectory')}
-                  className="ml-0.5 text-surface-300 hover:text-surface-500"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
+              {pendingFileAttachments.map((file, i) => (
+                <span key={`f${i}`} data-testid="welcome-file-chip" className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-surface-50 text-[11px] text-surface-500">
+                  <FileText className="w-3 h-3 shrink-0" />
+                  <span className="truncate max-w-[160px]">{file.fileName}</span>
+                  <span className="text-surface-300">({fmtSize(file.sizeBytes)})</span>
+                  <button
+                    onClick={() => removePendingFileAttachment(i)}
+                    aria-label={t('welcome.input.removeFile')}
+                    className="ml-0.5 text-surface-300 hover:text-surface-500"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
             </div>
           )}
 
@@ -401,31 +442,15 @@ export function WelcomePage({
 
           <div className="flex items-center justify-between gap-2 px-4 pb-3 min-w-0">
             <div className="flex items-center gap-1 relative min-w-0 flex-1">
-              <div ref={skillPickerRef} className="relative min-w-0">
-                <button onClick={() => setShowSkillPicker(!showSkillPicker)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors min-w-0">
-                  <Zap className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{t('welcome.input.skills')}</span>
-                </button>
-                {showSkillPicker && (
-                  <div className="absolute bottom-full left-0 mb-1 w-64 op-menu py-1 z-50 max-h-48 overflow-y-auto animate-fade-in">
-                    <div className="px-3 py-1 text-[10px] text-surface-400">
-                      {t('welcome.input.skillHint')}
-                    </div>
-                    {allSkills.map(skill => (
-                      <button key={skill.name} onClick={() => { mentions.insertSkill(skill.name); setShowSkillPicker(false) }}
-                        className="w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-2 transition-colors text-surface-600 hover:bg-surface-50">
-                        <Zap className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{skill.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <button onClick={handleSelectDir}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors min-w-0">
-                <FolderOpen className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">{selectedDir ? selectedDir.split('/').pop() : t('welcome.input.directory')}</span>
+              {/* 上传 —— 对话页是 + 菜单里的一项，欢迎页这里只有这一项，就不套一层菜单了 */}
+              <button
+                onClick={handleFileUpload}
+                data-testid="welcome-upload-btn"
+                title={t('chat.input.uploadFileOrImage')}
+                aria-label={t('chat.input.uploadFileOrImage')}
+                className="flex items-center px-2 py-1 rounded-md text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors shrink-0"
+              >
+                <span className="text-[16px] leading-none font-light">+</span>
               </button>
               <VoiceCallInline
                 sessionState={voiceSessionState}
@@ -453,16 +478,19 @@ export function WelcomePage({
             </div>
             <button
               onClick={handleSend}
-              disabled={!input.trim() && images.length === 0}
+              disabled={!hasContent}
               data-testid="send-btn"
               aria-label={t('welcome.input.send')}
               className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center transition-all ${
-                (input.trim() || images.length > 0) ? 'bg-brand-500 text-ink-on-accent hover:bg-brand-600 active:scale-95' : 'bg-surface-100 text-surface-300 cursor-not-allowed'
+                hasContent ? 'bg-brand-500 text-ink-on-accent hover:bg-brand-600 active:scale-95' : 'bg-surface-100 text-surface-300 cursor-not-allowed'
               }`}>
               <ArrowUp className="w-4 h-4" />
             </button>
           </div>
         </div>
+
+        {/* 工作目录 —— 欢迎页输入框上面还有欢迎语，只能往下贴 */}
+        <WorkingDirBar placement="below" className="mb-5" />
 
         {/* Agent 模板卡片 */}
         {agentTemplates.length > 0 && (
@@ -486,6 +514,7 @@ export function WelcomePage({
           </div>
         )}
       </div>
+      {markStudio}
     </div>
   )
 }

@@ -23,8 +23,8 @@ describe('renderer Agents i18n', () => {
     expect(english.t('agents.sections.generated')).toBe('Generated from conversations')
     expect(english.t('agents.metrics.memories', { count: 1 })).toBe('1 memory')
     expect(english.t('agents.metrics.memories', { count: 3 })).toBe('3 memories')
-    expect(english.t('agents.metrics.tasks', { count: 1 })).toBe('1 task')
-    expect(english.t('agents.metrics.tasks', { count: 3 })).toBe('3 tasks')
+    expect(english.t('agents.metrics.tasks', { count: 1 })).toBe('1 automation')
+    expect(english.t('agents.metrics.tasks', { count: 3 })).toBe('3 automations')
     expect(english.t('agents.editor.placeholders.workingDirectory')).toContain('global working folder')
     expect(english.t('agents.actions.editNamed', { name: '用户 Agent 🌟' })).toBe(
       'Edit Agent “用户 Agent 🌟”'

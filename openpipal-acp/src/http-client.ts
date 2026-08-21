@@ -70,7 +70,14 @@ export async function probeDesktop(baseUrl: string = DEFAULT_BASE): Promise<bool
 export async function createConversation(
   title: string,
   baseUrl: string = DEFAULT_BASE,
-  options?: { role?: string; workspaceId?: string; agentId?: string; workingDir?: string },
+  options?: {
+    role?: string
+    workspaceId?: string
+    agentId?: string
+    workingDir?: string
+    client?: string
+    protocolVersion?: number
+  },
 ): Promise<{ id: string; role: string; config?: Record<string, unknown> }> {
   const body: Record<string, any> = { title }
   if (options?.role) body.role = options.role
@@ -94,7 +101,12 @@ export async function createConversation(
         config: {
           ...(data.config || {}),
           workingDir: options.workingDir,
-          acp: { adapter: 'openpipal-acp' },
+          acp: {
+            adapter: 'openpipal-acp',
+            // 桌面端设置页据此显示"Zed · ACP v2"；老适配器不带这两个字段，显示成未知编辑器
+            ...(options.client ? { client: options.client } : {}),
+            ...(options.protocolVersion ? { protocolVersion: options.protocolVersion } : {}),
+          },
         },
       }),
     })
@@ -109,6 +121,7 @@ export interface ConversationSummary {
   id: string
   title: string
   role: string
+  workspaceId?: string
   config?: {
     workingDir?: string
     acp?: { adapter?: string }
@@ -207,15 +220,20 @@ export async function streamChat(
 }
 
 /** 持久化单个 ACP conversation 的 role，不改变桌面端全局角色。 */
-export async function updateConversationRole(
+/**
+ * 改这条会话用哪个人格：内置角色传 `{ role, workspaceId: null }`（必须同时清掉
+ * workspace 绑定，否则自定义 Agent 的 systemPrompt 仍然压过角色，"切回去"等于没切）；
+ * 自定义 Agent 传 `{ workspaceId }`，角色留着当工具基线。
+ */
+export async function updateConversationPersona(
   conversationId: string,
-  role: string,
+  patch: { role?: string; workspaceId?: string | null },
   baseUrl: string = DEFAULT_BASE,
 ): Promise<void> {
   const res = await fetch(`${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}`, {
     method: 'PATCH',
     headers: nativeJsonHeaders(),
-    body: JSON.stringify({ role }),
+    body: JSON.stringify(patch),
   })
   if (!res.ok) {
     let detail = ''
@@ -225,7 +243,7 @@ export async function updateConversationRole(
     } catch {
       // Preserve the HTTP fallback when a non-JSON intermediary responds.
     }
-    throw new Error(detail || `Failed to update conversation role: ${res.status} ${res.statusText}`.trim())
+    throw new Error(detail || `Failed to update conversation persona: ${res.status} ${res.statusText}`.trim())
   }
 }
 
@@ -238,6 +256,96 @@ export async function listAgents(
     throw new Error(`Failed to list agents: ${res.status}`)
   }
   return (await res.json()) as any
+}
+
+/**
+ * 桌面端 → 适配器的常驻推送通道。一直挂着，只在桌面端/插件/别的客户端改了会话时
+ * 吐一条 `{type:'conversation_changed', conversationId, kind}`。内容不带，收到信号
+ * 自己回读磁盘——磁盘才是事实源。
+ */
+export async function openDesktopEventStream(
+  signal: AbortSignal,
+  baseUrl: string = DEFAULT_BASE,
+): Promise<ReadableStream<Uint8Array>> {
+  const res = await fetch(`${baseUrl}/api/acp/events`, {
+    method: 'GET',
+    headers: acpMcpAuthHeaders(),
+    signal,
+  })
+  if (!res.ok || !res.body) {
+    throw new Error(`Failed to open desktop event stream: ${res.status} ${res.statusText}`.trim())
+  }
+  return res.body
+}
+
+/** 会话目标（`/goal` 背后的状态）。桌面端设完之后每轮结束会自动判定有没有达成。 */
+export interface ConversationGoalState {
+  text: string
+  maxTurns: number
+  turnsUsed: number
+  status: 'active' | 'paused' | 'done' | 'exceeded'
+  lastCheck?: { ok: boolean; reason: string; timestamp: number; fallback?: boolean }
+}
+
+export async function getConversationGoal(
+  conversationId: string,
+  baseUrl: string = DEFAULT_BASE,
+): Promise<ConversationGoalState | null> {
+  const res = await fetch(`${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}/goal`, {
+    method: 'GET',
+    headers: acpMcpAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(`Failed to read conversation goal: ${res.status}`)
+  return ((await res.json()) as { goal?: ConversationGoalState | null }).goal || null
+}
+
+export async function setConversationGoal(
+  conversationId: string,
+  text: string,
+  baseUrl: string = DEFAULT_BASE,
+): Promise<ConversationGoalState> {
+  const res = await fetch(`${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}/goal`, {
+    method: 'POST',
+    headers: nativeJsonHeaders(),
+    body: JSON.stringify({ text }),
+  })
+  if (!res.ok) throw new Error(`Failed to set conversation goal: ${res.status}`)
+  return ((await res.json()) as { goal: ConversationGoalState }).goal
+}
+
+export async function clearConversationGoal(
+  conversationId: string,
+  baseUrl: string = DEFAULT_BASE,
+): Promise<void> {
+  const res = await fetch(`${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}/goal`, {
+    method: 'DELETE',
+    headers: acpMcpAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(`Failed to clear conversation goal: ${res.status}`)
+}
+
+/**
+ * 本会话可用的技能。自定义 Agent 只带它自己的，内置角色带全局启用的那批——
+ * 换人格之后要重拉，否则编辑器的斜杠命令列表是上一个人格的。
+ */
+export async function listSkills(
+  workspaceId: string | undefined,
+  role: string | undefined,
+  baseUrl: string = DEFAULT_BASE,
+): Promise<Array<{ name: string; description: string }>> {
+  // 两档作用域二选一：绑了自定义 Agent 就只看它自己的技能，否则按内置角色取
+  // （全局技能 + 这个角色的专属技能）。role 不传就漏掉角色专属那批。
+  const query = workspaceId
+    ? `?workspaceId=${encodeURIComponent(workspaceId)}`
+    : role
+      ? `?role=${encodeURIComponent(role)}`
+      : ''
+  const res = await fetch(`${baseUrl}/api/skills${query}`, { method: 'GET', headers: acpMcpAuthHeaders() })
+  if (!res.ok) throw new Error(`Failed to list skills: ${res.status}`)
+  const body = (await res.json()) as { skills?: Array<{ name?: string; description?: string }> }
+  return (body.skills || [])
+    .filter((skill): skill is { name: string; description?: string } => typeof skill.name === 'string' && skill.name.length > 0)
+    .map((skill) => ({ name: skill.name, description: skill.description || skill.name }))
 }
 
 /**
@@ -280,3 +388,29 @@ export async function unregisterSessionMcpServers(
 }
 
 export { DEFAULT_BASE }
+
+/**
+ * 权限确认回传（对称于浏览器侧栏的 POST /api/permission）。
+ *
+ * 桌面端只接受"回答自己那条还活着的流"的 native 请求，所以 executionId /
+ * conversationId 必须原样带回——两者来自权限事件本身，适配器不构造也不猜。
+ */
+export async function respondPermission(
+  decision: {
+    requestId: string
+    approved: boolean
+    sessionApprove?: boolean
+    executionId?: string
+    conversationId?: string
+  },
+  baseUrl: string = DEFAULT_BASE,
+): Promise<void> {
+  const res = await fetch(`${baseUrl}/api/permission`, {
+    method: 'POST',
+    headers: nativeJsonHeaders(),
+    body: JSON.stringify(decision),
+  })
+  if (!res.ok) {
+    throw new Error(`Failed to submit permission decision: ${res.status} ${res.statusText}`)
+  }
+}

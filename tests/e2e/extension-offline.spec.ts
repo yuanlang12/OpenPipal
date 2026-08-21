@@ -1,10 +1,41 @@
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'fs'
 import path from 'path'
 
 const ARTIFACTS_DIR = 'tests/artifacts/extension-offline'
 
 // sidepanel.html 的绝对路径
-const SIDEPANEL_PATH = path.resolve(__dirname, '../../../openpipal-extension/sidepanel.html')
+// 插件在**仓库内**(openpipal-extension/),不是仓库的兄弟目录。
+// 早先它确实是同级仓库,搬进来之后这里的 ../../../ 没跟着改,三条用例一直 ERR_FILE_NOT_FOUND。
+const SIDEPANEL_PATH = path.resolve(__dirname, '../../openpipal-extension/sidepanel.html')
+
+
+// sidepanel.js 一开头就调 chrome.i18n.getUILanguage() / getMessage() 给 [data-i18n] 填字。
+// file:// 里没有 chrome.i18n,脚本直接抛异常 —— 后面的健康检查、.visible 切换全都不跑,
+// 于是页面永远是"错误区隐藏 + 所有文案为空"。三条用例一直红就是这个原因(插件做 i18n 迁移时
+// 测试没跟着补桩),而 TC-EXT.2 甚至因此**假绿**:它断言错误区隐藏,而脚本死了本来就隐藏。
+// 桩里的文案直接读插件真实的 _locales,断言钉的就是用户会看到的字。
+const MESSAGES = JSON.parse(
+  readFileSync(path.resolve(__dirname, '../../openpipal-extension/_locales/zh_CN/messages.json'), 'utf8')
+) as Record<string, { message: string; placeholders?: Record<string, { content: string }> }>
+
+const CHROME_I18N_STUB = `
+  window.__MESSAGES = ${JSON.stringify(MESSAGES)};
+  window.__i18nStub = {
+    getUILanguage: () => 'zh-CN',
+    getMessage: (name, subs) => {
+      const entry = window.__MESSAGES[name];
+      if (!entry) return '';
+      const list = subs === undefined ? [] : (Array.isArray(subs) ? subs : [subs]);
+      let msg = entry.message;
+      Object.entries(entry.placeholders || {}).forEach(([ph, def]) => {
+        const idx = parseInt(String(def.content).replace('$', ''), 10) - 1;
+        msg = msg.replace(new RegExp('\\$' + ph + '\\$', 'gi'), list[idx] == null ? '' : String(list[idx]));
+      });
+      return msg;
+    }
+  };
+`
 
 // Mock chrome APIs + fetch 失败（模拟桌面端离线）
 const MOCK_OFFLINE = `
@@ -19,7 +50,8 @@ const MOCK_OFFLINE = `
     runtime: {
       getManifest: () => ({ version: '1.0.0-test' }),
       onMessage: { addListener: () => {} }
-    }
+    },
+    i18n: window.__i18nStub
   };
   // Mock fetch to simulate offline
   const _origFetch = window.fetch;
@@ -43,7 +75,8 @@ const MOCK_ONLINE = `
     runtime: {
       getManifest: () => ({ version: '1.0.0-test' }),
       onMessage: { addListener: () => {} }
-    }
+    },
+    i18n: window.__i18nStub
   };
   const _origFetch = window.fetch;
   window.fetch = async (url, opts) => {
@@ -62,6 +95,7 @@ const MOCK_ONLINE = `
 
 test.describe('浏览器插件离线提示', () => {
   test('TC-EXT.1 桌面端离线时显示错误页面', async ({ page }) => {
+    await page.addInitScript({ content: CHROME_I18N_STUB })
     await page.addInitScript({ content: MOCK_OFFLINE })
     await page.goto(`file://${SIDEPANEL_PATH}`)
     await page.waitForTimeout(1000)
@@ -78,7 +112,8 @@ test.describe('浏览器插件离线提示', () => {
     await expect(page.locator('.error-title')).toContainText('未连接到 OpenPipal')
 
     // 说明文字
-    await expect(page.locator('.error-desc')).toContainText('配合 OpenPipal 桌面端使用')
+    // 文案以 _locales 里的 disconnectedDescription 为准("桌面端"早已改成"桌面应用")
+    await expect(page.locator('.error-desc')).toContainText('配合 OpenPipal 桌面应用使用')
 
     // 操作步骤
     const steps = page.locator('.error-steps div')
@@ -100,6 +135,7 @@ test.describe('浏览器插件离线提示', () => {
   })
 
   test('TC-EXT.2 桌面端在线时隐藏错误页面', async ({ page }) => {
+    await page.addInitScript({ content: CHROME_I18N_STUB })
     await page.addInitScript({ content: MOCK_ONLINE })
     await page.goto(`file://${SIDEPANEL_PATH}`)
     await page.waitForTimeout(1000)
@@ -118,6 +154,7 @@ test.describe('浏览器插件离线提示', () => {
 
   test('TC-EXT.3 多次失败后状态提示更新', async ({ page }) => {
     // 注入 mock 并手动控制 checkDesktop 调用
+    await page.addInitScript({ content: CHROME_I18N_STUB })
     await page.addInitScript({ content: `
       window.chrome = {
         tabs: {
@@ -129,7 +166,8 @@ test.describe('浏览器插件离线提示', () => {
         runtime: {
           getManifest: () => ({ version: '1.0.0-test' }),
           onMessage: { addListener: () => {} }
-        }
+        },
+        i18n: window.__i18nStub
       };
       window.fetch = async (url) => {
         if (typeof url === 'string' && url.includes('localhost:3031')) {

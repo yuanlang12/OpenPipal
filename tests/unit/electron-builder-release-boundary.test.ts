@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { minimatch } from 'minimatch'
 import { parse } from 'yaml'
 
 interface ExtraResource {
@@ -34,12 +35,21 @@ const packageManifest = JSON.parse(fs.readFileSync(path.resolve('package.json'),
   scripts: Record<string, string>
 }
 
-function rootFileIsExcluded(file: string): boolean {
-  return config.files.some((pattern) => {
-    if (pattern === `!${file}`) return true
-    const brace = pattern.match(/^!\{([^{}]+)\}$/)
-    return brace?.[1].split(',').includes(file) ?? false
-  })
+/**
+ * files 是**正向白名单**（见 electron-builder.yml 顶部的理由）：一条路径进不进 asar，
+ * 取决于有没有哪条正向 pattern 命中它、且没被 `!` 打掉。此前这里假设的是排除列表
+ * （"有没有 `!src/*` 这一条"），白名单改造之后那种断言恒为假——测试红着，却什么都没在守。
+ */
+function packedIntoAsar(file: string): boolean {
+  let packed = false
+  for (const pattern of config.files) {
+    if (pattern.startsWith('!')) {
+      if (minimatch(file, pattern.slice(1), { dot: true })) packed = false
+    } else if (minimatch(file, pattern, { dot: true })) {
+      packed = true
+    }
+  }
+  return packed
 }
 
 function normalizeResourcePath(value: string): string {
@@ -92,10 +102,16 @@ describe('Electron Builder release boundary', () => {
       extends: './electron-builder.yml',
       afterPack: './scripts/embed-macos-release-build-manifest.mjs',
     })
-    expect(packageManifest.scripts['build:mac']).toBe('npm run build && electron-builder --mac')
-    expect(packageManifest.scripts['build:unpack']).toBe('npm run build && electron-builder --dir')
+    // 每条打包路径都必须先产出适配器：漏一条就会把上一次的 dist 当成新的装进包里
+    expect(packageManifest.scripts['build:acp']).toBe('npm --prefix openpipal-acp run build')
+    expect(packageManifest.scripts['build:mac']).toBe(
+      'npm run build && npm run build:acp && electron-builder --mac',
+    )
+    expect(packageManifest.scripts['build:unpack']).toBe(
+      'npm run build && npm run build:acp && electron-builder --dir',
+    )
     expect(packageManifest.scripts['release:build-macos']).toBe(
-      'npm run build && electron-builder --mac --config electron-builder.release.yml',
+      'npm run build && npm run build:acp && electron-builder --mac --config electron-builder.release.yml',
     )
     const hook = await import('../../scripts/embed-macos-release-build-manifest.mjs')
     expect(typeof hook.afterPack).toBe('function')
@@ -110,22 +126,28 @@ describe('Electron Builder release boundary', () => {
       'vitest.config.ts',
     ]
 
-    for (const file of forbidden) expect(rootFileIsExcluded(file), file).toBe(true)
-    expect(rootFileIsExcluded('mcp-servers.json')).toBe(true)
+    for (const file of forbidden) expect(packedIntoAsar(file), file).toBe(false)
+    expect(packedIntoAsar('mcp-servers.json')).toBe(false)
   })
 
   it('keeps source, QA, documentation, scripts, and historical outputs out of app.asar', () => {
-    for (const pattern of [
-      "!src/*",
-      "!tests/**",
-      "!docs/**",
-      "!scripts/**",
-      "!openpipal-acp/**",
-      "!openpipal-extension/**",
-      "!dist/**",
-      "!release/**",
+    for (const file of [
+      'src/main/index.ts',
+      'tests/unit/anything.test.ts',
+      'docs/claude/architecture.md',
+      'scripts/verify-macos-release.mjs',
+      // 适配器只以 extraResources 的形式随包（asar 之外），源码和 dist 都不进 asar
+      'openpipal-acp/src/agent.ts',
+      'openpipal-acp/dist/index.js',
+      'openpipal-extension/manifest.json',
+      'dist/renderer.js',
+      'release/OpenPipal.dmg',
     ]) {
-      expect(config.files).toContain(pattern)
+      expect(packedIntoAsar(file), file).toBe(false)
+    }
+    // 白名单本身仍要放行运行时真正需要的那几类
+    for (const file of ['out/main/index.js', 'package.json', 'LICENSE']) {
+      expect(packedIntoAsar(file), file).toBe(true)
     }
   })
 
@@ -135,11 +157,24 @@ describe('Electron Builder release boundary', () => {
       (entry) => normalizeResourcePath(entry.from) === 'resources/mcp-servers.json'
     )
 
-    expect(rootFileIsExcluded('mcp-servers.json')).toBe(true)
+    expect(packedIntoAsar('mcp-servers.json')).toBe(false)
     expect(sanitized).toEqual([
       expect.objectContaining({ to: 'mcp-servers.json' }),
     ])
     expect(sources).not.toContain('mcp-servers.json')
+  })
+
+  it('ships the ACP adapter as a runnable single file outside app.asar', () => {
+    const adapter = config.extraResources.find(
+      (entry) => normalizeResourcePath(entry.from) === 'openpipal-acp/dist/index.js'
+    )
+
+    // .mjs 不是审美：Resources 下没有 package.json，.js 会被 Node 当成 CommonJS，
+    // 适配器第一行 import 就语法报错——用户看到的是"编辑器连不上"。
+    expect(adapter?.to).toBe('acp/openpipal-acp.mjs')
+    // 主进程按这个位置拼启动命令，两边必须对得上
+    expect(fs.readFileSync(path.resolve('src/main/acp-adapter-launch.ts'), 'utf8'))
+      .toContain("join(process.resourcesPath, 'acp', 'openpipal-acp.mjs')")
   })
 
   it('does not select backup, brand, or legacy Skill resources', () => {

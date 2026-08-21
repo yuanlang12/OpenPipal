@@ -104,6 +104,17 @@ export function AboutSection() {
         <Row label={t('settings.about.feedback')}>
           <ExternalLink href={ISSUES_URL}>{t('settings.about.submitIssue')}</ExternalLink>
         </Row>
+
+        {/* 引导只在首启自动弹,重看入口收在「关于」——它讲的是产品本身 */}
+        <Row label={t('onboarding.replay.title')}>
+          <button
+            data-testid="onboarding-replay"
+            onClick={() => window.dispatchEvent(new CustomEvent('openpipal:show-onboarding'))}
+            className={LINK_CLASS}
+          >
+            {t('onboarding.replay.button')}
+          </button>
+        </Row>
       </div>
     </div>
   )

@@ -59,19 +59,43 @@ function hasDesignToolResult(body) {
   )
 }
 
+/**
+ * 本轮的用户文本 = 末尾那一串**连续**的 user 消息。
+ *
+ * 不能只取最后一条：OpenPipal 会在用户消息之后再追一条 runtime-context 快照（同样是
+ * user 角色，为了前缀缓存必须排在末尾），只取最后一条会永远读到那条快照。
+ * 也不能无脑往前翻：中间隔着 assistant / tool 的那些是**上一轮**的输入，翻到它们会把
+ * 旧标记误当成新一轮的意图（见"不把旧的/未配对 tool result 当新一轮"的用例）。
+ * 连续段的边界正好把这两件事分开。
+ */
 function latestUserText(body) {
   if (!Array.isArray(body?.messages)) return ''
-  for (let index = body.messages.length - 1; index >= 0; index -= 1) {
+  let index = body.messages.length - 1
+  // 末尾挂着的 tool 结果不算边界：它是上一次工具调用的回执，不该把本轮输入挡住
+  while (index >= 0 && body.messages[index]?.role === 'tool') index -= 1
+  const texts = []
+  for (; index >= 0; index -= 1) {
     const message = body.messages[index]
-    if (message?.role === 'user') return messageText(message.content)
+    if (message?.role !== 'user') break
+    texts.push(messageText(message.content))
   }
-  return ''
+  return texts.join('\n')
 }
 
 export function classifyQaRequest(body) {
   if (hasDesignToolResult(body)) return 'design-final'
   if (latestUserText(body).includes(DESIGN_MARKER) && hasCreateArtifactTool(body)) return 'design-tool'
   return 'text'
+}
+
+/** 把 tool 参数切成若干片，模拟服务商的增量投递（拼回去必须与原串完全一致） */
+export function splitArguments(serialized, pieces = 4) {
+  const size = Math.max(1, Math.ceil(serialized.length / pieces))
+  const fragments = []
+  for (let offset = 0; offset < serialized.length; offset += size) {
+    fragments.push(serialized.slice(offset, offset + size))
+  }
+  return fragments.length > 0 ? fragments : ['']
 }
 
 function baseChunk(id) {
@@ -90,6 +114,9 @@ export function createQaCompletionChunks(body, requestNumber = 1) {
 
   if (mode === 'design-tool') {
     const toolCallId = `${DESIGN_TOOL_CALL_PREFIX}${requestNumber}`
+    // 真实服务商是把 tool 参数**分片流式**发过来的，一次性发完的 fixture 测不出
+    // 任何依赖增量的链路（产物边写边显示、ACP 的 tool_call_content_chunk）。
+    const argumentFragments = splitArguments(JSON.stringify(DESIGN_ARTIFACT_ARGS))
     return {
       mode,
       chunks: [
@@ -105,13 +132,21 @@ export function createQaCompletionChunks(body, requestNumber = 1) {
                 type: 'function',
                 function: {
                   name: 'create_artifact',
-                  arguments: JSON.stringify(DESIGN_ARTIFACT_ARGS)
+                  arguments: argumentFragments[0]
                 }
               }]
             },
             finish_reason: null
           }]
         },
+        ...argumentFragments.slice(1).map((fragment) => ({
+          ...base,
+          choices: [{
+            index: 0,
+            delta: { tool_calls: [{ index: 0, function: { arguments: fragment } }] },
+            finish_reason: null
+          }]
+        })),
         { ...base, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
         { ...base, choices: [], usage: { prompt_tokens: 64, completion_tokens: 48, total_tokens: 112 } }
       ]

@@ -93,7 +93,7 @@ function MarkdownDocCard({ message, appName }: { message: ChatMessage; appName?:
 
   return (
     <div className="flex justify-start mb-msg animate-fade-in">
-      <div className="max-w-msg w-full">
+      <div className="group/doc max-w-msg w-full">
         <div className="flex items-center gap-1">
           <button
             onClick={() => setExpanded(!expanded)}
@@ -101,12 +101,14 @@ function MarkdownDocCard({ message, appName }: { message: ChatMessage; appName?:
           >
             <span className="text-sm shrink-0">📄</span>
             <span className="text-chat-label font-medium text-brand-700 dark:text-brand-300 truncate flex-1">{titleLine}</span>
-            <ChevronDown className={`w-3.5 h-3.5 text-brand-400 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+            <ChevronDown
+              className={`w-3.5 h-3.5 text-brand-400 shrink-0 transition duration-200 ${expanded ? 'rotate-180' : ''} opacity-0 group-hover/doc:opacity-100 group-has-[:focus-visible]/doc:opacity-100`}
+            />
           </button>
           {filePath && (
             <button
               onClick={() => openInWorkspace(filePath, { title: titleLine })}
-              className="shrink-0 h-[28px] px-2 rounded-lg bg-brand-50/50 dark:bg-brand-900/30 border border-brand-200/60 dark:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-900/40 transition-colors text-brand-700 dark:text-brand-300 text-chat-meta flex items-center gap-1"
+              className="shrink-0 h-[28px] px-2 rounded-lg bg-brand-50/50 dark:bg-brand-900/30 border border-brand-200/60 dark:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-900/40 transition-all text-brand-700 dark:text-brand-300 text-chat-meta flex items-center gap-1 opacity-0 group-hover/doc:opacity-100 group-has-[:focus-visible]/doc:opacity-100"
               title={t('chat.document.previewDocumentTitle')}
             >
               <Eye className="w-3 h-3" />{t('chat.fileResult.actions.preview')}

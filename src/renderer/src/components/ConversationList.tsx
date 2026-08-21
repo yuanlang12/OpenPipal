@@ -2,8 +2,10 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { Plus, X, Trash2, Search, Download } from 'lucide-react'
 import { ChatMessage } from '../types'
 import { getTranscriptText, shouldIncludeInTranscriptExport } from '../chat/messages'
+import { useTranslation } from 'react-i18next'
 import { useAgentStore } from '../stores/agentStore'
 import { RoleAvatar } from './shared/RoleAvatar'
+import { useAgentMarkStudio, MarkStudioAffordance, WorkspaceAvatar } from './agent-mark'
 import { ConvStatusDot } from './shared/ConvStatusDot'
 
 interface ConversationSummary {
@@ -76,6 +78,8 @@ async function exportConversation(conv: ConversationSummary): Promise<void> {
 }
 
 export function ConversationList({ conversations, activeId, onSelect, onDelete, onNew, onClose }: ConversationListProps) {
+  const { t } = useTranslation()
+  const { openMarkStudio, markStudio } = useAgentMarkStudio()
   const workspaces = useAgentStore(s => s.workspaces)
   const getWorkspaceIcon = useCallback((wid?: string) => workspaces.find(w => w.id === wid), [workspaces])
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
@@ -202,10 +206,25 @@ export function ConversationList({ conversations, activeId, onSelect, onDelete, 
                       }`}
                       onClick={() => onSelect(conv.id)}
                     >
-                      <span className="mt-0.5 shrink-0 flex items-center">
+                      <span className="relative mt-0.5 shrink-0 flex items-center">
                         {conv.workspaceId
-                          ? <span className="text-sm">{getWorkspaceIcon(conv.workspaceId)?.icon || '🤖'}</span>
+                          ? <WorkspaceAvatar
+                              workspaceId={conv.workspaceId}
+                              icon={getWorkspaceIcon(conv.workspaceId)?.icon}
+                              size={15}
+                            />
                           : <RoleAvatar role={{ name: conv.role }} size={15} className="text-surface-400" />}
+                        <MarkStudioAffordance
+                          size={14}
+                          label={t('agentMark.entry')}
+                          onClick={() => (conv.workspaceId
+                            ? openMarkStudio({
+                                scope: 'agent',
+                                roleName: conv.workspaceId,
+                                displayName: getWorkspaceIcon(conv.workspaceId)?.name,
+                              })
+                            : openMarkStudio({ roleName: conv.role }))}
+                        />
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
@@ -281,6 +300,7 @@ export function ConversationList({ conversations, activeId, onSelect, onDelete, 
           )}
         </div>
       </div>
+      {markStudio}
     </div>
   )
 }

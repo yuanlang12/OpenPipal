@@ -2,6 +2,7 @@ import type { UpdateCheckResult } from '../shared/update-contract'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { LocalePreference, LocaleState } from '../shared/i18n/contract'
+import { parseAcpStatus, type AcpStatus } from '../shared/acp-status-contract'
 import {
   parseAppFollowingUpdateResult,
   parseAppListUpdateResult,
@@ -239,6 +240,14 @@ const api = {
   },
   setDisabledApps: async (apps: string[]): Promise<{ ok: true }> => {
     return parseAppListUpdateResult(await ipcRenderer.invoke('settings:set-disabled-apps', apps))
+  },
+  getAcpStatus: async (): Promise<AcpStatus> => {
+    return parseAcpStatus(await ipcRenderer.invoke('acp:get-status'))
+  },
+  onAcpStatusChanged: (callback: () => void): (() => void) => {
+    const handler = (): void => callback()
+    ipcRenderer.on('acp:status-changed', handler)
+    return () => ipcRenderer.removeListener('acp:status-changed', handler)
   },
   // 对话管理
   listConversations: (): Promise<any[]> => ipcRenderer.invoke('conv:list'),
@@ -591,6 +600,15 @@ const api = {
   // 角色前置页 manifest（文件式，不存在返回 null）
   getRolePreflow: (roleName: string): Promise<any | null> =>
     ipcRenderer.invoke('chat:get-role-preflow', roleName),
+  /**
+   * 捏头像：scope='role' → system-agents/<role>/mark.json（内置六角色）
+   *        scope='agent' → agents/<uuid>/mark.json（用户自建 Agent）
+   * 都是文件式 opt-in，删掉文件就回落默认。
+   */
+  getMark: (scope: 'role' | 'agent', id: string): Promise<{ accessory?: string; hue?: string } | null> =>
+    ipcRenderer.invoke('mark:get', scope, id),
+  saveMark: (scope: 'role' | 'agent', id: string, config: { accessory: string; hue: string }): Promise<boolean> =>
+    ipcRenderer.invoke('mark:save', scope, id, config),
   // 同传目标语言(interpreter 角色;源自动识别)
   getInterpretLangs: (): Promise<{ targetLanguages: string[]; current: string }> =>
     ipcRenderer.invoke('voice:get-interpret-langs'),

@@ -2,6 +2,7 @@ import type { UpdateCheckResult } from '../shared/update-contract'
 import { ElectronAPI } from '@electron-toolkit/preload'
 import type { LocalePreference, LocaleState } from '../shared/i18n/contract'
 import type { AppFollowingUpdateResult, AppSettingsState } from '../shared/app-following-contract'
+import type { AcpStatus } from '../shared/acp-status-contract'
 
 interface TargetAppStatus {
   connected: boolean
@@ -79,6 +80,14 @@ interface LayoutManifest {
   chatSidebarWidth?: number
 }
 
+type MarkScope = 'role' | 'agent'
+
+/** 捏头像存的东西：一件配饰 + 一个色号。眼型是核心符号，不存也不许改。 */
+interface MarkManifest {
+  accessory?: string
+  hue?: string
+}
+
 interface RoleInfo {
   name: string
   displayName: string
@@ -87,6 +96,7 @@ interface RoleInfo {
   tools: string[]
   layoutManifest?: LayoutManifest
   avatarDataUrl?: string
+  mark?: MarkManifest
 }
 
 interface OpenPipalAPI {
@@ -134,12 +144,19 @@ interface OpenPipalAPI {
   // 角色管理
   getRoleInitState: () => Promise<{ hasRole: boolean; role: RoleInfo }>
   getAllRoles: () => Promise<RoleInfo[]>
+  /** 捏头像：scope='role' 内置角色 / scope='agent' 用户自建 Agent，都是文件式 opt-in */
+  getMark: (scope: MarkScope, id: string) => Promise<MarkManifest | null>
+  saveMark: (scope: MarkScope, id: string, config: MarkManifest) => Promise<boolean>
   getCurrentRole: () => Promise<RoleInfo>
   switchRole: (roleName: string) => Promise<RoleInfo | null>
   // 设置
   getAppSettings: () => Promise<AppSettingsState>
   setAppFollowingEnabled: (enabled: boolean) => Promise<AppFollowingUpdateResult>
   setDisabledApps: (apps: string[]) => Promise<{ ok: true }>
+  /** 外部编辑器（ACP）连接的只读快照——每次调用现算，不缓存不落盘 */
+  getAcpStatus: () => Promise<AcpStatus>
+  /** 主进程推"状态变了"，渲染层再自己来取快照 */
+  onAcpStatusChanged: (callback: () => void) => () => void
   getLocaleState: () => Promise<LocaleState>
   setLocalePreference: (preference: LocalePreference) => Promise<LocaleState>
   onLocaleChanged: (callback: (state: LocaleState) => void) => () => void
@@ -278,8 +295,16 @@ interface OpenPipalAPI {
   showGoal?: (conversationId: string) => void
   /** 通用 artifact 状态广播(upsert / removed=true 时移除) */
   onArtifactUpdate?: (callback: (conversationId: string, artifact: { id: string; type: string; title: string; content: string; removed?: boolean }) => void) => () => void
-  /** 上下文用量圆环：每次 LLM 调用后发一次 */
-  onContextUsage?: (callback: (conversationId: string, data: { promptTokens: number; contextWindow: number; budget: number; compacted: boolean }) => void) => () => void
+  /** 上下文用量圆环/信息卡：每次 LLM 调用后发一次；usage/segments 供卡片算命中率与分区占比 */
+  onContextUsage?: (callback: (conversationId: string, data: {
+    promptTokens: number; contextWindow: number; budget: number; compacted: boolean
+    usage?: { input: number; cacheRead: number; cacheWrite: number }
+    segments?: { systemPrompt: number; skills: number; toolsBuiltin: number; toolsMcp: number; messages: number }
+  }) => void) => () => void
+  /** runtime-context 快照原文：渲染层据此落盘隐藏消息，保证下轮回放与实发字节一致 */
+  onRuntimeContext?: (callback: (conversationId: string, text: string) => void) => () => void
+  /** 今日按模型用量/成本（卡片展开时拉一次） */
+  getTodayUsage?: () => Promise<Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }>>
   // 对话标题更新通知
   onTitleUpdated?: (callback: (id: string, title: string) => void) => () => void
   // Agent 模板

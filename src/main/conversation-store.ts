@@ -23,6 +23,7 @@ import { loadConfig } from './config-manager'
 import { isReplayableToolMessage } from './tool-trail'
 import type { ConversationGoal } from './goal-checker'
 import { dataPath } from './data-root'
+import { publishConversationChange } from './conversation-events'
 
 const CONVERSATIONS_DIR = dataPath('conversations')
 const NO_FOLLOW = fsConstants.O_NOFOLLOW || 0
@@ -78,6 +79,8 @@ export interface StoredMessage {
   /** Pi 侧的工具调用 id——工具轨迹回放靠它配对 assistant.toolCall 与 toolResult。 */
   toolCallId?: string
   thinkingContent?: string
+  /** 这段思考的真实耗时（ms），渲染层据此写"已思考 N 秒"；纯展示元数据，不进模型载荷。 */
+  thinkingMs?: number
   visualizerHtml?: string
   visualizerHeight?: number
   askQuestion?: string
@@ -106,6 +109,12 @@ export interface InitialAsset {
 
 export interface ConversationConfig {
   workingDir?: string
+  /**
+   * openpipal-acp 适配器在 session/new 后 PATCH 上来的标记：会话由哪个编辑器经
+   * ACP 创建。`adapter` 是这条会话属于 ACP 的唯一判据（设置页「外部连接」与
+   * v2 的 session/list 都靠它筛）；`client`/`protocolVersion` 旧适配器不带。
+   */
+  acp?: { adapter?: string; client?: string; protocolVersion?: number }
   /** 会话专属模型：modelPresets 里某预设的 id。未设置/预设已删 → 跟随全局默认。
    *  只存引用不拷贝配置——apiKey/baseUrl 等敏感信息只住 config.json，不进会话文件。 */
   modelPresetId?: string
@@ -551,6 +560,7 @@ export function updateConversationTitle(id: string, title: string): Promise<bool
     conv.title = title
     conv.updatedAt = Date.now()
     await writeConversationAsync(conv)
+    publishConversationChange(id, 'title')
     return true
   })
 }
@@ -565,6 +575,30 @@ export function updateConversationRole(id: string, role: string): Promise<boolea
     conv.role = role
     conv.updatedAt = Date.now()
     await writeConversationAsync(conv)
+    publishConversationChange(id, 'persona')
+    return true
+  })
+}
+
+/**
+ * 空会话可以改挂到哪个自定义 Agent（我的 Agents）。与 role 共用同一把锁：
+ * 开聊之后人格锁定，防误切——桌面端 AgentSwitcher 选 Agent 也是开新会话，
+ * 不是把正在聊的这条改头换面。
+ *
+ * 传 undefined = 改回内置角色，清掉 workspace 绑定（不清的话 workspace 的
+ * systemPrompt 仍然压过角色，"切回去"会变成什么都没发生）。
+ */
+export function updateConversationWorkspace(id: string, workspaceId: string | undefined): Promise<boolean> {
+  if (!isSafeConversationStorageId(id)) return Promise.resolve(false)
+  return serializeWrite(id, async () => {
+    const conv = readConversation(id)
+    if (!conv) return false
+    if ((conv.messages?.length ?? 0) > 0) return false
+    if (workspaceId) conv.workspaceId = workspaceId
+    else delete conv.workspaceId
+    conv.updatedAt = Date.now()
+    await writeConversationAsync(conv)
+    publishConversationChange(id, 'persona')
     return true
   })
 }
@@ -624,6 +658,34 @@ export function replaceMessages(id: string, messages: StoredMessage[]): Promise<
 /**
  * 更新对话配置（技能、工作目录等）
  */
+/**
+ * 会话 config 的读-改-写，全程在同一把队列锁里完成。
+ *
+ * `updateConversationConfig` 收的是**整份 config**：调用方若在锁外先读一次、改完再整份
+ * 写回，两次之间任何并发写都会被那份过期快照整体盖掉——goal loop 的续跑状态、preflow 的
+ * projectName、会话级模型预设全住在同一个对象里，丢的不一定是你改的那个字段。
+ * 只想改其中一两个字段就走这个函数，别在外面自己拼。
+ *
+ * mutate 收到的是 config 的浅拷贝；返回 null 表示放弃这次写入。
+ */
+export function mutateConversationConfig(
+  id: string,
+  mutate: (config: ConversationConfig) => ConversationConfig | null
+): Promise<boolean> {
+  if (!isSafeConversationStorageId(id)) return Promise.resolve(false)
+  return serializeWrite(id, async () => {
+    const conv = readConversation(id)
+    if (!conv) return false
+    const next = mutate({ ...(conv.config || {}) })
+    if (!next) return false
+    conv.config = next
+    conv.updatedAt = Date.now()
+    await writeConversationAsync(conv)
+    publishConversationChange(id, 'config')
+    return true
+  })
+}
+
 export function updateConversationConfig(id: string, config: ConversationConfig): Promise<boolean> {
   if (!isSafeConversationStorageId(id)) return Promise.resolve(false)
   return serializeWrite(id, async () => {
@@ -632,6 +694,7 @@ export function updateConversationConfig(id: string, config: ConversationConfig)
     conv.config = config
     conv.updatedAt = Date.now()
     await writeConversationAsync(conv)
+    publishConversationChange(id, 'config')
     return true
   })
 }

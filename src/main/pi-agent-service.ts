@@ -71,12 +71,7 @@ import {
   prepareOpenPipalSystemPrompt
 } from './agent-runtime/openpipal-prompt'
 import { buildSkillPromptSection } from './skill-manager'
-import {
-  buildContextUsageSegments,
-  estimateTextTokens,
-  estimateToolTokens,
-  isMcpToolName
-} from './context-usage-stats'
+import { buildContextUsageSegments, buildSegmentBaseline } from './context-usage-stats'
 import { dataPath } from './data-root'
 
 // Backward-compatible type exports while callers migrate to agent-runtime.
@@ -286,13 +281,8 @@ export async function* agentChat(
   const preparedPrompt = prepareOpenPipalSystemPrompt(source, overrides, { stablePrefix: true, modelConfig: mc })
   const skillSection = buildSkillPromptSection(preparedPrompt.skillContext)
   const systemPrompt = preparedPrompt.render(skillSection)
-  // 用量卡分区：组装期各估算一次（口径见 context-usage-stats.ts 头注）
-  const segmentEstimate = {
-    systemPromptTokens: estimateTextTokens(systemPrompt),
-    skillTokens: estimateTextTokens(skillSection),
-    builtinToolTokens: estimateToolTokens(allTools.filter((t: any) => !isMcpToolName(t.name))),
-    mcpToolTokens: estimateToolTokens(allTools.filter((t: any) => isMcpToolName(t.name)))
-  }
+  // 用量卡分区：组装期估算一次（口径与分桶策略见 context-usage-stats.ts）
+  const segmentEstimate = buildSegmentBaseline({ systemPrompt, skillSection, tools: allTools })
 
   // 4. 创建 Pi Agent 实例
   // thinkingLevel 决策：

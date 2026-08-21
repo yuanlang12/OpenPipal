@@ -202,67 +202,16 @@ body.sw-split-dragging iframe {
   pointer-events: none;
 }
 
-/* Global Agent avatars — six roles × three states in 128px source cells.
- * Heads are optically normalized while natural silhouette width is preserved.
- * Day and dark ASCII frames are static sprite lookups: no timers, layout
- * movement, filters, or extra image requests. */
-.sw-role-avatar {
-  position: relative;
+/* Agent Mark —— 全代码标识，没有位图图集。
+ * overflow 必须 visible：配饰（围脖尾巴、学士帽、耳机耳罩）和执行态的彩环都画在
+ * 瓷砖外沿，但布局盒仍然是 viewBox 的 64 —— 所以调用处的尺寸一个都不用改。
+ * 动效由单条共享 rAF 驱动（components/agent-mark/driver.ts），减少动效时退化成静止帧，
+ * 这里不放任何 @keyframes。 */
+.sw-agent-mark {
   display: inline-block;
   flex: 0 0 auto;
   overflow: visible;
   vertical-align: middle;
-  background-image: url('../assets/agent-avatars/day-sprite-atlas.png');
-  background-repeat: no-repeat;
-  background-size: 600% 300%;
-  image-rendering: pixelated;
-  contain: layout paint;
-}
-
-.dark .sw-role-avatar {
-  background-image: url('../assets/agent-avatars/night-sprite-atlas.png');
-}
-
-.sw-role-avatar__state-frame {
-  position: absolute;
-  inset: 0;
-  display: block;
-  background-image: inherit;
-  background-repeat: no-repeat;
-  background-size: 600% 300%;
-  image-rendering: pixelated;
-  opacity: 1;
-}
-
-.sw-role-avatar--animated.sw-role-avatar--thinking .sw-role-avatar__state-frame {
-  animation: sw-agent-thinking 1.4s steps(1, end) infinite;
-}
-
-.sw-role-avatar--animated.sw-role-avatar--generating .sw-role-avatar__state-frame {
-  animation: sw-agent-generating 900ms steps(1, end) infinite;
-}
-
-@keyframes sw-agent-thinking {
-  0%, 28% { opacity: 0; }
-  29%, 100% { opacity: 1; }
-}
-
-@keyframes sw-agent-generating {
-  0%, 18% { opacity: 0; }
-  19%, 72% { opacity: 1; }
-  73%, 100% { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sw-role-avatar__state-frame {
-    animation: none !important;
-    opacity: 1 !important;
-  }
-}
-
-[data-sw-reduced-motion='always'] .sw-role-avatar__state-frame {
-  animation: none !important;
-  opacity: 1 !important;
 }
 
 /* Welcome role selection — transform keeps every button's 64px layout slot

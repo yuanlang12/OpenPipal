@@ -214,8 +214,12 @@
     --sw-chat-small:      calc(var(--sw-chat-small-base) * var(--sw-ui-zoom));
     --sw-chat-leading:    1.7;
 
-    /* 消息体最大宽度(统一所有消息体/工具卡片/思考卡片) */
-    --sw-msg-max-width: 85%;
+    /* 消息体最大宽度 —— 两档,按说话的人分:
+       AI 一侧(正文 / 过程卡 / 成品卡)铺满整栏。长回答本来就是拿来读的,窄栏会把一篇文章
+       切成一列细条,眼睛来回折行;铺满之后代码块、表格、图卡也不再被 15% 的空白挤扁。
+       用户一侧保持收窄的气泡靠右 —— 短句才有"这句是我说的"的分量,两侧宽度差本身就是身份提示。 */
+    --sw-msg-max-width: 100%;
+    --sw-user-msg-max-width: 85%;
 
     /* 消息间距(连续 timeline 节点的垂直 gap) */
     --sw-msg-gap-y:     16px;
@@ -280,6 +284,22 @@
     /* 滚动条 */
     --sw-scrollbar-thumb:   color-mix(in srgb, var(--sw-ink) 18%, transparent);
     --sw-scrollbar-thumb-hover: color-mix(in srgb, var(--sw-ink) 32%, transparent);
+
+    /* Agent Mark —— 全代码标识的配色。
+     * ink/paper 是标识本体（暗色下反相，对齐素材包 mark-light.svg）；
+     * 其余是配饰色，走 token 层而不是写死 hex —— 配饰是唯一允许有色相的地方，
+     * 身体永远是 ink。加新角色 = 加一件配饰 + 挑一个这里的 hue。 */
+    --sw-mark-ink:      #171714;
+    --sw-mark-paper:    #FFFFFF;
+    --sw-mark-red:      #C1543C;
+    --sw-mark-blue:     #4A72A8;
+    --sw-mark-amber:    #B8873F;
+    --sw-mark-slate:    #5B6B78;
+    --sw-mark-teal:     #3E7A75;
+    --sw-mark-sage:     var(--sw-amber-500);
+    --sw-mark-plum:     #7A5273;
+    --sw-mark-rose:     #C4739A;
+
   }
 
   /* ════════════════════════════════════════════════════════
@@ -355,6 +375,19 @@
     --sw-accent-rgb:  242 246 249;
     --sw-surface-rgb:  22  29  34;
     --sw-ink-rgb:     242 246 249;
+
+    /* Agent Mark 暗色：标识反相成纸底墨眼，配饰整体提亮一档保持可读 */
+    --sw-mark-ink:      #F2F6F9;
+    --sw-mark-paper:    #161D22;
+    --sw-mark-red:      #E08265;
+    --sw-mark-blue:     #7FA8DC;
+    --sw-mark-amber:    #DDB165;
+    --sw-mark-slate:    #93A5B2;
+    --sw-mark-teal:     #6FB3AC;
+    --sw-mark-sage:     var(--sw-amber-300);
+    --sw-mark-plum:     #B48EAE;
+    --sw-mark-rose:     #E0A0BE;
+
   }
 }
 

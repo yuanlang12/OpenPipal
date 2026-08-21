@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildContextUsageSegments,
-  estimateTextTokens,
-  estimateToolTokens,
+  buildSegmentBaseline,
   isMcpToolName
 } from '../../src/main/context-usage-stats'
-import { estimateTokens } from '../../src/main/history-compactor'
+import { estimateTokens } from '../../src/main/token-estimate'
 
 describe('context-usage-stats', () => {
-  it('估算公式与 history-compactor.estimateTokens 逐字节同口径（防两处漂移）', () => {
-    const samples = ['', 'plain ascii text 123', '中文混排 English 混排', '混合123 abc！@#', 'a'.repeat(1000)]
-    for (const text of samples) {
-      expect(estimateTextTokens(text)).toBe(estimateTokens(text))
-    }
-  })
-
   it('MCP 工具命名识别：mcp_execute 网关与 mcp: 前缀', () => {
     expect(isMcpToolName('mcp_execute')).toBe(true)
     expect(isMcpToolName('mcp:server:tool')).toBe(true)
@@ -22,11 +14,30 @@ describe('context-usage-stats', () => {
     expect(isMcpToolName(undefined)).toBe(false)
   })
 
-  it('工具 schema 估算随定义单调增长，空列表为 0', () => {
-    expect(estimateToolTokens([])).toBe(0)
-    const small = estimateToolTokens([{ name: 'read', description: 'a', parameters: { type: 'object' } }])
-    const big = estimateToolTokens([{ name: 'read', description: 'a'.repeat(200), parameters: { type: 'object', properties: { a: { type: 'string', description: 'x'.repeat(100) } } } }])
-    expect(big).toBeGreaterThan(small)
+  it('基线：文本走 history-compactor 同一个估算器，工具按 MCP/内置分桶', () => {
+    const systemPrompt = '系统提示词 system prompt 正文'
+    const skillSection = '技能段 skills'
+    const baseline = buildSegmentBaseline({
+      systemPrompt,
+      skillSection,
+      tools: [
+        { name: 'read', description: 'a', parameters: { type: 'object' } },
+        { name: 'mcp_execute', description: 'gateway', parameters: { type: 'object' } },
+        { name: 'mcp:server:tool', description: 'remote', parameters: { type: 'object' } }
+      ]
+    })
+    expect(baseline.systemPromptTokens).toBe(estimateTokens(systemPrompt))
+    expect(baseline.skillTokens).toBe(estimateTokens(skillSection))
+    expect(baseline.builtinToolTokens).toBeGreaterThan(0)
+    expect(baseline.mcpToolTokens).toBeGreaterThan(baseline.builtinToolTokens)
+  })
+
+  it('基线：工具估算随 schema 增长，空工具列表为 0', () => {
+    const empty = buildSegmentBaseline({ systemPrompt: '', skillSection: '', tools: [] })
+    expect(empty).toEqual({ systemPromptTokens: 0, skillTokens: 0, builtinToolTokens: 0, mcpToolTokens: 0 })
+    const small = buildSegmentBaseline({ systemPrompt: '', skillSection: '', tools: [{ name: 'read', description: 'a', parameters: { type: 'object' } }] })
+    const big = buildSegmentBaseline({ systemPrompt: '', skillSection: '', tools: [{ name: 'read', description: 'a'.repeat(200), parameters: { type: 'object', properties: { a: { type: 'string', description: 'x'.repeat(100) } } } }] })
+    expect(big.builtinToolTokens).toBeGreaterThan(small.builtinToolTokens)
   })
 
   it('分区：system 不含技能段；messages 为扣减余量且 clamp 到 0', () => {

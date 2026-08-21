@@ -23,6 +23,18 @@ const v2Enabled = ['1', 'true', 'yes'].includes((process.env.OPENPIPAL_ACP_V2 ||
 if (v2Enabled) router.withV2(createV2Agent(runtime))
 router.connect(stream)
 
+// 编辑器关掉适配器的方式是关 stdio，不发信号。常驻推送通道会一直握着活 handle，
+// 所以必须显式收摊退出，否则留下孤儿进程 + 桌面端那边一条永远不回收的订阅。
+let shuttingDown = false
+const shutdown = (reason: string): void => {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.error(`[openpipal-acp] ${reason} → 收摊退出`)
+  void runtime.shutdown().finally(() => process.exit(0))
+}
+process.stdin.once('end', () => shutdown('stdin 已关闭'))
+process.stdin.once('close', () => shutdown('stdin 已关闭'))
+
 console.error(
   `[openpipal-acp] started on stdio (ACP v1${v2Enabled ? ' + experimental v2' : ''})`,
 )

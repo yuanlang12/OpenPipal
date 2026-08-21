@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Icon Atlas mark</title>
+  <desc id="desc">A black rounded square with two white, slightly tilted vertical eyes.</desc>
+  <rect width="64" height="64" rx="4" fill="#171714"/>
+  <rect x="17" y="18" width="10" height="22" rx="5" transform="rotate(-11 17 18)" fill="#fff"/>
+  <rect x="38" y="14" width="10" height="22" rx="5" transform="rotate(-18 38 14)" fill="#fff"/>
+</svg>

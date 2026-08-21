@@ -17,6 +17,10 @@ interface ChatPanelProps {
 
 const LONG_CONVERSATION_THRESHOLD = 30
 
+/** 零步骤分割线用的空步骤数组 —— 提到模块级是为了 ProcessGroup 的 memo 比较器:
+ *  每次渲染现造一个 [] 虽然长度相等也能过比较,但共用一个引用能直接走引用相等的快路径。 */
+const NO_PROCESS_STEPS: never[] = []
+
 const AGENT_CREATING_STEPS = [
   { key: 'chat.panel.creating.readingConversation', delay: 0 },
   { key: 'chat.panel.creating.analyzingRole', delay: 2000 },
@@ -74,6 +78,8 @@ export function ChatPanel({ appName }: ChatPanelProps) {
   // 流式 token 写的是 liveStreamStore,与本组件解耦,不会触发整页重渲染。
   const messages = useChatStore(s => s.messages)
   const isStreaming = useChatStore(s => s.isStreaming)
+  // 只取"当前会话通没通"这一个布尔,一轮里只翻一次,不会随 token 抖动
+  const modelResponded = useChatStore(s => !!s.modelRespondedConvIds[s.activeConversationId || ''])
   const sendMessage = useChatStore(s => s.sendMessage)
   const regenerate = useChatStore(s => s.regenerate)
   const editAndResend = useChatStore(s => s.editAndResend)
@@ -238,7 +244,7 @@ export function ChatPanel({ appName }: ChatPanelProps) {
 
   return (
     <div className="op-chat-panel relative flex-1 min-h-0">
-    {/* Focus 模式开关:低调常在,右上角。开启后已完成的 turn 只留 user/过程摘要条/交付物/结论。 */}
+    {/* Focus 模式开关:低调常在,右上角。开启后已完成的 turn 只留 user/过程摘要条/最终回答。 */}
     <button
       onClick={toggleFocusStream}
       data-testid="focus-stream-toggle"
@@ -324,17 +330,27 @@ export function ChatPanel({ appName }: ChatPanelProps) {
         const turnActive = isStreaming && isLastTurn
         // 单一过程段(文字模式)沿用「整轮耗时」(用户发送→最终回答);
         // 多过程段(语音流交错)各段用自身消息时间跨度,更贴合那次工具调用本身
-        const singleProcessSeg =
-          turn.segments.filter(s => s.kind === 'process').length === 1
-        // Focus 模式:已完成的 turn(非流式中的最后一个)收敛为 user → 过程摘要条(一条)→ 交付物 → 结论。
-        // 进行中的 turn 永远走下面的 segments 全量交错渲染,不受 focus 开关影响(一个字节不变)。
-        const useFocusCollapse = focusStream && !turnActive
-        // 该 turn 真实结束时间(最后一条消息,不管过程/结论)—— 摘要条耗时用它,比只取 finalMsgs 更准
-        // (纯工具收尾、无文本结论的 turn 此时 finalMsgs 可能为空)。
-        const lastSeg = turn.segments[turn.segments.length - 1]
-        const turnEndTs = lastSeg
-          ? (lastSeg.kind === 'final' ? lastSeg.message.timestamp : lastSeg.messages[lastSeg.messages.length - 1]?.timestamp)
-          : turn.userMsg?.timestamp
+        // 一轮至多一个过程段(groupTurns 的结构不变量),所以耗时锚点无条件传下去。
+        const processSegCount = turn.segments.filter(s => s.kind === 'process').length
+        // 整轮终点 = 本轮最后一条产出的时间戳。**三桶都要看**:只看 finalMsgs 会把
+        // "以图收尾"算短,只看 final + 交付物会把"以工具收尾"算短(轮次里若有一条更早的
+        // 语音/通知当 final,终点就被钉在那条上,40 秒的轮次写成 11 秒),甚至能算出
+        // 早于起点的终点、被 Math.max(0, …) 夹成 0。
+        const turnEndTs = Math.max(
+          turn.finalMsgs[turn.finalMsgs.length - 1]?.timestamp ?? 0,
+          turn.deliverables[turn.deliverables.length - 1]?.timestamp ?? 0,
+          turn.processMsgs[turn.processMsgs.length - 1]?.timestamp ?? 0
+        ) || undefined
+        // 一步过程都没有的轮次照样收口:模型直接作答、只出了一件成品、或者 prompt 发出去
+        // AI 服务就报错 —— 只要 AI 开过口就画线,线上是耗时读数、线下是内容。
+        // **正在跑的轮次也画**:流式区那个带边框的"努力思考中…"气泡已经删了,这条扫光的
+        // 「处理中 N 秒」就是从按下回车到第一步落地之间唯一的反馈,不能等到有产出才出现。
+        // 已完成又什么都没回来的空转轮次不画 —— 那才是无中生有。
+        const bareDivider = processSegCount === 0 && (turn.hasAiOutput || turnActive)
+        // 按下回车了,但模型一个事件都还没吐 —— 这一行只写「连接模型…」,不报秒数。
+        // hasAiOutput 是第二重保险:本轮已经落下过消息(重开会话续流、注入历史)时,
+        // 模型显然早就开过口了,不该因为内存里的标志位是初值就退回"连接中"。
+        const awaitingModel = turnActive && !modelResponded && !turn.hasAiOutput
         return (
           <div key={turn.id}>
             {/* 用户消息(turn 开头) */}
@@ -347,76 +363,65 @@ export function ChatPanel({ appName }: ChatPanelProps) {
                 onEditAndResend={!isStreaming ? onEditAndResend : undefined}
               />
             )}
-            {useFocusCollapse ? (
-              /* Focus 收敛:全部过程消息在首个过程段的位置合并为一条摘要;
-                 其余 final 段(交付物/结论/待处理 ask·permission/voice/inject-notice)按真实顺序常显。
-                 收敛只压缩「过程」,绝不吞 final——否则 pending 权限气泡/语音转录整类消失(事故级)。 */
-              (() => {
-                let summaryRendered = false
-                return turn.segments.map(seg => {
-                  if (seg.kind === 'process') {
-                    if (summaryRendered) return null
-                    summaryRendered = true
-                    return (
-                      <ProcessGroup
-                        key={seg.id}
-                        messages={turn.processMsgs}
-                        isActive={false}
-                        roleIcon={currentRole?.icon}
-                        turnStartTs={turn.userMsg?.timestamp}
-                        turnEndTs={turnEndTs}
-                      />
-                    )
-                  }
-                  const msg = seg.message
-                  const isConclusion = turn.conclusion?.id === msg.id
-                  return (
-                    <MessageBubble
-                      key={seg.id}
-                      message={msg}
-                      appName={appName}
-                      roleIcon={currentRole?.icon}
-                      onSend={onSend}
-                      onEditAndResend={msg.role === 'user' && !isStreaming ? onEditAndResend : undefined}
-                      onRegenerate={isConclusion && msg.id === lastAssistantId && !isStreaming ? onRegenerate : undefined}
-                      onSaveAsAgent={isConclusion && msg.id === lastAssistantId && !isStreaming && messageCount >= 4 && activeConversationId && !creatingAgent ? handleSaveAsAgent : undefined}
-                    />
-                  )
-                })
-              })()
-            ) : (
-              /* 按真实顺序渲染片段:process 折叠成 ProcessGroup,final 独立显示。
-                 语音流交错(说话→工具→说话)因此保序,工具卡不再冒到最上面。 */
-              turn.segments.map((seg, segIdx) => {
-                const isLastSeg = segIdx === turn.segments.length - 1
-                if (seg.kind === 'process') {
-                  return (
-                    <ProcessGroup
-                      key={seg.id}
-                      messages={seg.messages}
-                      isActive={turnActive && isLastSeg}
-                      roleIcon={currentRole?.icon}
-                      turnStartTs={singleProcessSeg ? turn.userMsg?.timestamp : undefined}
-                      turnEndTs={singleProcessSeg ? turn.finalMsgs[turn.finalMsgs.length - 1]?.timestamp : undefined}
-                    />
-                  )
-                }
-                const msg = seg.message
+            {bareDivider && (
+              <ProcessGroup
+                messages={NO_PROCESS_STEPS}
+                isActive={turnActive}
+                roleIcon={currentRole?.icon}
+                turnStartTs={turn.agentStartTs ?? turn.userMsg?.timestamp}
+                turnEndTs={turnEndTs}
+                awaitingModel={awaitingModel}
+              />
+            )}
+            {/* 按真实顺序渲染片段:每轮 process 段收敛为一条计时分割线,final 独立显示。
+                focus 开 = 已完成 turn 默认折叠(台面只留结论);focus 关 = defaultExpanded 铺开全部步骤。
+                pending ask/permission 恒为 final 段,不受 focus 影响(绝不吞待处理交互)。 */}
+            {turn.segments.map((seg, segIdx) => {
+              if (seg.kind === 'process') {
+                return (
+                  <ProcessGroup
+                    key={seg.id}
+                    messages={seg.messages}
+                    /* 一轮至多一个过程段,它就是这一轮的过程本身 —— 轮子在跑它就在跑。
+                       曾经写作 turnActive && isLastSeg("过程段是不是最后一段"),那是
+                       过程会被切成多段时代的写法;现在成品/结论排在过程段之后是常态,
+                       再用"最后一段"判定会让执行中的分割线退回完成态的灰字加箭头。 */
+                    isActive={turnActive}
+                    roleIcon={currentRole?.icon}
+                    turnStartTs={turn.agentStartTs ?? turn.userMsg?.timestamp}
+                    turnEndTs={turnEndTs}
+                    defaultExpanded={!focusStream && !turnActive}
+                    awaitingModel={awaitingModel}
+                  />
+                )
+              }
+              const msg = seg.message
+              // 成品卡:留在消息流的真实位置(模型说"在上面"就得真在上面),不带
+              // 复制/重新生成那套结论专属操作 —— 它是产出物,不是这一轮的回答。
+              if (seg.kind === 'deliverable') {
                 return (
                   <MessageBubble
                     key={seg.id}
                     message={msg}
                     appName={appName}
                     roleIcon={currentRole?.icon}
-                    onSend={onSend}
-                    onRegenerate={msg.id === lastAssistantId && !isStreaming ? onRegenerate : undefined}
-                    onEditAndResend={msg.role === 'user' && !isStreaming ? onEditAndResend : undefined}
-                    onSaveAsAgent={msg.id === lastAssistantId && !isStreaming && messageCount >= 4 && activeConversationId && !creatingAgent ? handleSaveAsAgent : undefined}
-                    isLastStreaming={isStreaming && msg.role !== 'user' && msg.id === lastMessageId}
                   />
                 )
-              })
-            )}
+              }
+              return (
+                <MessageBubble
+                  key={seg.id}
+                  message={msg}
+                  appName={appName}
+                  roleIcon={currentRole?.icon}
+                  onSend={onSend}
+                  onRegenerate={msg.id === lastAssistantId && !isStreaming ? onRegenerate : undefined}
+                  onEditAndResend={msg.role === 'user' && !isStreaming ? onEditAndResend : undefined}
+                  onSaveAsAgent={msg.id === lastAssistantId && !isStreaming && messageCount >= 4 && activeConversationId && !creatingAgent ? handleSaveAsAgent : undefined}
+                  isLastStreaming={isStreaming && msg.role !== 'user' && msg.id === lastMessageId}
+                />
+              )
+            })}
           </div>
         )
       })}

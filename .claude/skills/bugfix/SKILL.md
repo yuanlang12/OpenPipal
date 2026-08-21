@@ -1,3 +1,8 @@
+---
+name: bugfix
+description: Bug 修复流程——先定位文件，修前写三点（Root cause / Files / Proposed fix）等用户确认，修后验证。用户描述 bug 或调用 /bugfix 时使用。
+---
+
 # /bugfix — Bug 修复流程
 
 用户描述了一个 bug，按以下流程修复。

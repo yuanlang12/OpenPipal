@@ -114,6 +114,8 @@ export function toApiMessages(messages: ChatMessage[]) {
       return {
         role: msg.role as string,
         content: msg.content,
+        // 必须过缝：主进程据此把 runtime-context 快照原样回放（pi-message-conversion.ts）
+        messageKind: msg.messageKind,
         screenshot: msg.screenshot || msg.images?.[0],
         images: msg.images,
         imagePaths: msg.imagePaths,
@@ -166,10 +168,19 @@ export interface ContextCumulativeStats {
 }
 
 /**
- * 用量读数随会话落盘（去抖 2s）：context_usage 每次调用都会来，直接写盘会放大 IO；
- * 2s 合并成每轮一次。合并基线取 conversations 列表里的现行 config（与首轮配置写
- * 同一模式），写失败静默——纯展示数据不值得打断对话。
+ * 用量读数随会话落盘（去抖）：context_usage 每次 LLM 调用都会来，而每次落盘都是
+ * 主进程对整个会话 JSON 的一次同步读 + 全量重写（conversation-store.updateConversationConfig），
+ * 所以去抖窗口必须盖住调用间隔，否则"合并成每轮一次"名存实亡——实测 usage.jsonl
+ * 的相邻调用间隔中位数 14s、98% 超过 2s，2s 窗口等于每次调用都写一遍。取 30s：
+ * 一轮 agentic 对话里不断被重置、轮末落一次。
+ *
+ * 落盘只服务"打开旧会话即刻见圆环"，读侧在 switchConversation 且本窗口尚无实时读数
+ * 时才取用，因此不必把值回写进内存里的 conversations 列表——那份拷贝的读路径永远
+ * 走不到（写它的前提就是本窗口刚产生过实时读数），却会让整份会话列表换新引用、
+ * 每次调用重算一遍侧栏分组。合并基线取 conversations 列表里的现行 config（与首轮
+ * 配置写同一模式），写失败静默——纯展示数据不值得打断对话。
  */
+const CONTEXT_USAGE_PERSIST_DEBOUNCE_MS = 30_000
 const contextUsagePersistTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function scheduleContextUsagePersist(
@@ -185,18 +196,10 @@ function scheduleContextUsagePersist(
       const s = useChatStore.getState()
       const conv = s.conversations.find(c => c.id === cid)
       if (!conv) return
-      const stats = getStats()
-      const merged = { ...(conv.config || {}), lastContextUsage: { ...data, stats } }
-      void window.api.updateConversationConfig(cid, merged).then((ok: unknown) => {
-        if (!ok) return
-        // 回种数据源同步刷新：渲染层自己的 conversations 条目也带上 lastContextUsage，
-        // 否则长会话窗口里（不重启、不重载）切换会话时读到的还是旧 config。
-        useChatStore.setState(st => ({
-          conversations: st.conversations.map(c => c.id === cid ? { ...c, config: { ...(c.config || {}), lastContextUsage: { ...data, stats } } } : c)
-        }))
-      }).catch(() => {})
+      const merged = { ...(conv.config || {}), lastContextUsage: { ...data, stats: getStats() } }
+      void window.api.updateConversationConfig(cid, merged).catch(() => {})
     } catch { /* 展示数据，写不进就算了 */ }
-  }, 2000))
+  }, CONTEXT_USAGE_PERSIST_DEBOUNCE_MS))
 }
 
 function clearContextUsagePersistTimers(): void {
@@ -512,6 +515,17 @@ async function replaceBackgroundArtifactToolEnd(
   assertPersistenceSucceeded(result, 'merge late background artifact tool result')
 }
 
+/**
+ * 待 flush 的文本缓冲里有没有真内容。模型在调工具 / 换阶段前经常先吐两个换行,
+ * 旧代码只判 `streamBuf` 真值,于是把 "\n\n" 落成了一条 assistant 消息:
+ * 台面上是个空气泡带「复制」按钮,更糟的是渲染层把它当结论,一条 final 段把本轮过程
+ * 切成两截 —— 真机上就是「两条分割线,上面那条还没有文字」(2026-08-17 实锤)。
+ * 所有 flush 点统一走这里,空白一律不落消息(缓冲照常清空)。
+ */
+function hasFlushableText(buf: string): boolean {
+  return buf.trim().length > 0
+}
+
 interface BackgroundTextFlushOptions {
   final?: boolean
   messageKind?: Extract<ChatMessageKind, 'incomplete'>
@@ -530,7 +544,7 @@ function enqueueBackgroundTextFlush(
   const text = mergedError?.content || buffered
   if (options.final) bgStreamBufs.delete(cid)
   else if (bgStreamBufs.has(cid)) bgStreamBufs.set(cid, '')
-  if (!text || isSilentReply(text)) return null
+  if (!hasFlushableText(text) || isSilentReply(text)) return null
   const message = createAssistantMessage({
     id: `bg-text-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     content: text,
@@ -696,6 +710,13 @@ interface ChatState {
   // 思考内容（流式）
   thinkingContent: string // deprecated — thinking 直接作为消息存在，此字段仅用于兼容
   isThinking: boolean
+  /** 哪些会话的模型服务**真的通了** —— 收到第一个模型事件(文字/思考/工具)就登记,发起新一轮时注销。
+   *  分割线拿它决定写「连接模型…」还是「处理中 N 秒」:按下回车到模型吐第一个字节之间可能
+   *  隔着连接、排队、429 换端点重试,那段时间报秒数就是在替模型认领它没干过的活
+   *  (2026-08-18 用户实锤:"发了消息就计时,其实模型还没通")。
+   *  **按会话记**而不是一个全局布尔:流式本来就是按会话的(见 streamingConvIds),
+   *  全局布尔会让"在 A 收到第一个 token 后切到还没开口的后台会话 B"读成 B 已经通了。 */
+  modelRespondedConvIds: Record<string, boolean>
   /** 静默响应周期:由 task-trigger / 系统观察 等隐式消息触发的 AI 响应,整个思考过程不渲染。
    *  对应反模式 4("AI 不解释自己的存在")——学生看不到"AI 在思考",只看到 AI 是否冒出一句话。 */
   silentResponseCycle: boolean
@@ -1010,10 +1031,28 @@ async function prepareActiveConversationExit(): Promise<ConversationExitHandoff 
  * editAndResend 曾传 undefined → 主进程 `cid = conversationId || ''` 发空 cid → 空串短路掉渲染层
  * `if (cid && …)` 守卫 → 用户切走会话后，旧流（重试尾巴/[Error]）溢出到新会话视图。
  */
+/** 模型的第一个事件到达 —— 登记这个会话"服务通了"。三个入口(吐字/吐 reasoning/起工具)共用。 */
+function markModelResponded(cid: string): void {
+  const key = cid || useChatStore.getState().activeConversationId || ''
+  useChatStore.setState(s =>
+    s.modelRespondedConvIds[key] ? s : { modelRespondedConvIds: { ...s.modelRespondedConvIds, [key]: true } }
+  )
+}
+
 function beginStream(get: () => ChatState, msgs: ChatMessage[]): void {
   streamBuf = ''
   thinkBuf = ''
   liveStream.reset()
+  // 新一轮开始 = 模型还没开口。发送/重新生成/编辑重发都走这里,不必各自记得。
+  {
+    const cid = get().activeConversationId || ''
+    useChatStore.setState(s => {
+      if (!s.modelRespondedConvIds[cid]) return s
+      const next = { ...s.modelRespondedConvIds }
+      delete next[cid]
+      return { modelRespondedConvIds: next }
+    })
+  }
   // 用户发起新一轮(发送/重新生成/编辑重发) = 重新授权产物完成自动弹开面板。
   // 收口在唯一入口:任何第 N 条生成路径都自动继承,不再靠调用方各自记得(评审收敛)
   useWorkspaceStore.getState().rearmAutoOpen()
@@ -1058,6 +1097,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
   pendingAnnotations: [],
   thinkingContent: '',
   isThinking: false,
+  modelRespondedConvIds: {},
   silentResponseCycle: false,
   contextUsage: {},
   contextStats: {},
@@ -1965,6 +2005,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
           bgStreamBufs.set(cid, (bgStreamBufs.get(cid) || '') + chunk)
           return
         }
+        markModelResponded(cid)
         if (thinkBuf) {
           set({ isThinking: false })
         }
@@ -1980,6 +2021,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       // 后续 chunk 原地更新。不需要 flush/merge 逻辑。
       window.api.onThinking?.((cid: string, content: string) => {
         if (isBackgroundConversation(cid)) return
+        markModelResponded(cid)
         thinkBuf += content
         // 静默响应周期(由 task-trigger 触发):整个思考过程不上屏,但 thinkBuf 仍累积供 AI 上下文。
         // 这比 scheduler 的"end-时一次性 append"走得更远——后者仅解决持久化,我们同时屏蔽实时渲染。
@@ -2019,7 +2061,17 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
             const idx = (last >= 0 && msgs[last].id === id) ? last : msgs.findIndex(m => m.id === id)
             if (idx === -1) return { isThinking: false }
             const updated = [...msgs]
-            updated[idx] = { ...updated[idx], thinkingContent: thinkBuf }
+            // 就地改写既有消息:若它已经越过水位线(onToolStart 的防抖保存常常刚好把它冲过去),
+            // 下次落盘走的是 slice(persistedCount) 的追加路径,这条根本不在切片里 ——
+            // 磁盘上只留半截 thinkingContent、没有 thinkingMs,重开会话又退回"思考过程"。
+            markDirtyIfPersisted(idx)
+            // thinkingMs 只在这里写一次:消息的 timestamp 是第一个 thinking chunk 到达的时刻,
+            // 现在是最后一个 —— 差值就是这段思考的真实耗时,落盘后重开会话也还写得出"已思考 N 秒"。
+            updated[idx] = {
+              ...updated[idx],
+              thinkingContent: thinkBuf,
+              thinkingMs: Math.max(0, Date.now() - (updated[idx].timestamp || Date.now()))
+            }
             return { messages: updated, isThinking: false }
           })
         } else {
@@ -2092,7 +2144,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
         // NO_REPLY 静默回复:不持久化、不渲染,等同"AI 选择沉默"
         const silentSwallow = !error && remaining && isSilentReply(remaining)
 
-        if (terminalContent && !silentSwallow) {
+        if (hasFlushableText(terminalContent) && !silentSwallow) {
           set(s => {
             const updated = [...s.messages, createAssistantMessage({
               id: Date.now().toString(),
@@ -2151,6 +2203,12 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
             streamBuf = ''
             return
           }
+          // 纯空白不落消息,但缓冲要清 —— 否则那两个换行会顶到下一段正文前面
+          if (!hasFlushableText(streamBuf)) {
+            liveStream.setText('')
+            streamBuf = ''
+            return
+          }
           const assistantMsg = createAssistantMessage({
             id: `flush-${Date.now()}`,
             content: streamBuf,
@@ -2174,6 +2232,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
           )
           return
         }
+        markModelResponded(cid)
         activeThinkingId = null
         thinkBuf = ''
         // NO_REPLY 静默回复:tool 触发前的待 flush 内容若是静默,丢弃不 commit
@@ -2181,7 +2240,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
         if (silentFlush) {
           console.log('[Cave] 🤫 静默 flush(tool 前):', streamBuf.substring(0, 80))
         }
-        const flushedAssistant = streamBuf && !silentFlush
+        const flushedAssistant = hasFlushableText(streamBuf) && !silentFlush
           ? createAssistantMessage({
               id: `flush-${Date.now()}`,
               content: streamBuf,
@@ -2354,7 +2413,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
         // 后台处理的 handler 出现时,应抽统一的按会话事件路由表,不再逐个复制 if 分支。
         if (isBackgroundConversation(cid)) return
         // thinking 已作为消息存在，只 flush 文本
-        const flushedAssistant = streamBuf
+        const flushedAssistant = hasFlushableText(streamBuf)
           ? createAssistantMessage({ id: `flush-${Date.now()}`, content: streamBuf, timestamp: Date.now() })
           : null
         streamBuf = ''
@@ -2398,7 +2457,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
           useChatStore.setState(s => ({ unreadDoneConvIds: { ...s.unreadDoneConvIds, [cid]: true } }))
           return
         }
-        const flushedAssistant = streamBuf
+        const flushedAssistant = hasFlushableText(streamBuf)
           ? createAssistantMessage({ id: `flush-${Date.now()}`, content: streamBuf, timestamp: Date.now() })
           : null
         streamBuf = ''
@@ -2484,7 +2543,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
           useChatStore.setState(s => ({ unreadDoneConvIds: { ...s.unreadDoneConvIds, [reqCid]: true } }))
           return
         }
-        const flushedAssistant = streamBuf
+        const flushedAssistant = hasFlushableText(streamBuf)
           ? createAssistantMessage({ id: `flush-${Date.now()}`, content: streamBuf, timestamp: Date.now() })
           : null
         streamBuf = ''
@@ -2860,8 +2919,8 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
               contextStats: { ...s.contextStats, [cid]: nextStats }
             }
           })
-          // 随会话落盘（去抖 2s）：重开应用/切回旧会话时圆环直接显示上次读数，
-          // 不必先发一条消息。写失败不影响对话（纯展示数据）。
+          // 随会话落盘（去抖窗口见 scheduleContextUsagePersist）：重开应用/切回旧会话时
+          // 圆环直接显示上次读数，不必先发一条消息。写失败不影响对话（纯展示数据）。
           scheduleContextUsagePersist(cid, data, () => statsSnapshot)
         })
       )
@@ -2876,7 +2935,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
           if (!cid || !text) return
           set(s => {
             if (s.activeConversationId !== cid) return s
-            const messages = [...s.messages]
+            const messages = s.messages
             // 找末条用户消息（跳过其后的既有 runtime-context 快照）
             let lastUserIdx = -1
             for (let i = messages.length - 1; i >= 0; i--) {
@@ -2887,20 +2946,15 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
               break
             }
             if (lastUserIdx < 0) return s
-            const snapshot: ChatMessage = {
-              ...createUserMessage({
-                id: `rc-${messages[lastUserIdx].id || Date.now()}`,
-                content: text,
-                timestamp: Date.now(),
-                messageKind: 'runtime-context'
-              })
-            }
+            const snapshot = createUserMessage({
+              id: `rc-${messages[lastUserIdx].id || Date.now()}`,
+              content: text,
+              messageKind: 'runtime-context'
+            })
             const insertAt = lastUserIdx + 1
-            const existing = messages[insertAt]
-            const next =
-              existing && getMessageKind(existing as any) === 'runtime-context'
-                ? [...messages.slice(0, insertAt), snapshot, ...messages.slice(insertAt + 1)]
-                : [...messages.slice(0, insertAt), snapshot, ...messages.slice(insertAt)]
+            // regenerate 重跑同一轮时替换旧快照，否则插入——差别只在跳过几条
+            const replacing = messages[insertAt] && getMessageKind(messages[insertAt] as any) === 'runtime-context' ? 1 : 0
+            const next = [...messages.slice(0, insertAt), snapshot, ...messages.slice(insertAt + replacing)]
             // 在已落盘区间内插行/换行：水位线语义被破坏，下次落盘走全量 replace
             markDirtyIfPersisted(insertAt)
             return { messages: normalizeChatMessages(next) }

@@ -55,10 +55,10 @@ export function AskUserForm({ question, fields, onSubmit, variant = 'message' }:
     : 'flex justify-start mb-msg animate-fade-in'
   const innerClass = variant === 'popup'
     ? 'w-full bg-surface-0 dark:bg-surface-50 overflow-hidden'
-    : 'max-w-[92%] sm:max-w-[85%] w-full rounded-lg border border-surface-100 bg-surface-0 dark:bg-surface-50 overflow-hidden'
+    : 'max-w-msg w-full rounded-lg border border-surface-100 bg-surface-0 dark:bg-surface-50 overflow-hidden'
   const innerClassSubmitted = variant === 'popup'
     ? 'w-full bg-surface-0 dark:bg-surface-50 px-4 py-3'
-    : 'max-w-[92%] sm:max-w-[85%] w-full rounded-lg border border-surface-100 bg-surface-0 dark:bg-surface-50 px-4 py-3'
+    : 'max-w-msg w-full rounded-lg border border-surface-100 bg-surface-0 dark:bg-surface-50 px-4 py-3'
 
   if (submitted) {
     return (

@@ -17,6 +17,9 @@ function toolMsg(toolName: string, args: Record<string, unknown>): ChatMessage {
 function textMsg(content: string): ChatMessage {
   return { id: `a${++seq}`, role: 'assistant', content, timestamp: seq } as ChatMessage
 }
+function thinkMsg(content: string): ChatMessage {
+  return { id: `k${++seq}`, role: 'assistant', content: '', thinkingContent: content, timestamp: seq, messageKind: 'thinking' } as ChatMessage
+}
 
 describe('fileEditPath', () => {
   it('edit/write 取 path，兼容 file_path/filePath', () => {
@@ -57,14 +60,51 @@ describe('buildProcessRenderItems', () => {
     expect((items[3] as any).items).toHaveLength(1) // 被叙述隔断,不并入前组
   })
 
-  it('非 edit/write 的工具消息保持单条', () => {
-    const msgs = [toolMsg('bash', { command: 'ls' }), toolMsg('read', { path: '/x.tsx' })]
+  it('既非 edit/write 也非探索类的工具消息保持单条', () => {
+    const msgs = [toolMsg('bash', { command: 'ls' }), toolMsg('execute_code', { code: '1+1' })]
     const items = buildProcessRenderItems(msgs)
     expect(items.map(i => i.kind)).toEqual(['single', 'single'])
   })
 
-  it('同一长期档案的读取跨其它消息聚合，别名保持稳定 descriptor', () => {
-    const base = '/Users/u/.openpipal/workspace/assets/teacher/小学语文'
+  it('相邻探索步骤(读文件/找文件/搜网页)并成一组,文件与搜索分别计数', () => {
+    const msgs = [
+      toolMsg('web_search', { query: 'electron iframe' }),
+      toolMsg('read', { path: '/x.tsx' }),
+      toolMsg('grep', { pattern: 'srcdoc' }),
+    ]
+    const items = buildProcessRenderItems(msgs)
+    expect(items.map(i => i.kind)).toEqual(['explore-group'])
+    expect((items[0] as any).searches).toBe(1)
+    expect((items[0] as any).files).toBe(2)
+    expect((items[0] as any).items).toHaveLength(3)
+  })
+
+  it('探索组被非探索步骤隔断则断开(时间线不被抹平)', () => {
+    const msgs = [
+      toolMsg('read', { path: '/x.tsx' }),
+      toolMsg('bash', { command: 'npm test' }),
+      toolMsg('read', { path: '/y.tsx' }),
+    ]
+    const items = buildProcessRenderItems(msgs)
+    expect(items.map(i => i.kind)).toEqual(['explore-group', 'single', 'explore-group'])
+    expect((items[0] as any).files).toBe(1)
+    expect((items[2] as any).files).toBe(1)
+  })
+
+  it('连续 thinking 聚成一组;被其它消息隔断则断开', () => {
+    const msgs = [
+      thinkMsg('第一步推理'),
+      thinkMsg('继续推理'),
+      textMsg('先记录一个中间结论'),
+      thinkMsg('重新开始一段推理'),
+    ]
+    const items = buildProcessRenderItems(msgs)
+    expect(items.map(i => i.kind)).toEqual(['think-group', 'single', 'think-group'])
+    expect((items[0] as any).items).toHaveLength(2)
+    expect((items[2] as any).items).toHaveLength(1)
+  })
+
+  it('同一长期档案的读取跨其它消息聚合，别名保持稳定 descriptor', () => {    const base = '/Users/u/.openpipal/workspace/assets/teacher/小学语文'
     const msgs = [
       toolMsg('read', { path: `${base}/风格.md` }),
       textMsg('先核对一项资料'),

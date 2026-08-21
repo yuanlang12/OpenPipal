@@ -1,12 +1,13 @@
 import { test, expect, Page } from '@playwright/test'
 
 /**
- * 技能选择 = 单条消息内的强调，输入侧是 @ 内联 token（与正文混排，不再是输入框上方的 chip）。
+ * 技能选择 = 单条消息内的强调，输入侧是 `/` 快捷指令 token（与正文混排，没有按钮入口）。
  *
  * 验证：
- * - T1 打 @ 唤起补全弹层 → Enter 选中 → `@技能名 ` 插入输入框 → 发送时就地换 <skill-request> 标签、气泡渲染成 pill
- * - T2 + 菜单「添加技能」也是插 token；只有 token 没正文 → 兜底句式
+ * - T1 打 / 唤起面板 → Enter 选中 → `/技能名 ` 插入输入框 → 发送时就地换 <skill-request> 标签、气泡渲染成 pill
+ * - T2 行首 / 面板还给内置命令（/goal），且只有 token 没正文 → 兜底句式
  * - T3 选择不落盘：全程不调 updateConversationConfig
+ * - T5 路径/URL 里的 / 不唤起面板（`src/pdf` 不是技能）
  */
 const MOCK_API = `
 window.__mockBus = {
@@ -74,6 +75,7 @@ window.api = {
     { name: 'dataviz', description: '做图表', enabled: true },
     { name: 'pdf', description: '处理 PDF', enabled: true }
   ]),
+  openFileDialog: async () => { window.__mockCalls.push({ method: 'openFileDialog', args: [] }); return null; },
   listWorkspaces: async () => [],
   listAgentTemplates: async () => [],
   getOnboardingStatus: async () => ({ completed: true }),
@@ -106,12 +108,12 @@ async function lastSentText(page: Page): Promise<string> {
 
 test.use({ viewport: { width: 600, height: 700 } })
 
-test.describe('技能选择 = @ 内联 token + 单条消息强调', () => {
-  test('T1 打 @ 唤起弹层 → Enter 选中插 token → 发送就地换标签、气泡渲染 pill', async ({ page }) => {
+test.describe('技能选择 = / 快捷指令 token + 单条消息强调', () => {
+  test('T1 打 / 唤起面板 → Enter 选中插 token → 发送就地换标签、气泡渲染 pill', async ({ page }) => {
     await setup(page)
     const textarea = page.locator('textarea').first()
     await textarea.click()
-    await page.keyboard.type('@da')
+    await page.keyboard.type('/da')
 
     // 补全弹层出现且过滤到 dataviz
     const popup = page.locator('[data-testid="skill-mention-popup"]')
@@ -121,7 +123,7 @@ test.describe('技能选择 = @ 内联 token + 单条消息强调', () => {
     // Enter 选中 → token 以纯文本插进输入框（与正文混排，不是 chip）
     await page.keyboard.press('Enter')
     await expect(popup).toHaveCount(0)
-    await expect(textarea).toHaveValue('@dataviz ')
+    await expect(textarea).toHaveValue('/dataviz ')
     // token 存在时镜像层负责着色
     await expect(page.locator('[data-testid="skill-mention-mirror"]')).toBeVisible()
 
@@ -139,27 +141,48 @@ test.describe('技能选择 = @ 内联 token + 单条消息强调', () => {
     await expect(page.getByText('<skill-request>')).toHaveCount(0)
   })
 
-  test('T2 + 菜单「添加技能」插 token；纯 token 发送走兜底句式', async ({ page }) => {
+  test('T2 行首 / 面板给内置命令；纯 token 发送走兜底句式', async ({ page }) => {
     await setup(page)
-    await page.locator('[data-testid="inputbar-plus-btn"]').click()
-    await page.getByText('添加技能').click()
-    await page.getByRole('button', { name: 'pdf', exact: false }).filter({ hasText: 'pdf' }).first().click()
+    const textarea = page.locator('textarea').first()
+    await textarea.click()
+    await page.keyboard.type('/')
 
-    // 插进输入框的是 @token，不是挂在上方的 chip
-    await expect(page.locator('textarea').first()).toHaveValue('@pdf ')
+    // 面板 = 内置命令 + 技能；命令只在行首给
+    const popup = page.locator('[data-testid="skill-mention-popup"]')
+    await expect(popup).toBeVisible()
+    await expect(popup.locator('[data-kind="command"]')).toHaveCount(1)
+    await expect(popup.locator('[data-kind="command"]')).toContainText('/goal')
+    await expect(popup.locator('[data-kind="skill"]')).toHaveCount(2)
+    await page.waitForTimeout(300) // 等淡入放完再截
+    await page.screenshot({ path: 'tests/artifacts/slash-panel/chat-panel.png' })
+
+    // 选技能 → 插的是 token，不是挂在上方的 chip
+    await page.keyboard.type('pdf')
+    await page.keyboard.press('Enter')
+    await expect(textarea).toHaveValue('/pdf ')
 
     await expect(page.locator('[data-testid="send-btn"]')).toBeEnabled()
     await page.locator('[data-testid="send-btn"]').click()
     expect(await lastSentText(page)).toBe('请使用技能 <skill-request>pdf</skill-request> 来帮我完成')
   })
 
+  test('T2b 技能按钮入口已经没有了：+ 是直接开文件选择器', async ({ page }) => {
+    await setup(page)
+    await expect(page.getByText('添加技能')).toHaveCount(0)
+    await page.locator('[data-testid="inputbar-plus-btn"]').click()
+    await expect(page.getByText('添加技能')).toHaveCount(0)
+    expect(await page.evaluate(() =>
+      (window as any).__mockCalls.filter((c: any) => c.method === 'openFileDialog').length
+    )).toBe(1)
+  })
+
   test('T3 技能选择不落盘：不调 updateConversationConfig', async ({ page }) => {
     await setup(page)
     const textarea = page.locator('textarea').first()
     await textarea.click()
-    await page.keyboard.type('@pdf')
+    await page.keyboard.type('/pdf')
     await page.keyboard.press('Enter')
-    await page.keyboard.type('@dataviz')
+    await page.keyboard.type('/dataviz')
     await page.keyboard.press('Enter')
     const configCalls = await page.evaluate(() =>
       (window as any).__mockCalls.filter((c: any) => c.method === 'updateConversationConfig').length
@@ -167,18 +190,29 @@ test.describe('技能选择 = @ 内联 token + 单条消息强调', () => {
     expect(configCalls).toBe(0)
   })
 
-  test('T4 Esc 关掉弹层后 @ 原样留在正文里，未知技能名不换标签', async ({ page }) => {
+  test('T4 Esc 关掉面板后 / 原样留在正文里，未知技能名不换标签', async ({ page }) => {
     await setup(page)
     const textarea = page.locator('textarea').first()
     await textarea.click()
-    await page.keyboard.type('@da')
+    await page.keyboard.type('/da')
     await expect(page.locator('[data-testid="skill-mention-popup"]')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(page.locator('[data-testid="skill-mention-popup"]')).toHaveCount(0)
 
-    // 补完正文直接发：@da 不是已知技能名，原样发出
+    // 补完正文直接发：/data 不是已知技能名，原样发出
     await page.keyboard.type('ta 这个词帮我解释一下')
     await page.locator('[data-testid="send-btn"]').click()
-    expect(await lastSentText(page)).toBe('@data 这个词帮我解释一下')
+    expect(await lastSentText(page)).toBe('/data 这个词帮我解释一下')
+  })
+
+  test('T5 路径和 URL 里的 / 不唤起面板，也不换标签', async ({ page }) => {
+    await setup(page)
+    const textarea = page.locator('textarea').first()
+    await textarea.click()
+    await page.keyboard.type('看下 src/pdf 这个目录')
+    await expect(page.locator('[data-testid="skill-mention-popup"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="skill-mention-mirror"]')).toHaveCount(0)
+    await page.locator('[data-testid="send-btn"]').click()
+    expect(await lastSentText(page)).toBe('看下 src/pdf 这个目录')
   })
 })

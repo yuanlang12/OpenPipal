@@ -1,10 +1,11 @@
 {
-  "generatedFrom": "60053ea9596d1c1554259bf8d12d584ba2190cea",
+  "generatedFrom": "92bcab7ba7801725b3cd39a413ac0913032c3518",
   "policyId": "openpipal-open-source-candidate-v1",
-  "trackedInPrivateRepo": 1145,
-  "publishedFiles": 793,
+  "trackedInPrivateRepo": 1221,
+  "publishedFiles": 828,
   "droppedByRule": {
-    "remove-private-history-and-qa": 280,
+    "exclude-brand-exploration-and-internal-process-docs": 2,
+    "remove-private-history-and-qa": 318,
     "exclude-non-default-agents": 20,
     "exclude-design-rewrite-process": 13,
     "remove-third-party-fixtures-and-provenance-ledgers": 4,
@@ -12,7 +13,7 @@
     "replace-design-instruction-material": 2,
     "exclude-owner-local-only": 1,
     "exclude-release-cut-internals": 1,
-    "exclude-project-website": 28
+    "exclude-project-website": 29
   },
   "seams": [
     "src/main/roles/optional-roles.ts → 空实现（不含学习助手 / 教学助手 / 办公 / 同传四个内置角色）",

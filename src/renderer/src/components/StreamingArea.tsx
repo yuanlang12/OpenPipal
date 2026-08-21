@@ -1,4 +1,4 @@
-import { useEffect, useState, RefObject, MutableRefObject } from 'react'
+import { useEffect, RefObject, MutableRefObject } from 'react'
 import { useChatStore } from '../stores/chatStore'
 import { useLiveStreamStore } from '../stores/liveStreamStore'
 import { useAppStore } from '../stores/appStore'
@@ -14,26 +14,6 @@ interface StreamingAreaProps {
   userScrolledUp: MutableRefObject<boolean>
 }
 
-/** 等待文案按耗时分级——长等待时固定一句"正在思考"会让人怀疑卡死。
- *  计时锚定整个流式回合(isStreaming),不随 text/toolStatus 抖动重启——否则多工具
- *  交错的长回合里 elapsed 反复归零,永远升不到"深度思考"档(评审实锤)。 */
-function useThinkingLabel(streaming: boolean): string {
-  const { t } = useTranslation()
-  const [elapsed, setElapsed] = useState(0)
-  useEffect(() => {
-    if (!streaming) {
-      setElapsed(0)
-      return
-    }
-    const startedAt = Date.now()
-    const timer = setInterval(() => setElapsed(Date.now() - startedAt), 1000)
-    return () => clearInterval(timer)
-  }, [streaming])
-  if (elapsed >= 30000) return t('chat.streaming.deepThinking')
-  if (elapsed >= 8000) return t('chat.streaming.thinkingHard')
-  return t('chat.streaming.thinking')
-}
-
 /**
  * 流式区(隔离叶子)—— 这是整套架构修复的核心:
  * 它是 *唯一* 订阅 liveStreamStore 的组件,所以每个 token 的高频更新只重渲染本组件,
@@ -46,13 +26,14 @@ function useThinkingLabel(streaming: boolean): string {
 export function StreamingArea({ scrollRef, userScrolledUp }: StreamingAreaProps) {
   const { t } = useTranslation()
   const isStreaming = useChatStore((s) => s.isStreaming)
+  // 模型还没开口的那段等待由分割线的「连接模型…」承担,这里只管**步骤之间**的空档
+  const modelResponded = useChatStore((s) => !!s.modelRespondedConvIds[s.activeConversationId || ''])
   const roleIcon = useAppStore((s) => s.currentRole?.icon)
   const text = useLiveStreamStore((s) => s.text)
   const toolStatus = useLiveStreamStore((s) => s.toolStatus)
   const toolStreamingTitle = useLiveStreamStore((s) => s.toolStreamingTitle)
   const toolStreamingPath = useLiveStreamStore((s) => s.toolStreamingPath)
   const toolProgressChars = useLiveStreamStore((s) => s.toolProgressChars)
-  const thinkingLabel = useThinkingLabel(isStreaming)
 
   // 流式滚动跟随:内容增长且用户没有上滑时保持贴底。
   // 原本在 ChatPanel(依赖 streamingContent/toolStatus/... 整页随 token 重渲染),
@@ -94,19 +75,22 @@ export function StreamingArea({ scrollRef, userScrolledUp }: StreamingAreaProps)
         </div>
       )}
 
-      {/* Thinking indicator (仅在无任何内容时显示) */}
-      {!text && !toolStatus && (
-        <div className="flex justify-start mb-3 animate-fade-in">
-          {/* 「正在思考」是 live 状态:三点用 sage(agent 活动,不是动作色),
-              文案走 .op-shimmer-text —— 一道光从标签里穿过去。 */}
-          <div className="rounded-lg px-3.5 py-2.5 bg-surface-0 dark:bg-surface-50 border border-surface-100 flex items-center gap-2">
-            <div className="flex gap-1">
-              <div className="w-1.5 h-1.5 bg-success rounded-full animate-pulse-soft" />
-              <div className="w-1.5 h-1.5 bg-success rounded-full animate-pulse-soft" style={{ animationDelay: '0.2s' }} />
-              <div className="w-1.5 h-1.5 bg-success rounded-full animate-pulse-soft" style={{ animationDelay: '0.4s' }} />
-            </div>
-            <span className="sw-chat-reasoning op-shimmer-text">{thinkingLabel}</span>
+      {/* 步骤之间的空档标记 —— 上一步做完了、下一步还没吐出第一个字节的那几秒。
+          没有它,台面最后一行是一张做完的工具卡,看上去就像执行中断了(用户实锤 2026-08-18)。
+          刻意**不带边框、不带底色**:上一版是个方框气泡,读起来像一个独立控件浮在流里;
+          现在它就是过程清单末尾又长出来的一行,和上面的元信息同一号字。
+          两个门:有正文在流 / 有工具在跑 —— 任一为真都让位(那时台面已经在动了)。
+          曾经还有第三个门 isThinking("过程栏里已经写着思考中,别说两遍"),已经去掉:
+          那行字只在过程组**展开**时才存在,用户一旦手动收起,它就成了一个看不见的让位理由,
+          于是长思考期间台面上除了分割线的秒数什么都没有 —— 正是删掉方框气泡后要补的那个洞。 */}
+      {modelResponded && !text && !toolStatus && (
+        <div className="flex items-center gap-2 mb-msg text-chat-meta text-ink-tertiary animate-fade-in">
+          <div className="flex gap-1">
+            <div className="w-1 h-1 bg-success rounded-full animate-pulse-soft" />
+            <div className="w-1 h-1 bg-success rounded-full animate-pulse-soft" style={{ animationDelay: '0.2s' }} />
+            <div className="w-1 h-1 bg-success rounded-full animate-pulse-soft" style={{ animationDelay: '0.4s' }} />
           </div>
+          <span className="op-shimmer-text">{t('chat.process.working')}</span>
         </div>
       )}
     </>

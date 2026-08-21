@@ -24,6 +24,8 @@ window.__mockBus = {
   emit(event, ...args) { (this.listeners[event] || []).forEach(fn => fn(...args)); }
 };
 window.api = {
+  // 锁 zh-CN:下面按中文 UI 文案("搜索结果")定位卡片,不锁语言会跟着浏览器 locale 漂成英文
+  getLocaleState: async () => ({ preference: 'zh-CN', locale: 'zh-CN' }),
   sendChat: () => {},
   abortChat: () => {},
   onStreamChunk: (cb) => window.__mockBus.on('stream-chunk', cb),
@@ -123,12 +125,19 @@ test.describe('文字模式消息插入顺序', () => {
     expect(toolIdx).toBeGreaterThan(thinkIdx)  // 工具卡在推理之后
     expect(finalMsgs[toolIdx].hasSearch).toBe(true)
 
-    // DOM:进行中(isStreaming)→ ProcessGroup 默认展开;推理文字应在搜索结果卡之上
-    await expect(page.locator('[data-testid="process-thinking-flat"]')).toBeVisible({ timeout: 3000 })
+    // DOM:进行中(isStreaming)→ ProcessGroup 默认展开;思考组(折叠行)应在搜索那一步之上。
+    // 只有一次搜索,所以它不并成 explore-group(那一行要 ≥2 条),结果卡直接铺在过程栏里 ——
+    // 位置断言因此认结果卡本身。
+    const thinkGroup = page.locator('[data-testid="process-think-group"]')
+    await expect(thinkGroup).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('[data-testid="process-explore-group"]')).toHaveCount(0)
+    const searchCard = page.getByText('搜索结果').first()
+    await expect(searchCard).toBeVisible({ timeout: 3000 })
     const tops = await page.evaluate(() => {
-      const flat = document.querySelector('[data-testid="process-thinking-flat"]') as HTMLElement | null
-      const all = Array.from(document.querySelectorAll('*')) as HTMLElement[]
-      const searchEl = all.find(e => e.children.length === 0 && e.textContent?.includes('搜索结果'))
+      const flat = document.querySelector('[data-testid="process-think-group"]') as HTMLElement | null
+      const searchEl = Array.from(document.querySelectorAll('*')).find(
+        e => e.children.length === 0 && /搜索结果/.test(e.textContent || '')
+      ) as HTMLElement | null
       return {
         think: flat ? flat.getBoundingClientRect().top : -1,
         search: searchEl ? searchEl.getBoundingClientRect().top : -1

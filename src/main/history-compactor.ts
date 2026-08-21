@@ -19,6 +19,7 @@
  */
 
 import { createHash } from 'crypto'
+import { estimateTokens } from './token-estimate'
 import type { ChatMessage } from './agent-runtime/contracts'
 import { getEffectiveModelConfig, type ModelConfig } from './config-manager'
 import { getConversation, updateConversationConfig } from './conversation-store'
@@ -63,16 +64,6 @@ export function getContextBudget(mc?: Pick<ModelConfig, 'contextWindow'>): { con
   const reserve = Math.min(MAX_RESERVE_TOKENS, Math.floor(contextWindow / 2))
   const budget = Math.max(1, contextWindow - reserve)
   return { contextWindow, budget }
-}
-
-export function estimateTokens(text: string): number {
-  let ascii = 0
-  let other = 0
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) < 128) ascii++
-    else other++
-  }
-  return Math.ceil(ascii / 4 + other / 1.6)
 }
 
 export function estimateHistoryMessageTokens(m: ChatMessage): number {

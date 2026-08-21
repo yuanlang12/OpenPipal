@@ -31,7 +31,7 @@ describe('offline ACP protocol smoke authentication', () => {
     expect(smoke).toContain("req.headers['x-openpipal-acp-token'] !== SMOKE_TOKEN")
     expect(smoke).toContain('for (const request of dynamicRequests)')
     expect(smoke).toContain('request.token,')
-    expect(smoke).toContain("'/api/agents/list', '/api/conversations', '/chat/stream'")
+    expect(smoke).toContain("'/api/agents/list', '/api/conversations', '/chat/stream', '/api/permission', '/api/skills'")
     expect(smoke).toContain("!exercisedPaths.has('/role/switch')")
     expect(smoke).toContain("request.body?.role === 'design'")
   })

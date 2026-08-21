@@ -1,3 +1,5 @@
+import { estimateTokens } from './token-estimate'
+
 /**
  * 工具轨迹跨轮回放。
  *
@@ -21,17 +23,6 @@ export interface ToolTrailMessage {
   id?: string
 }
 
-/** 与 history-compactor.estimateTokens 同口径的粗估（ASCII/4 + 其余/1.6），八行重复优于引入依赖链 */
-function estimateTrailTokens(text: string): number {
-  let ascii = 0
-  let other = 0
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) < 128) ascii++
-    else other++
-  }
-  return Math.ceil(ascii / 4 + other / 1.6)
-}
-
 /** finalized 的工具消息才可回放：有名字、有内容。落盘侧（conversation-store）同源引用此判据 */
 export function isReplayableToolMessage(m: ToolTrailMessage): boolean {
   return m.role === 'tool' && !!m.toolName && !!(m.content && m.content.trim())
@@ -41,7 +32,7 @@ export function isReplayableToolMessage(m: ToolTrailMessage): boolean {
  * 单条工具消息在载荷里的 token 成本；measureToolTrail 用它记录实际轨迹占比。
  */
 function trailMessageCost(m: ToolTrailMessage): number {
-  return estimateTrailTokens(m.content) + estimateTrailTokens(m.toolArgs || '') + (m.screenshot ? 1200 : 0) + 30
+  return estimateTokens(m.content) + estimateTokens(m.toolArgs || '') + (m.screenshot ? 1200 : 0) + 30
 }
 
 /**

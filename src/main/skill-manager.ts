@@ -324,25 +324,34 @@ function scanBuiltInRoleSkills(roleName: string): PiSkill[] {
  *   禁用列表影响——显式装进自己的目录 = 显式启用。想让独立智能体用上某个
  *   全局技能，就把那个技能目录复制/软链进它自己的 skills 目录（文件式而非字段式）。
  */
+function resolveSkillScope(options: {
+  workspaceId?: string
+  roleName?: string
+} = {}): Array<{ skill: PiSkill; enabled: boolean }> {
+  // 每轮对话开头重扫——目录小、本地盘、几毫秒可接受；避免"放新技能文件夹后必须重启才生效"
+  scanAllSkills()
+
+  // 独立智能体：只看自己的目录，自有技能天然启用
+  if (options.workspaceId) {
+    return scanAgentSkills(options.workspaceId).map(skill => ({ skill, enabled: true }))
+  }
+
+  // built-in role 的专属技能既不受全局开关影响，也不进入其他角色的作用域；同名时它优先
+  const roleSkills = options.roleName ? scanBuiltInRoleSkills(options.roleName) : []
+  const roleNames = new Set(roleSkills.map(s => s.name))
+  return [
+    ...roleSkills.map(skill => ({ skill, enabled: true })),
+    ...piSkills
+      .filter(s => !roleNames.has(s.name))
+      .map(skill => ({ skill, enabled: isSkillEnabled(skill.name) }))
+  ]
+}
+
 export function buildSkillIndexForContext(options: {
   workspaceId?: string
   roleName?: string
 } = {}): string {
-  // 每轮对话开头重扫——目录小、本地盘、几毫秒可接受；避免"放新技能文件夹后必须重启才生效"
-  scanAllSkills()
-
-  if (options.workspaceId) {
-    const agentSkills = scanAgentSkills(options.workspaceId)
-    if (agentSkills.length === 0) return ''
-    return formatSkillsForPrompt(agentSkills)
-  }
-
-  // 全局会话：全局 enabled 技能保持可复用；built-in role 再追加自己的专属技能。
-  // 角色专属技能既不受全局开关影响，也不进入其他角色的索引。
-  const globalSkills = piSkills.filter(s => isSkillEnabled(s.name))
-  const roleSkills = options.roleName ? scanBuiltInRoleSkills(options.roleName) : []
-  const roleNames = new Set(roleSkills.map(s => s.name))
-  const merged = [...roleSkills, ...globalSkills.filter(s => !roleNames.has(s.name))]
+  const merged = resolveSkillScope(options).filter(entry => entry.enabled).map(entry => entry.skill)
   if (merged.length === 0) return ''
   return formatSkillsForPrompt(merged)
 }
@@ -365,20 +374,18 @@ export function buildSkillPromptSection(options: {
 // ---- UI 支持 ----
 
 /**
- * 列出技能 meta，供 SkillsHub / 输入框技能选择器使用。
- * 传 workspaceId：只列该独立智能体自有目录的技能（隔离，不含全局）——
- *   自有技能天然启用（enabled 恒为 true，不受全局禁用列表影响）。
- * 不传：保持原行为——全量全局技能 + isSkillEnabled 禁用过滤。
+ * 列出技能 meta，供 SkillsHub / 输入框技能选择器 / `/api/skills` 使用。
+ * 作用域规则与 `buildSkillIndexForContext` 共用 `resolveSkillScope`——**模型看到的那份
+ * 和菜单里列出的那份必须是同一份**。此前这里少了 roleName 这一档，于是内置角色自带的
+ * 技能（teacher 等）提示词里有、编辑器的斜杠命令里没有，`/技能名` 因此不展开。
  */
-export function listSkillsMeta(workspaceId?: string): Array<SkillMeta & { enabled: boolean }> {
-  if (workspaceId) {
-    return scanAgentSkills(workspaceId).map(s => ({ ...toSkillMeta(s), enabled: true }))
-  }
-  // 每次读取前重扫——同上，保证 UI 打开时能看到刚放进目录的新技能
-  scanAllSkills()
-  return piSkills.map(s => ({
-    ...toSkillMeta(s),
-    enabled: isSkillEnabled(s.name)
+export function listSkillsMeta(
+  workspaceId?: string,
+  roleName?: string
+): Array<SkillMeta & { enabled: boolean }> {
+  return resolveSkillScope({ workspaceId, roleName }).map(entry => ({
+    ...toSkillMeta(entry.skill),
+    enabled: entry.enabled
   }))
 }
 

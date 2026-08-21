@@ -1,47 +1,18 @@
-import { useState, useRef, useCallback, useEffect, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
-import { Square, ArrowUp, Paperclip, X, FileText, Zap, FolderOpen } from 'lucide-react'
+import { useState, useRef, useCallback, useEffect, useMemo, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
+import { Square, ArrowUp, X, FileText } from 'lucide-react'
 import { ModelControl } from './shared/ModelControl'
 import { useAppStore } from '../stores/appStore'
-import { useChatStore } from '../stores/chatStore'
+import { useChatStore, type ContextUsageEntry, type ContextCumulativeStats } from '../stores/chatStore'
 import { extractPastedImages } from '../utils/pasteImages'
 import { expandSkillMentions } from '../chat/skillRequest'
 import { useSkillMentions, type SkillInfo } from './shared/SkillMention'
-import { useSourcesStore } from '../stores/sourcesStore'
+import { WorkingDirBar } from './shared/WorkingDirBar'
+import { useComposerFileIntake } from './shared/useComposerFileIntake'
 import { fmtSize } from '../utils/format'
-import type { FileAttachmentData, SourceType, VoiceSessionState } from '../types'
+import type { FileAttachmentData, VoiceSessionState } from '../types'
 import { PendingMessageStack } from './PendingMessageStack'
 import { VoiceCallInline } from './VoiceCallInline'
 import { useTranslation } from 'react-i18next'
-
-/** Cave 模式可吃的 source-worthy 扩展名 —— 跟 SourcesPanel.inferSourceType 一致 */
-const SOURCE_WORTHY_EXTS = new Set(['pdf', 'md', 'markdown', 'html', 'htm', 'txt', 'text'])
-
-function getFileExt(filePath: string): string {
-  const m = filePath.toLowerCase().match(/\.([a-z0-9]+)$/)
-  return m ? m[1] : ''
-}
-
-function inferSourceTypeForInput(filePath: string): SourceType {
-  const ext = getFileExt(filePath)
-  switch (ext) {
-    case 'pdf': return 'pdf'
-    case 'md':
-    case 'markdown': return 'md'
-    case 'html':
-    case 'htm': return 'html'
-    case 'txt':
-    case 'text': return 'txt'
-    default: return 'other'
-  }
-}
-
-function fileNameStem(filePath: string): string {
-  const m = filePath.match(/([^/\\]+)$/)
-  if (!m) return filePath
-  const name = m[1]
-  const dot = name.lastIndexOf('.')
-  return dot > 0 ? name.slice(0, dot) : name
-}
 
 export interface FileAttachment {
   fileName: string
@@ -99,16 +70,19 @@ function ContextRing({ promptTokens, contextWindow, budget, compacted }: {
   )
 }
 
+/**
+ * usage-log.TodayModelUsage 过 IPC 后的形状。这里必须手写而不能从 preload 声明推导：
+ * useRealtimeVoice.ts 里另有一份 `interface Window { api: {...} }` 增强与 preload 的
+ * OpenPipalAPI 冲突，整个渲染层的 window.api 因此塌成 any——推导出来的只会是 any。
+ */
+type TodayUsageRow = { model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }
+
 /** 今日按模型用量的 30s 展开级缓存——卡片每次 hover 都拉一遍 8MB 日志没有意义 */
-let todayUsageCache: { at: number; rows: Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }> } | undefined
+let todayUsageCache: { at: number; rows: TodayUsageRow[] } | undefined
 
 interface ContextUsageCardProps {
-  usage: {
-    promptTokens: number; contextWindow: number; budget: number; compacted: boolean
-    usage?: { input: number; cacheRead: number; cacheWrite: number }
-    segments?: { systemPrompt: number; skills: number; toolsBuiltin: number; toolsMcp: number; messages: number }
-  }
-  stats?: { input: number; cacheRead: number; cacheWrite: number; calls: number }
+  usage: ContextUsageEntry
+  stats?: ContextCumulativeStats
 }
 
 function formatTokens(n: number): string {
@@ -123,12 +97,12 @@ function formatTokens(n: number): string {
  */
 function ContextUsageCard({ usage, stats }: ContextUsageCardProps) {
   const { t } = useTranslation()
-  const [todayRows, setTodayRows] = useState<Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }> | undefined>(todayUsageCache?.rows)
+  const [todayRows, setTodayRows] = useState<TodayUsageRow[] | undefined>(todayUsageCache?.rows)
 
   useEffect(() => {
     if (todayUsageCache && Date.now() - todayUsageCache.at < 30_000) return
     let cancelled = false
-    ;(window.api as any).getTodayUsage?.().then((rows: Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }> | undefined) => {
+    window.api.getTodayUsage?.().then((rows: TodayUsageRow[] | undefined) => {
       if (cancelled || !Array.isArray(rows)) return
       todayUsageCache = { at: Date.now(), rows }
       setTodayRows(rows)
@@ -258,13 +232,11 @@ export function InputBar({
   const sendMessage = useChatStore(s => s.sendMessage)
   const abortChat = useChatStore(s => s.abortChat)
   const pendingFileAttachments = useChatStore(s => s.pendingFileAttachments)
-  const addPendingFileAttachment = useChatStore(s => s.addPendingFileAttachment)
   const removePendingFileAttachment = useChatStore(s => s.removePendingFileAttachment)
   const clearPendingFileAttachments = useChatStore(s => s.clearPendingFileAttachments)
   const conversationConfig = useChatStore(s => s.conversationConfig)
   // 当前会话若绑定了独立智能体（Workspace Agent），技能选择器只列它自有目录的技能（隔离）
   const activeWorkspaceId = useChatStore(s => s.activeWorkspaceId)
-  const setConversationWorkingDir = useChatStore(s => s.setConversationWorkingDir)
   const setConversationModelPreset = useChatStore(s => s.setConversationModelPreset)
   const enqueuePending = useChatStore(s => s.enqueuePending)
   const pendingMentions = useChatStore(s => s.pendingMentions)
@@ -284,14 +256,17 @@ export function InputBar({
   const [isDragOver, setIsDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // 技能选择弹出层（+ 号菜单入口；@ 内联触发走 useSkillMentions）
-  const [showSkillPicker, setShowSkillPicker] = useState(false)
   const [allSkills, setAllSkills] = useState<SkillInfo[]>([])
-  const skillPickerRef = useRef<HTMLDivElement>(null)
 
-  // @ 触发技能补全 + 内联 token 着色（弹层/镜像层都挂在 textarea 的 relative 容器里）
+  // `/` 快捷指令面板 + 内联 token 着色（弹层/镜像层都挂在 textarea 的 relative 容器里）。
+  // 行首打 `/` 时面板顶部还给内置命令：`/goal` 由下面的 handleSend 拦下，不进模型。
+  const commands = useMemo(
+    () => [{ name: 'goal', description: t('chat.input.commands.goal') }],
+    [t]
+  )
   const mentions = useSkillMentions({
     skills: allSkills,
+    commands,
     value: input,
     onChange: setInput,
     textareaRef,
@@ -338,25 +313,8 @@ export function InputBar({
   const handleSwitchModel = (id: string) => setConversationModelPreset(id)
   const handleFollowGlobal = () => setConversationModelPreset(undefined)
 
-  // 点击外部关闭弹出层
-  useEffect(() => {
-    if (!showSkillPicker) return
-    const handler = (e: MouseEvent) => {
-      if (skillPickerRef.current && !skillPickerRef.current.contains(e.target as Node)) setShowSkillPicker(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showSkillPicker])
-
-  const selectedDir = conversationConfig?.workingDir || ''
   // 思考开关/档位 UI 已抽到 shared/ThinkingControl（欢迎页共用），状态仍走会话配置
-
-  const handleSelectDir = async () => {
-    const dir = await window.api.selectDirectory?.()
-    if (dir) setConversationWorkingDir(dir)
-  }
-
-  const clearDir = () => setConversationWorkingDir('')
+  // 工作目录选择在 shared/WorkingDirBar，自己连 chatStore
 
   const handleSend = () => {
     const trimmed = input.trim()
@@ -399,7 +357,7 @@ export function InputBar({
       ? (trimmed || (pendingFileAttachments.length > 1 ? '请分析这些文件' : '请分析这个文件'))
       : trimmed
 
-    // 正文里的 @技能名 = 对这条消息的强调，就地换成标签（不写会话配置）
+    // 正文里的 /技能名 = 对这条消息的强调，就地换成标签（不写会话配置）
     const withSkills = expandSkillMentions(defaultText, allSkills.map(s => s.name))
 
     // Phase 6: 如果有 Comment 选中的元素（可多选），把 <mentioned-element> 片段按加入顺序拼接 prepend 到消息；
@@ -428,76 +386,10 @@ export function InputBar({
     textareaRef.current?.focus()
   }
 
-  // 判断是否为图片文件
-  const isImageFile = (name: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name)
-
-  // 图片文件 → base64 进 images state
-  const addImageFromPath = async (filePath: string) => {
-    try {
-      const resp = await fetch(`file://${filePath}`)
-      const blob = await resp.blob()
-      const reader = new FileReader()
-      reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1]
-        setImages(prev => [...prev, base64])
-      }
-      reader.readAsDataURL(blob)
-    } catch {
-      // fallback: 用 Electron 读文件
-      const result = await (window.api as any).readFileBase64?.(filePath)
-      if (result) setImages(prev => [...prev, result])
-    }
-  }
-
-  // 非图片文件 → upload 到 workspace
-  const addFileAttachment = async (filePath: string) => {
-    if (!(window.api as any)?.uploadFile) return
-    try {
-      const uploaded = await (window.api as any).uploadFile(filePath)
-      addPendingFileAttachment({
-        fileName: uploaded.fileName,
-        fileType: uploaded.fileName.split('.').pop() || '',
-        sizeBytes: uploaded.sizeBytes,
-        path: uploaded.path
-      })
-    } catch (err: any) {
-      console.error('[FileUpload] 上传失败:', err.message)
-    }
-  }
-
-  // 处理单个文件（按 cave 模式 + 文件类型自动分流）
-  // - 图片 → 内联到 images（原行为）
-  // - learner + study + source-worthy(pdf/md/html/txt) → 添加到知识库 sources
-  // - 其他 → fileAttachment（原行为）
-  const handleFile = async (filePath: string) => {
-    if (isImageFile(filePath)) {
-      await addImageFromPath(filePath)
-      return
-    }
-    // Cave 模式自动归类(C 路径)：知识库 source 而非单次 chat attachment
-    const isStudy = currentRole?.layoutManifest?.preferredLayout === 'study'
-    const ext = getFileExt(filePath)
-    if (isStudy && SOURCE_WORTHY_EXTS.has(ext)) {
-      await useSourcesStore.getState().addOptimistic({
-        title: fileNameStem(filePath),
-        type: inferSourceTypeForInput(filePath),
-        filePath
-      })
-      return
-    }
-    await addFileAttachment(filePath)
-  }
-
-  const handleFileUpload = async () => {
-    if (!window.api?.openFileDialog) return
-    const filePaths = await window.api.openFileDialog()
-    if (!filePaths) return
-    // 支持多选
-    const paths = Array.isArray(filePaths) ? filePaths : [filePaths]
-    for (const fp of paths) {
-      await handleFile(fp)
-    }
-  }
+  // 文件分流（图片内联 / study 进知识库 / 其余挂附件）走共用进料口，与欢迎页同一份规则
+  const { handleFile, handleFileUpload } = useComposerFileIntake(
+    (base64) => setImages(prev => [...prev, base64])
+  )
 
   // 拖拽处理
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -576,18 +468,6 @@ export function InputBar({
   const hasInputContent = input.trim().length > 0 || images.length > 0 || pendingFileAttachments.length > 0
   const canSend = hasInputContent
 
-  // "+" 按钮弹出菜单
-  const [showPlusMenu, setShowPlusMenu] = useState(false)
-  const plusMenuRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!showPlusMenu) return
-    const handler = (e: MouseEvent) => {
-      if (plusMenuRef.current && !plusMenuRef.current.contains(e.target as Node)) setShowPlusMenu(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showPlusMenu])
-
   return (
     <div
       className="op-composer-dock px-5 pt-2 pb-4"
@@ -604,13 +484,16 @@ export function InputBar({
       {/* Agent 跑的时候用户挂起的待发消息（卡片堆叠） */}
       <PendingMessageStack />
 
+      {/* 工作目录 —— 对话页输入框停在窗口底部,只能往上贴 */}
+      <WorkingDirBar placement="above" className="max-w-[880px] mx-auto" />
+
       {/* 统一输入容器 —— 宽度对齐消息列(max-w-880 居中)。
           这里是全窗口最厚的一块玻璃:消息从它底下滚过去,blur 才有东西可折射。 */}
-      <div className={`op-composer op-glass op-glass-edge max-w-[880px] mx-auto transition-shadow ${
+      <div className={`op-composer op-glass op-glass-edge max-w-[880px] mx-auto relative z-10 transition-shadow ${
         isDragOver ? 'op-composer--drop' : ''
       }`}>
         {/* 已选附件/图片/pills — 容器内顶部 */}
-        {(images.length > 0 || pendingFileAttachments.length > 0 || selectedDir || pendingMentions.length > 0 || pendingAnnotations.length > 0) && (
+        {(images.length > 0 || pendingFileAttachments.length > 0 || pendingMentions.length > 0 || pendingAnnotations.length > 0) && (
           <div className="px-3 pt-2.5 flex flex-wrap gap-1.5">
             {pendingAnnotations.map((a, i) => (
               <span key={`a${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/20 text-[10px] text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800" title={a.text}>
@@ -636,13 +519,6 @@ export function InputBar({
                 </span>
               )
             })}
-            {selectedDir && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-100 text-[10px] text-surface-500">
-                <FolderOpen className="w-3 h-3" />
-                {selectedDir.split('/').pop()}
-                <button onClick={clearDir} className="ml-0.5 text-surface-300 hover:text-surface-500"><X className="w-2.5 h-2.5" /></button>
-              </span>
-            )}
             {pendingFileAttachments.map((file, i) => (
               <span key={`f${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-100 text-[10px] text-surface-500">
                 <FileText className="w-3 h-3" />
@@ -684,46 +560,19 @@ export function InputBar({
           {mentions.popup}
         </div>
 
-        {/* 底部工具栏 —— relative：技能弹层用 absolute bottom-full 贴着工具栏往上弹，
-            缺定位祖先时会锚到更外层容器、整个弹到视窗外（此前"点添加技能没反应"的真因） */}
+        {/* 底部工具栏 —— relative：`/` 面板等浮层用 absolute bottom-full 贴着它往上弹，
+            缺定位祖先时会锚到更外层容器、整个弹到视窗外 */}
         <div className="relative flex items-center px-2 pb-2 gap-1 min-w-0">
-          {/* 左侧：目录 + "+" 菜单 */}
+          {/* 左侧："+" 直接开文件选择器；技能改成输入框里打 `/` 唤起快捷指令面板 */}
           <button
-            onClick={handleSelectDir}
-            title={selectedDir || t('chat.input.chooseWorkingDirectory')}
+            data-testid="inputbar-plus-btn"
+            onClick={handleFileUpload}
+            title={t('chat.input.uploadFileOrImage')}
+            aria-label={t('chat.input.uploadFileOrImage')}
             className="p-1.5 rounded-md text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
           >
-            <FolderOpen className="w-4 h-4" />
+            <span className="text-[16px] leading-none font-light">+</span>
           </button>
-
-          <div className="relative" ref={plusMenuRef}>
-            <button
-              data-testid="inputbar-plus-btn"
-              onClick={() => setShowPlusMenu(!showPlusMenu)}
-              className="p-1.5 rounded-md text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
-            >
-              <span className="text-[16px] leading-none font-light">+</span>
-            </button>
-
-            {showPlusMenu && (
-              <div className="absolute bottom-full left-0 mb-1 w-48 op-menu py-1 z-50 animate-fade-in">
-                <button
-                  onClick={() => { handleFileUpload(); setShowPlusMenu(false) }}
-                  className="w-full text-left px-3 py-2 text-[12px] text-surface-600 hover:bg-surface-50 flex items-center gap-2 transition-colors"
-                >
-                  <Paperclip className="w-3.5 h-3.5" />
-                  {t('chat.input.uploadFileOrImage')}
-                </button>
-                <button
-                  onClick={() => { setShowSkillPicker(!showSkillPicker); setShowPlusMenu(false) }}
-                  className="w-full text-left px-3 py-2 text-[12px] text-surface-600 hover:bg-surface-50 flex items-center gap-2 transition-colors"
-                >
-                  <Zap className="w-3.5 h-3.5" />
-                  {t('chat.input.addSkill')}
-                </button>
-              </div>
-            )}
-          </div>
 
           {/* 内联语音控件 —— 空闲显示麦克风，通话中原地变紧凑控件（替代顶部长条） */}
           <VoiceCallInline
@@ -735,28 +584,6 @@ export function InputBar({
             onStart={onStartVoice}
             onHangup={() => onHangupVoice?.()}
           />
-
-          {/* 技能选择弹出层 */}
-          {showSkillPicker && (
-            <div ref={skillPickerRef} className="absolute bottom-full left-12 mb-1 w-64 op-menu py-1 z-50 max-h-48 overflow-y-auto animate-fade-in">
-              <div className="px-3 py-1 text-[10px] text-surface-400">{t('chat.input.skillPickerHint')}</div>
-              {allSkills.length === 0 && (
-                <div className="px-3 py-2 text-[12px] text-surface-400">
-                  {activeWorkspaceId ? t('chat.input.noWorkspaceSkills') : t('chat.input.noSkills')}
-                </div>
-              )}
-              {allSkills.map(skill => (
-                <button
-                  key={skill.name}
-                  onClick={() => { mentions.insertSkill(skill.name); setShowSkillPicker(false) }}
-                  className="w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-2 transition-colors text-surface-600 hover:bg-surface-50"
-                >
-                  <Zap className="w-3 h-3 shrink-0" />
-                  <span className="truncate">{skill.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
 
           {/* 右侧：思考开关 + 模型 + 发送/停止 */}
           <div className="flex-1" />

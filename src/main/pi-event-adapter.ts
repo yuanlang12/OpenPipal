@@ -261,10 +261,12 @@ export function createTranscriptCollector(): {
   feed: (event: { type: string; content?: unknown; [k: string]: unknown }) => void
   finish: () => string
   finishTranscript: () => TranscriptEntry[]
+  finishRuntimeContext: () => { text: string; timestamp: number } | undefined
 } {
   const segments: string[] = []
   const entries: TranscriptEntry[] = []
   let currentSegment = ''
+  let runtimeContext: { text: string; timestamp: number } | undefined
   const commit = (): void => {
     const s = currentSegment.trim()
     currentSegment = ''
@@ -279,6 +281,13 @@ export function createTranscriptCollector(): {
     feed(event) {
       if (event.type === 'text' && typeof event.content === 'string') currentSegment += event.content
       else if (event.type === 'text_flush') commit()
+      // 本轮 RC 快照，主进程在 turn 开跑时广播一次。桌面由渲染层落盘，服务端两条路（ACP /
+      // 定时任务）没有渲染层，只能在这里接住——不落盘则下轮无快照可回放，前缀缓存从这条消息
+      // 断掉（pi-message-conversion.buildRuntimeContextMessage 要求回放与实发逐字节一致）。
+      // 时间戳取事件到达时刻而非落盘时刻：它同时是 UI 的“agent 开跑”锚点（groupTurns.ts）。
+      else if (event.type === 'runtime_context' && typeof event.text === 'string' && event.text) {
+        runtimeContext = { text: event.text, timestamp: Date.now() }
+      }
       else if (event.type === 'tool_end') {
         commit() // 兜底：适配器没来得及 flush 时也不让正文错位到工具之后
         const searchResults = typeof event.searchResults === 'string' ? event.searchResults : undefined
@@ -306,6 +315,9 @@ export function createTranscriptCollector(): {
     finishTranscript() {
       commit()
       return entries
+    },
+    finishRuntimeContext() {
+      return runtimeContext
     }
   }
 }

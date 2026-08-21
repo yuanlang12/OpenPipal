@@ -25,6 +25,28 @@ const state = vi.hoisted(() => {
       const conversation = conversations.get(id)
       if (!conversation || (conversation.messages?.length ?? 0) > 0) return false
       conversation.role = role
+      // 与真实 conversation-store 一致：写成功即广播，否则这条链路在测试里是断的
+      const { publishConversationChange } = await import('../../src/main/conversation-events')
+      publishConversationChange(id, 'persona')
+      return true
+    }),
+    updateConversationWorkspace: vi.fn(async (id: string, workspaceId: string | undefined) => {
+      const conversation = conversations.get(id)
+      if (!conversation || (conversation.messages?.length ?? 0) > 0) return false
+      if (workspaceId) conversation.workspaceId = workspaceId
+      else delete conversation.workspaceId
+      // 与真实 conversation-store 一致：不广播的话，"切自定义 Agent 会即时推送"
+      // 这条链路删掉生产代码里那行也没有测试会红
+      const { publishConversationChange } = await import('../../src/main/conversation-events')
+      publishConversationChange(id, 'persona')
+      return true
+    }),
+    mutateConversationConfig: vi.fn(async (id: string, mutate: (config: any) => any) => {
+      const conversation = conversations.get(id)
+      if (!conversation) return false
+      const next = mutate({ ...(conversation.config || {}) })
+      if (!next) return false
+      conversation.config = next
       return true
     }),
     updateConversationConfig: vi.fn(async (id: string, config: any) => {
@@ -54,7 +76,9 @@ vi.mock('../../src/main/conversation-store', () => ({
   deleteConversation: vi.fn(async () => true),
   updateConversationTitle: vi.fn(async () => true),
   updateConversationRole: state.updateConversationRole,
+  updateConversationWorkspace: state.updateConversationWorkspace,
   updateConversationConfig: state.updateConversationConfig,
+  mutateConversationConfig: state.mutateConversationConfig,
   replaceMessages: vi.fn(async () => true),
   shouldReplayStoredMessage: vi.fn(() => true)
 }))
@@ -97,7 +121,13 @@ vi.mock('../../src/main/role-manager', () => ({
   setAppFollowingEnabled: state.setAppFollowingEnabled,
   setDisabledApps: state.setDisabledApps
 }))
-vi.mock('../../src/main/agent-workspace-store', () => ({ listWorkspaces: vi.fn(() => []) }))
+vi.mock('../../src/main/skill-manager', () => ({
+  listSkillsMeta: vi.fn(() => [{ name: 'docx-render', description: '生成 Word', enabled: true }])
+}))
+vi.mock('../../src/main/agent-workspace-store', () => ({
+  listWorkspaces: vi.fn(() => [{ id: 'agent-1', name: '我的法务助手' }]),
+  getWorkspace: vi.fn((id: string) => (id === 'agent-1' ? { id, agentMd: '', memories: [] } : null))
+}))
 vi.mock('../../src/main/app-detector', () => ({ BROWSER_APPS: new Set<string>() }))
 vi.mock('../../src/main/extension-page', () => ({
   getExtensionPageHtml: vi.fn((locale: string) => `extension:${locale}`)
@@ -128,6 +158,11 @@ import {
   startHttpServer,
   writePermissionToStream
 } from '../../src/main/http-server'
+import {
+  publishConversationChange,
+  resetConversationChangeListeners,
+  subscribeConversationChanges
+} from '../../src/main/conversation-events'
 import {
   acquireConversationExecution,
   getConversationExecution
@@ -228,6 +263,8 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  // 订阅是进程级的：不在每个用例后清干净，SSE 用例的订阅者会活到后面的用例里
+  resetConversationChangeListeners()
   setInlinePermissionResolver(null)
   await closeServer()
   vi.restoreAllMocks()
@@ -425,6 +462,150 @@ describe('/chat/stream HTTP and ACP safety', () => {
     expect(state.conversations.get(conversationId)?.role).toBe('design')
   })
 
+  it('switches a conversation between a builtin role and a saved agent, and locks both after the first message', async () => {
+    const conversationId = 'persona-switch'
+    state.conversations.set(conversationId, { id: conversationId, role: 'learner', config: {}, messages: [] })
+    const base = await listen()
+    const patch = (body: Record<string, unknown>): Promise<Response> => fetch(
+      `${base}/api/conversations/${conversationId}`,
+      { method: 'PATCH', headers: chatHeaders('acp'), body: JSON.stringify(body) }
+    )
+
+    expect((await patch({ workspaceId: 'agent-1' })).status).toBe(200)
+    expect(state.conversations.get(conversationId).workspaceId).toBe('agent-1')
+
+    // 未知 Agent 在落盘前就被挡掉
+    expect((await patch({ workspaceId: 'agent-nope' })).status).toBe(400)
+    expect(state.conversations.get(conversationId).workspaceId).toBe('agent-1')
+
+    // 切回内置角色必须同时清空绑定，否则 workspace 的 systemPrompt 仍然压过角色
+    expect((await patch({ role: 'design', workspaceId: null })).status).toBe(200)
+    expect(state.conversations.get(conversationId).workspaceId).toBeUndefined()
+    expect(state.conversations.get(conversationId).role).toBe('design')
+
+    // 开聊之后人格锁定,与 role 同一把锁
+    state.conversations.get(conversationId).messages = [{ role: 'user', content: 'hi' }]
+    const locked = await patch({ workspaceId: 'agent-1' })
+    expect(locked.status).toBe(409)
+    expect((await locked.json() as { error: string }).error).toContain('locked after the first message')
+    expect(state.conversations.get(conversationId).workspaceId).toBeUndefined()
+  })
+
+  it('pushes conversation changes to a native subscriber and refuses the browser principal', async () => {
+    const conversationId = 'push-channel'
+    state.conversations.set(conversationId, { id: conversationId, role: 'learner', config: {}, messages: [] })
+    const base = await listen()
+
+    // 浏览器主体拿不到这条通道（它有自己的 SSE，不该再多一条全局广播）
+    expect((await fetch(`${base}/api/acp/events`, { headers: chatHeaders('extension') })).status).toBe(403)
+
+    const abort = new AbortController()
+    const response = await fetch(`${base}/api/acp/events`, {
+      headers: { 'X-OpenPipal-ACP-Token': state.nativeToken },
+      signal: abort.signal
+    })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffered = ''
+    const readUntil = async (needle: string): Promise<void> => {
+      while (!buffered.includes(needle)) {
+        const { value, done } = await reader.read()
+        if (done) throw new Error(`stream ended before ${needle}`)
+        buffered += decoder.decode(value, { stream: true })
+      }
+    }
+
+    // 先给 ready：适配器据此确认通道真的建起来了
+    await readUntil('"type":"ready"')
+
+    await fetch(`${base}/api/conversations/${conversationId}`, {
+      method: 'PATCH',
+      headers: chatHeaders('acp'),
+      body: JSON.stringify({ role: 'design' })
+    })
+    await readUntil('"type":"conversation_changed"')
+
+    // 切自定义 Agent 走的是另一个写函数（updateConversationWorkspace），同样要推——
+    // 只测 role 的话，把生产代码里那行 publish 删掉也没有测试会红
+    await fetch(`${base}/api/conversations/${conversationId}`, {
+      method: 'PATCH',
+      headers: chatHeaders('acp'),
+      body: JSON.stringify({ workspaceId: 'agent-1' })
+    })
+    const parsePushes = (): Array<Record<string, unknown>> => buffered
+      .split('\n')
+      .filter(line => line.startsWith('data: '))
+      .map(line => JSON.parse(line.slice(6)))
+      .filter(event => event.type === 'conversation_changed')
+    while (parsePushes().length < 2) {
+      const { value, done } = await reader.read()
+      if (done) throw new Error('stream ended before the agent-switch push')
+      buffered += decoder.decode(value, { stream: true })
+    }
+    expect(parsePushes()).toEqual([
+      { type: 'conversation_changed', conversationId, kind: 'persona' },
+      { type: 'conversation_changed', conversationId, kind: 'persona' }
+    ])
+
+    abort.abort()
+    await reader.cancel().catch(() => undefined)
+  })
+
+  it('never lets a broken subscriber escape into the conversation write path', () => {
+    const healthy = vi.fn()
+    subscribeConversationChanges(() => { throw new Error('subscriber exploded') })
+    subscribeConversationChanges(healthy)
+
+    // 发布点在 conversation-store 的写函数里：这里抛出去就会把落盘一起带走
+    expect(() => publishConversationChange('conv-1', 'persona')).not.toThrow()
+    expect(healthy).toHaveBeenCalledWith({ conversationId: 'conv-1', kind: 'persona' })
+  })
+
+  it('refuses a workspaceId that would escape the agents directory before listing skills', async () => {
+    const base = await listen()
+    const ask = (query: string): Promise<Response> => fetch(
+      `${base}/api/skills${query}`,
+      { headers: chatHeaders('acp') }
+    )
+
+    // workspaceId 会被拼进 dataPath('agents', id, 'skills')——不校验就能读到数据目录外面
+    expect((await ask('?workspaceId=..%2F..%2F..%2F..%2Ftmp')).status).toBe(400)
+    expect((await ask('?workspaceId=agent-nope')).status).toBe(400)
+
+    const known = await ask('?workspaceId=agent-1')
+    expect(known.status).toBe(200)
+    expect((await known.json() as { skills: unknown[] }).skills).toHaveLength(1)
+  })
+
+  it('validates every field of a conversation PATCH before writing any of them', async () => {
+    const conversationId = 'patch-atomic'
+    state.conversations.set(conversationId, { id: conversationId, role: 'learner', config: {}, messages: [] })
+    const base = await listen()
+
+    // 半写：role 先落盘、再发现 workspaceId 非法 → 用户看到 400 但人格已经变了
+    const response = await fetch(`${base}/api/conversations/${conversationId}`, {
+      method: 'PATCH',
+      headers: chatHeaders('acp'),
+      body: JSON.stringify({ role: 'design', workspaceId: 'agent-nope' })
+    })
+    expect(response.status).toBe(400)
+    expect(state.conversations.get(conversationId).role).toBe('learner')
+    expect(state.conversations.get(conversationId).workspaceId).toBeUndefined()
+
+    // 两个字段都合法时照常一起生效
+    const ok = await fetch(`${base}/api/conversations/${conversationId}`, {
+      method: 'PATCH',
+      headers: chatHeaders('acp'),
+      body: JSON.stringify({ role: 'design', workspaceId: 'agent-1' })
+    })
+    expect(ok.status).toBe(200)
+    expect(state.conversations.get(conversationId).role).toBe('design')
+    expect(state.conversations.get(conversationId).workspaceId).toBe('agent-1')
+  })
+
   it('rejects an arbitrary non-existent conversation id before Runtime or durable effects', async () => {
     state.autoMemoryEnabled = true
     const base = await listen()
@@ -509,7 +690,7 @@ describe('/chat/stream HTTP and ACP safety', () => {
     expect(resolver).toHaveBeenCalledWith('perm-1', true, true, 'exec-1', 'conv-1')
   })
 
-  it('routes permission SSE only to extension-owned streams, never ACP streams', async () => {
+  it('routes permission SSE to the owning HTTP stream (extension or ACP) and never to a mismatched owner', async () => {
     const extensionConversation = 'extension-permission'
     const acpConversation = 'acp-permission'
     state.conversations.set(extensionConversation, { id: extensionConversation, config: {}, messages: [] })
@@ -546,8 +727,54 @@ describe('/chat/stream HTTP and ACP safety', () => {
 
     expect(extensionEvents.map(event => event.type)).toEqual(['permission', 'text', 'done'])
     expect(extensionEvents.find(event => event.type === 'text')?.content).toBe('false/true')
-    expect(acpEvents.map(event => event.type)).toEqual(['text', 'done'])
-    expect(acpEvents[0]?.content).toBe('false/false')
+    // ACP 现在也在自己的流上确认（适配器反向调 session/request_permission），
+    // 但 owner 不匹配的那次仍然必须被挡掉。
+    expect(acpEvents.map(event => event.type)).toEqual(['permission', 'text', 'done'])
+    expect(acpEvents.find(event => event.type === 'text')?.content).toBe('false/true')
+  })
+
+  it('accepts a native permission response only from its own live ACP stream', async () => {
+    const conversationId = 'acp-permission-response'
+    state.conversations.set(conversationId, { id: conversationId, config: {}, messages: [] })
+    const resolver = vi.fn(() => true)
+    setInlinePermissionResolver(resolver)
+    const base = await listen()
+
+    const statuses: Record<string, number> = {}
+    let executionId = ''
+    state.agentChat.mockImplementation(() => (async function* (): AsyncGenerator<AgentEvent> {
+      executionId = getConversationExecution(conversationId)?.executionId || ''
+      const post = (body: Record<string, unknown>): Promise<number> => fetch(`${base}/api/permission`, {
+        method: 'POST',
+        headers: chatHeaders('acp'),
+        body: JSON.stringify(body)
+      }).then(response => response.status)
+      statuses.wrongExecution = await post({ requestId: 'p1', approved: true, executionId: 'not-this-run', conversationId })
+      statuses.otherConversation = await post({ requestId: 'p1', approved: true, executionId, conversationId: 'someone-else' })
+      statuses.noExecution = await post({ requestId: 'p1', approved: true, conversationId })
+      statuses.own = await post({ requestId: 'p1', approved: true, sessionApprove: true, executionId, conversationId })
+      yield { type: 'text', content: 'ok' }
+    })())
+
+    const response = await fetch(`${base}/chat/stream`, {
+      method: 'POST',
+      headers: chatHeaders('acp'),
+      body: JSON.stringify({ source: 'acp', conversationId, messages: [{ role: 'user', content: '授权回传' }] })
+    })
+    await response.text()
+
+    expect(statuses).toEqual({ wrongExecution: 403, otherConversation: 403, noExecution: 403, own: 200 })
+    expect(resolver).toHaveBeenCalledOnce()
+    expect(resolver).toHaveBeenCalledWith('p1', true, true, executionId, conversationId)
+
+    // 流已经结束：同一条裁决不再被接受，native 令牌也不行
+    const afterStream = await fetch(`${base}/api/permission`, {
+      method: 'POST',
+      headers: chatHeaders('acp'),
+      body: JSON.stringify({ requestId: 'p1', approved: true, executionId, conversationId })
+    })
+    expect(afterStream.status).toBe(403)
+    expect(resolver).toHaveBeenCalledOnce()
   })
 
   it('rejects untrusted, desktop, and transport-mismatched HTTP chat sources before Runtime', async () => {
@@ -707,12 +934,13 @@ describe('/chat/stream HTTP and ACP safety', () => {
 
     expect(response.status).toBe(200)
     expect(events.map(event => event.type)).toEqual(['goal_update', 'text', 'done'])
-    expect(state.updateConversationConfig).toHaveBeenCalledWith(conversationId, {
+    // 落盘走加锁的读改写：并发的 /goal clear 等写入不会被整份快照盖掉，
+    // 而 config 里原有的字段也必须原样保留
+    expect(state.conversations.get(conversationId).config).toEqual({
       workingDir: '/tmp/work', projectName: 'OpenPipal', goal
     })
-    expect(state.conversations.get(conversationId).config.goal).toEqual(goal)
     expect(state.appendMessages).toHaveBeenCalledOnce()
-    expect(state.updateConversationConfig.mock.invocationCallOrder[0])
+    expect(state.mutateConversationConfig.mock.invocationCallOrder[0])
       .toBeLessThan(state.appendMessages.mock.invocationCallOrder[0])
   })
 

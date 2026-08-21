@@ -129,6 +129,32 @@ export function convertHistoryToPiMessages(
 }
 
 /**
+ * Byte-for-byte replica of pi-agent-core's private `Agent.normalizePromptInput(text,
+ * images)`, plus the trailing runtime-context message. `agent.prompt(array)` bypasses
+ * that normalization, so passing an array means reproducing it; this replica must not
+ * drift from it (pi-agent-core is pinned exactly, so drift is always a deliberate bump).
+ *
+ * Note the file now holds three pi user-message shapes, each serving a different seam:
+ * `buildPiUserMessage` (history replay, images before text), `buildRuntimeContextMessage`
+ * (the snapshot, text only), and this one (live prompt, text before images — matching
+ * the library). The ordering differences are inherited, not chosen here.
+ */
+export function buildRuntimeContextPrompt(
+  text: string,
+  images: unknown[] | undefined,
+  runtimeContext: string
+): AgentMessage[] {
+  return [
+    {
+      role: 'user',
+      content: [{ type: 'text', text }, ...(images ?? [])],
+      timestamp: Date.now()
+    } as AgentMessage,
+    buildRuntimeContextMessage(runtimeContext)
+  ]
+}
+
+/**
  * Volatile per-turn facts (time / front app / artifact inventory) as a standalone
  * trailing user message. Prompt caching matches byte prefixes: splicing these facts
  * into the last user message meant the replayed history diverged from the cached

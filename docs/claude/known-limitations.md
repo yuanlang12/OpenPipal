@@ -8,6 +8,7 @@
 - HTTP API streaming uses SSE via XHR (POST with text/event-stream response). XHR onload handles residual buffered data.
 - Extension `pasteToTarget` is a no-op (no desktop app context in browser).
 - Context7 is for popular library docs only, not arbitrary GitHub repos (use DeepWiki for that).
+- **render_artifact 自检会把宿主环境的无害告警当成交付阻断项**：console 过滤只有 `HEADLESS_NOISE_RE = /favicon|Slow network|preload/i`（`openpipal-product-tools.ts:536`），此外凡 `level==='warning'` 一律计入"渲染发现 N 个问题（修完再交）"。2026-07 生成稳定性调查实测：27 次报问题里 21 次（78%）只是 Electron 自带的 CSP 安全警告，模型为此反复 read 截图 → 复检 → 再 render，把静默期拖长成用户眼里的"卡死"。装机版中 Electron 默认不打印这类安全警告，所以主要伤 dev 模式。修法很便宜：把宿主环境安全警告并进噪音白名单。
 - Browser-extension surfaces have no server push for desktop-side locale changes. The side panel's `LocaleProvider` resyncs via `focus`/`visibilitychange` refetch (`getLocaleState`) only — a panel that stays focused won't switch language until it loses and regains focus. Deliberate for now: the browser surface is intentionally minimal, and the SSE channel in `http-server.ts` is scoped to chat streams only (no locale/settings push).
 - **QA follow isolation**: `OPENPIPAL_DISABLE_APP_TRACKING=1` is for isolated
   automation or desktop QA only. At process start it skips frontmost-app

@@ -138,6 +138,26 @@ export function getMessageKind(message: ChatMessage): ChatMessageKind {
 }
 
 /**
+ * 只有空白字符的 assistant 文本消息 —— 模型在调工具/换阶段前吐的那两个换行被 flush 成了一条消息。
+ * 它对用户和模型都是零信息,却在渲染层占一条 final 段:台面上是个空气泡带「复制」按钮,
+ * 更糟的是它把本轮过程切成两截,于是画出两条分割线(前一条还因为跨度不足 1 秒而没有文字)。
+ * 产生侧已经堵住(chatStore 的 flush 点都过 hasFlushableText),这里是历史会话的兜底。
+ */
+export function isBlankAssistantMessage(message: ChatMessage): boolean {
+  const kind = getMessageKind(message)
+  if (kind !== 'assistant' && kind !== 'incomplete') return false
+  if ((message.content || '').trim()) return false
+  // 有任何一种「正文之外的内容」就不算空:它们各自有自己的渲染分支。
+  // audioPath 是后补的(setVoiceMessageAudio 在音频落盘后回挂),漏了它会让一条只带 TTS 音频、
+  // 正文为空的消息被整条丢掉 —— 连带回听按钮一起消失,而它并不是模型吐的那两个换行。
+  return !message.thinkingContent &&
+    !message.screenshot && !message.screenshotRef &&
+    !message.images?.length && !message.imagePaths?.length &&
+    !message.fileAttachments?.length && !message.artifactRef &&
+    !message.audioPath && !message.visualizerHtml
+}
+
+/**
  * 检测 NO_REPLY 静默回复(同 main/scheduler.ts parseSilentReply 的格式)。
  * 匹配示例:`NO_REPLY: [cave] 学生未回应,保持沉默`
  * 用于把 AI 主动选择不打扰的回复从 chat UI 里过滤掉(不持久化、不渲染)。

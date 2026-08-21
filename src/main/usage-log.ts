@@ -10,7 +10,7 @@
  * 纪律：只观测不改行为；写失败一律吞掉（用量记录不值得影响一次真实对话）；
  * 单文件封顶滚一代，不做索引不做查询——分析交给 jq/脚本，此处只负责如实记账。
  */
-import { appendFile, stat, rename } from 'fs/promises'
+import { appendFile, readFile, stat, rename } from 'fs/promises'
 import { mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -139,14 +139,17 @@ export interface TodayModelUsage {
 
 /**
  * 今日（本地时区）按模型聚合的调用量——用量信息卡"今日用量"分区的数据源。
- * 只在卡片展开时读一次：两代日志各 8MB 上限，逐行扫在几十毫秒级，不进任何
- * 热路径。读失败按空处理：卡片少一栏比报错强。
+ * 只在卡片展开时读一次，不进任何热路径。日志是严格追加的，时间戳单调递增：
+ * 因此从文件末尾倒着扫，遇到第一条早于今日零点的记录即停——今日记录永远是
+ * 尾部的一小段，8MB 封顶的日志绝大部分行连 JSON.parse 都不必做。只有当前
+ * 一代整个文件都在今日之内时才需要继续翻上一代。读失败按空处理：卡片少一
+ * 栏比报错强。前提是 ts 单调——系统时钟向后跳（NTP 校正/改时区）会让这里少
+ * 算一段，对一张展示用的卡片是可接受的代价，不值得为它放弃早停。
  */
 export async function readTodayUsageByModel(): Promise<TodayModelUsage[]> {
-  const readFile = await import('fs/promises').then(m => m.readFile).catch(() => undefined)
-  if (!readFile) return []
   const dayStart = new Date()
   dayStart.setHours(0, 0, 0, 0)
+  const dayStartMs = dayStart.getTime()
   const byModel = new Map<string, TodayModelUsage>()
   for (const path of [USAGE_LOG_PATH, USAGE_LOG_PATH + '.1']) {
     let text: string
@@ -155,7 +158,10 @@ export async function readTodayUsageByModel(): Promise<TodayModelUsage[]> {
     } catch {
       continue
     }
-    for (const line of text.split('\n')) {
+    const lines = text.split('\n')
+    let reachedYesterday = false
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]
       if (!line.startsWith('{"ts"')) continue
       let record: any
       try {
@@ -163,9 +169,10 @@ export async function readTodayUsageByModel(): Promise<TodayModelUsage[]> {
       } catch {
         continue
       }
+      const ts = Date.parse(record?.ts || '')
+      if (!Number.isFinite(ts)) continue
+      if (ts < dayStartMs) { reachedYesterday = true; break }
       if (record?.kind !== 'call') continue
-      const ts = Date.parse(record.ts || '')
-      if (!Number.isFinite(ts) || ts < dayStart.getTime()) continue
       const entry = byModel.get(record.model) || {
         model: record.model, prompt: 0, output: 0, cacheRead: 0, calls: 0, cost: 0
       }
@@ -176,7 +183,8 @@ export async function readTodayUsageByModel(): Promise<TodayModelUsage[]> {
       entry.cost += record.cost || 0
       byModel.set(record.model, entry)
     }
+    if (reachedYesterday) break
   }
-  // Array.from 而不是展开：main 侧的 tsconfig target 低于 es2015，展开 Map 迭代器过不了 tsc
+  // Array.from 而不是展开：tsconfig target 低于 es2015，展开 Map 迭代器过不了 tsc
   return Array.from(byModel.values()).sort((a, b) => b.prompt - a.prompt)
 }
