@@ -23,12 +23,11 @@ Nothing is proxied through an OpenPipal server, because there isn't one.
 
 ## What's in this release
 
-This repository carries the **default OpenPipal Agent** only.
+This repository carries three built-in agents: the **default OpenPipal Agent**, the **Design Agent** and the **Coding Assistant**.
 
-Five further built-in agents (Learner, Teacher, Office, Design, Interpreter) depend on a
-design runtime we have not yet replaced with our own implementation, so they are not part
-of this open-source release. They return once that rewrite lands. Custom agents, skills,
-MCP servers, memory and the browser extension are all unaffected.
+Four further built-in agents (Learner, Teacher, Office, Interpreter) are not part of this
+open-source release. Custom agents, skills, MCP servers, memory and the browser extension are
+all unaffected.
 
 The published tree is cut from our working repository by
 [`scripts/make-open-source-cut.mjs`](scripts/make-open-source-cut.mjs), driven by
@@ -101,6 +100,29 @@ Anything that speaks the OpenAI-compatible protocol works. Presets included:
 - **Long-term memory** — per-agent, opt-in, stored as plain Markdown you can read and edit
 - **MCP** — connect any Model Context Protocol server; Context7 and DeepWiki ship as presets
 - **Browser side panel** — the same assistant, inside the browser
+- **Coding Assistant** — a second built-in agent that works inside your repository (below)
+
+### Coding Assistant
+
+Switch to **Coding Assistant** in the agent picker and it asks one question first: which
+repository are we working in? From there it behaves like a careful new hire rather than a
+know-it-all:
+
+- **Reads the project's own rules before touching code.** `AGENTS.md` (the open standard that
+  Codex, Cursor, Amp and Jules read too), `AGENTS.override.md` or `CLAUDE.md` in the working
+  directory goes straight into its context. A repository with none gets an `AGENTS.md` drafted
+  from commands it has actually run — shown to you before anything is written.
+- **Precise edits, then the project's own tests and build** — never a whole-file rewrite.
+- **You decide how much it may do, per conversation.** *Read only* looks and never changes
+  (reads code, searches, browses — no writing files, no running commands). *Ask when needed*
+  is the default and asks once before changing a file or running a command. *Allow all* stops
+  asking for edits and commands; deleting, resetting and force-pushing still ask once.
+- **Commands run inside a macOS sandbox** (Seatbelt, via `@anthropic-ai/sandbox-runtime`)
+  confined to the working directory, with credential files unreadable. Before it uses your git
+  credentials against a remote it asks once per project; inside the sandbox remotes are reached
+  over HTTPS.
+- **An error screenshot and a reference folder** can be attached up front — the stack trace
+  from your terminal, or a second repository it may read but not modify.
 
 ---
 
@@ -111,7 +133,8 @@ Anything that speaks the OpenAI-compatible protocol works. Presets included:
 ├── config.json     # model presets and app settings
 ├── memory/         # long-term memory, one folder per agent
 ├── outputs/        # files the model produced
-├── conversations/  # chat history
+├── sessions-v4/    # chat history, append-only JSONL
+├── conversations/  # attachments, plus history from older versions
 └── skills/         # your own skills
 ```
 
