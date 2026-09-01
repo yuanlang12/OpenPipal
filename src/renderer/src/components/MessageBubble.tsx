@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, memo } from 'react'
-import { RefreshCw, Shield, ShieldAlert, Check, X, FileText, FileCode, FileSpreadsheet, FileImage, ChevronDown, Bot, Brain } from 'lucide-react'
+import { RefreshCw, Shield, ShieldAlert, Check, X, FileText, FileCode, FileSpreadsheet, FileImage, ChevronDown, Bot, Brain, CircleAlert } from 'lucide-react'
 import { Markdown } from './shared/Markdown'
 import { ChatMessage, FileAttachmentData } from '../types'
 import { fmtSize } from '../utils/format'
@@ -299,6 +299,35 @@ function ThinkingCollapsible({ content }: { content: string }) {
   )
 }
 
+/**
+ * 应用重启后的耐久恢复状态属于 OpenPipal 产品层，不是模型回答。
+ * 独立成系统提示卡，刻意不提供复制/重新生成/保存 Agent 等回答操作。
+ */
+function RuntimeInterruptedNotice() {
+  const { t } = useTranslation()
+  return (
+    <div className="flex justify-start mb-msg animate-fade-in">
+      <div
+        className="max-w-msg w-full rounded-lg border border-amber-200/70 dark:border-amber-800/60 bg-amber-50/70 dark:bg-amber-950/20 px-3.5 py-3"
+        data-testid="runtime-interrupted-notice"
+        role="status"
+      >
+        <div className="flex items-start gap-2.5">
+          <CircleAlert className="w-4 h-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" strokeWidth={1.8} />
+          <div className="min-w-0">
+            <p className="text-chat-label font-medium text-amber-800 dark:text-amber-200">
+              {t('chat.message.runtimeInterruptedTitle')}
+            </p>
+            <p className="mt-1 text-chat-meta leading-relaxed text-amber-950/75 dark:text-amber-100/80">
+              {t('chat.message.runtimeInterruptedBody')}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenerate, onEditAndResend, onSaveAsAgent, isLastStreaming = false, inProcess = false }: MessageBubbleProps) {
   const { t, i18n } = useTranslation()
   const messageKind = getMessageKind(message)
@@ -314,6 +343,10 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
   // 用户看到的应该是 Agent 的回复（下一条 assistant 消息），就像收到了一条通知
   if (messageKind === 'task-trigger') {
     return null
+  }
+
+  if (message.messageSubtype === 'runtime-interrupted') {
+    return <RuntimeInterruptedNotice />
   }
 
   // Phase E:tool 消息不再 reserve avatar space(整体 timeline 化,无头像)

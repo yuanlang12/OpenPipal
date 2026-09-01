@@ -18,7 +18,11 @@ import {
 const OPENPIPAL_DIR = getDataRoot()
 const CONFIG_PATH = getOpenPipalConfigPath()
 
-export type ThinkingLevelChoice = 'low' | 'medium' | 'high'
+/**
+ * UI 提供的思考档位。'max' 只在 Pi 的档位表明说这个模型有 max 时才出现在菜单里
+ * （见 resolveThinkingLevels）——不确定就不给，免得画一个点了没用的档。
+ */
+export type ThinkingLevelChoice = 'low' | 'medium' | 'high' | 'max'
 
 /** Qwen thinking_budget 的三档 token 上限。档位是 OpenPipal 语义，线上发送的是整数预算。 */
 export interface ThinkingBudgets {
@@ -747,11 +751,40 @@ export function appendV1(baseUrl: string): string {
 export type ResolvedThinkingFormat = 'openai' | 'qwen' | 'deepseek' | 'zai'
 
 /**
+ * Pi 目录条目自己声明的思考方言。
+ *
+ * Pi 判方言只看 provider / baseUrl（`openai-completions.js` 的 detectCompat），**从不看模型名**。
+ * 同一个 glm-5.3：Z.AI 直连是 zai 方言，opencode go 中继（opencode.ai/zen/go/v1）上就是标准
+ * openai 方言——目录里 opencode-go/glm-5.3 的 compat 既没有 thinkingFormat 也没有 zaiToolStream。
+ * Pi 自己处理的别名方言（together / ant-ling / openrouter…）一律归到 'openai'：那几条 Pi 会在
+ * 自己的分支里拼字段，我们的适配器不该再插手。
+ */
+function piCompatThinkingFormat(model: Model<any>): ResolvedThinkingFormat {
+  const declared = (model as any).compat?.thinkingFormat
+  if (declared === 'zai' || declared === 'qwen' || declared === 'deepseek') return declared
+  if (declared) return 'openai'
+  const provider = (model as any).provider || ''
+  const baseUrl = (model as any).baseUrl || ''
+  if (provider === 'zai' || provider === 'zai-coding-cn'
+    || baseUrl.includes('api.z.ai') || baseUrl.includes('open.bigmodel.cn')) return 'zai'
+  if (provider === 'deepseek' || baseUrl.includes('deepseek.com')) return 'deepseek'
+  return 'openai'
+}
+
+/**
  * 解析 OpenAI Chat Completions 端点使用的思考参数方言。
- * 未显式配置时按模型族识别；最后回落 qwen 以保持历史自定义端点行为。
+ * 顺序：用户显式配置 > Pi 目录条目自己的声明 > 模型族识别 > 标准 OpenAI 方言。
  */
 export function resolveThinkingFormat(mc: ModelConfig): ResolvedThinkingFormat {
   if (mc.thinkingFormat && mc.thinkingFormat !== 'auto') return mc.thinkingFormat
+
+  // Pi 认领得下的条目：方言以 Pi 为准，不再看模型名。
+  // 2026-08-21 实证：glm-5.3 走 opencode go 订阅时 Pi 目录说它是标准 openai 方言 +
+  // reasoning_effort low/high/max，而下面的名字规则判成 zai，于是我们往中继上发 Z.AI 私有的
+  // thinking 对象和 tool_stream，真正的档位字段一个都没发——服务端按默认 max 想，一轮几分钟。
+  // 名字规则只留给 Pi 不认识的端点：那里本来就没有别的证据可用。
+  const claimed = piCatalogModelFor(mc)
+  if (claimed) return piCompatThinkingFormat(claimed)
 
   const model = (mc.model || '').trim()
   // OpenRouter 自己封装 reasoning 参数；即使 model id 是 z-ai/glm-* 也不能发 Z.AI 直连方言。
@@ -782,10 +815,40 @@ function usesOpenAICompletions(mc: ModelConfig): boolean {
   return mc.provider !== 'openai' && mc.provider !== 'anthropic'
 }
 
-/** GLM 5.2 判定的唯一维护处（payload 适配 / zai 模板 / 档位能力推导三处共用，分写会漂移） */
-export function isGlm52Model(model: string | undefined): boolean {
-  return /^(?:z-ai\/|zai\/)?glm-5\.2(?:$|[-_.])/i.test(model || '')
+/** GLM 版本号解析的唯一维护处（下面两个判定共用；`z-ai/`、`zai/` 前缀与后缀变体都要认） */
+function glmVersion(model: string | undefined): { major: number; minor: number } | null {
+  const m = /^(?:z-ai\/|zai\/)?glm-(\d+)(?:\.(\d+))?(?:$|[-_.])/i.exec((model || '').trim())
+  if (!m) return null
+  return { major: Number(m[1]), minor: Number(m[2] ?? 0) }
 }
+
+/**
+ * zai 方言里这个 GLM 吃不吃 reasoning_effort（payload 适配 / zai 模板 / 档位能力推导三处共用）。
+ * 5.2 起支持：2026-07-28 网关实测 low/medium/high 全部 200；5.3 更是只剩档位这一个旋钮
+ * （官方文档 docs.z.ai/guides/llm/glm-5.3）。写死 "5.2" 会把之后每个新版本都关在门外——
+ * 2026-08-21 的 glm-5.3 就是这么丢掉档位的。
+ */
+export function supportsZaiReasoningEffort(model: string | undefined): boolean {
+  const v = glmVersion(model)
+  return !!v && (v.major > 5 || (v.major === 5 && v.minor >= 2))
+}
+
+/**
+ * GLM-5.3 起思考**关不掉**。官方文档（docs.z.ai/guides/llm/glm-5.3）写明 "Disabling reasoning is
+ * no longer supported"：深浅只由 reasoning_effort 的 low / high / max 决定、默认 max，从 5.2 迁移
+ * 必须把 thinking.type 的 disabled 改成 enabled 并带上 reasoning_effort，否则请求直接失败。
+ * 这一位用来给合成条目补出"off 不可用"的档位表，让"关思考"落到最低档而不是发一个会被拒的字段。
+ * 【日落条件】Pi 的 zai/glm-5.3 条目补上 thinkingLevelMap 后，这里可以只留 supportsZaiReasoningEffort。
+ */
+export function zaiThinkingAlwaysOn(model: string | undefined): boolean {
+  const v = glmVersion(model)
+  return !!v && (v.major > 5 || (v.major === 5 && v.minor >= 3))
+}
+
+/** 思考关不掉的 GLM（5.3+）在 Pi 档位表里的机器可读表达：off 为 null，深浅只有 low/high/max。 */
+const GLM_ALWAYS_THINKING_LEVEL_MAP = {
+  off: null, minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: 'max'
+} as const
 
 /**
  * 该模型是否支持思考"档位"（low/medium/high），供输入框决定显示档位菜单还是纯开关。
@@ -815,7 +878,7 @@ export function supportsEffortDial(mc: ModelConfig): boolean {
   if (!usesOpenAICompletions(mc)) return false
   const format = resolveThinkingFormat(mc)
   if (format === 'openai' || format === 'deepseek') return true
-  if (format === 'zai') return isGlm52Model(mc.model)
+  if (format === 'zai') return supportsZaiReasoningEffort(mc.model)
   if (format === 'qwen') return resolveQwenThinkingControl(mc) !== 'toggle'
   return false
 }
@@ -829,7 +892,85 @@ export function supportsEffortDial(mc: ModelConfig): boolean {
  */
 function piDrivesEffortField(model: Model<any>): boolean {
   if ((model as any).api !== 'openai-completions') return true          // anthropic / responses / google：pi 自己映射档位
-  return !!(model as any).compat?.supportsReasoningEffort
+  const declared = (model as any).compat?.supportsReasoningEffort
+  if (declared !== undefined) return !!declared
+  // 目录条目没写这一位时，Pi 运行时会用 detectCompat 兜底（openai-completions.js:1253 的
+  // `model.compat.x ?? detected.x`）——所以"字段缺席"不等于"不支持"。读原始字段会把这类条目
+  // 误判成没有档位：2026-08-21 实证，opencode-go/glm-5.3 的 JSON 就没写这一位，
+  // 于是档位菜单一直不出现，而 Pi 其实一直准备好发 reasoning_effort。
+  return piDetectsReasoningEffort(model)
+}
+
+/**
+ * Pi detectCompat 里 supportsReasoningEffort 的否定名单（openai-completions.js:1204），按
+ * provider / baseUrl 逐条对齐。只在目录条目自己没写这一位时才问它。
+ */
+function piDetectsReasoningEffort(model: Model<any>): boolean {
+  const provider = (model as any).provider || ''
+  const baseUrl = (model as any).baseUrl || ''
+  const excluded = provider === 'xai' || baseUrl.includes('api.x.ai')
+    || provider === 'zai' || provider === 'zai-coding-cn'
+    || baseUrl.includes('api.z.ai') || baseUrl.includes('open.bigmodel.cn')
+    || provider === 'moonshotai' || provider === 'moonshotai-cn' || baseUrl.includes('api.moonshot.')
+    || provider === 'together' || baseUrl.includes('api.together.ai') || baseUrl.includes('api.together.xyz')
+    || provider === 'cloudflare-ai-gateway' || baseUrl.includes('gateway.ai.cloudflare.com')
+    || provider === 'nvidia' || baseUrl.includes('integrate.api.nvidia.com')
+    || provider === 'ant-ling' || baseUrl.includes('api.ant-ling.com')
+  return !excluded
+}
+
+/**
+ * "关思考"这个状态在这个模型上到底怎么表达。
+ *
+ * Pi 的档位表里 `off === null` 就是"思考关不掉"的机器可读表达（GLM-5.3、grok-4 系都是这样）。
+ * 这时候把 UI 的关原样发出去有两种坏结果：zai 方言会发 thinking:{type:'disabled'}，被服务端
+ * 直接拒；openai 方言则是一个字段都不发，服务端按**默认档**（GLM-5.3 是 max）猛想一通——
+ * 用户明明想省，结果拿到最贵最慢的那一档。所以关不掉时落到最低可用档，由 Pi 的 clamp 来选。
+ */
+/** UI 菜单里档位的固定顺序；实际给哪几档由 resolveThinkingLevels 按 Pi 的档位表筛。 */
+const UI_THINKING_LEVELS: readonly ThinkingLevelChoice[] = ['low', 'medium', 'high', 'max']
+
+/**
+ * 这个模型真正有哪几档，供输入框照着画菜单（renderer 不复刻判定）。
+ *
+ * 口径就是 Pi 的 `getSupportedThinkingLevels`：档位表里为 null 的档被滤掉，而 `max`/`xhigh`
+ * 还要求表里**写过**才算数——没有档位表的模型（绝大多数第三方端点）因此拿到 low/medium/high
+ * 三档，与改动前逐字一致。写过 max 的（opencode go 上的 GLM-5.3）才多出"最高"这一档。
+ * 中间档的去重也顺带解决了：GLM-5.3 的表里 medium 是 null，菜单直接不画"中"，
+ * 而不是画一个点了等于"高"的假选项。
+ */
+export function resolveThinkingLevels(mc: ModelConfig): ThinkingLevelChoice[] {
+  if (!mc.supportsThinking) return []
+  try {
+    const supported = new Set(getSupportedThinkingLevels(buildModelFromConfig(mc)) as string[])
+    const levels = UI_THINKING_LEVELS.filter((level) => supported.has(level))
+    return levels.length > 0 ? levels : ['low', 'medium', 'high']
+  } catch {
+    return ['low', 'medium', 'high']
+  }
+}
+
+/**
+ * 这个模型的思考能不能关掉，供输入框决定要不要画"关闭思考"那一行。
+ *
+ * 关不掉的模型（GLM-5.3、grok-4 系）上，那一行是个假开关：点了不生效，还可能让请求被服务端
+ * 直接拒。与 resolveThinkingOffLevel 同源——那边负责发请求时落到最低档，这边负责界面上别画出来。
+ */
+export function thinkingCannotBeDisabled(mc: ModelConfig): boolean {
+  if (!mc.supportsThinking) return false
+  try {
+    return resolveThinkingOffLevel(buildModelFromConfig(mc)) !== 'off'
+  } catch {
+    return false   // 构造不出模型对象就当没有这个约束，不替用户做决定
+  }
+}
+
+export function resolveThinkingOffLevel(model: Model<any>): 'off' | ThinkingLevelChoice {
+  const clamped = clampThinkingLevel(model, 'off')
+  if (clamped === 'off') return 'off'
+  if (clamped === 'minimal') return 'low'                      // UI 没有 minimal，就近取最轻的那档
+  if (clamped === 'xhigh') return 'high'                       // 同理：xhigh 由 Pi 的 clamp 从 high 走到
+  return clamped as ThinkingLevelChoice
 }
 
 function validThinkingBudgets(value: unknown): value is ThinkingBudgets {
@@ -922,7 +1063,9 @@ export function adaptModelRequestPayload(
     if (source.enable_thinking === true) {
       const budgets = resolveQwenThinkingBudgets(mc)
       if (budgets && !Number.isInteger(source.thinking_budget)) {
-        const thinkingBudget = budgets[opts?.reasoningEffort ?? 'low']
+        // 预算表只有 low/medium/high 三档；'max' 是 Pi 档位表带来的第四档，取最高的那份预算
+        const choice = opts?.reasoningEffort ?? 'low'
+        const thinkingBudget = budgets[choice === 'max' ? 'high' : choice]
         next.thinking_budget = thinkingBudget
         ensureQwenBudgetOutputHeadroom(next, thinkingBudget)
         return next
@@ -946,9 +1089,10 @@ export function adaptModelRequestPayload(
       ? { type: 'enabled', clear_thinking: false }
       : { type: 'disabled' }
 
-    // GLM-5.2 开思考时必须带 reasoning_effort（2026-07-28 网关实测：缺省不发=不思考），
-    // 档位优先级：pi 已生成的字段 > 用户所选档位（opts）> 'low'（辅助路径默认轻量）。
-    if (enabled && isGlm52Model(mc.model)) {
+    // GLM-5.2+ 开思考时必须带 reasoning_effort（2026-07-28 网关实测：缺省不发=不思考；
+    // 5.3 起缺省则是按官方默认的 max 猛想）。档位优先级：pi 已生成的字段 > 用户所选档位（opts）
+    // > 'low'（辅助路径默认轻量）。
+    if (enabled && supportsZaiReasoningEffort(mc.model)) {
       next.reasoning_effort = typeof source.reasoning_effort === 'string'
         ? source.reasoning_effort
         : (opts?.reasoningEffort ?? 'low')
@@ -1154,7 +1298,7 @@ export function clearModelConfig(): void {
 // --- Pi 模型配置 ---
 
 import type { Model, Context, ThinkingLevel } from '@earendil-works/pi-ai/compat'
-import { getModel as piGetModel, getModels as piGetModels, getProviders as piGetProviders, getSupportedThinkingLevels, completeSimple, extractDiagnosticError } from '@earendil-works/pi-ai/compat'
+import { getModel as piGetModel, getModels as piGetModels, getProviders as piGetProviders, getSupportedThinkingLevels, clampThinkingLevel, completeSimple, extractDiagnosticError } from '@earendil-works/pi-ai/compat'
 import { builtinProviders } from '@earendil-works/pi-ai/providers/all'
 import { Type } from 'typebox'
 import { getDataRoot } from './data-root'
@@ -1260,7 +1404,11 @@ function createZaiCompatModel(mc: ModelConfig): Model<any> {
     throw new Error('[Config] Pi 内置 zai 模型表为空，无法构造 GLM 端点')
   }
 
-  const isGlm52 = isGlm52Model(mc.model)
+  const hasEffortDial = supportsZaiReasoningEffort(mc.model)
+  // 档位表：先借 Pi 目录里同名模型的（唯一可信来源），借不到再看"这一代思考关不关得掉"。
+  // 没有表 = Pi 认为 off 可用，而 5.3 起关思考本身就是非法状态，会被服务端直接拒。
+  const levelMap = borrowThinkingLevelMap(mc.model)
+    || (zaiThinkingAlwaysOn(mc.model) ? { ...GLM_ALWAYS_THINKING_LEVEL_MAP } : undefined)
   return {
     ...template,
     id: mc.model,
@@ -1269,12 +1417,13 @@ function createZaiCompatModel(mc: ModelConfig): Model<any> {
     input: mc.supportsImages === undefined
       ? template.input
       : (mc.supportsImages ? ['text', 'image'] : ['text']),
-    contextWindow: mc.contextWindow || (isGlm52 ? 1_000_000 : template.contextWindow),
+    contextWindow: mc.contextWindow || (hasEffortDial ? 1_000_000 : template.contextWindow),
+    ...(levelMap ? { thinkingLevelMap: levelMap } : {}),
     compat: {
       ...(template as any).compat,
       supportsStore: false,
       supportsDeveloperRole: false,
-      supportsReasoningEffort: isGlm52,
+      supportsReasoningEffort: hasEffortDial,
       thinkingFormat: 'zai',
       zaiToolStream: true,
     }
@@ -1293,7 +1442,7 @@ function createZaiCompatModel(mc: ModelConfig): Model<any> {
  * 这种，多半是某家把档位降级了）就不借——认不准就不认。
  *
  * 出处：2026-08-15 grok 事故。硬编码一张从错误话术猜来的表，跟 Pi 的生成数据是矛盾的。
- * 借表之后 grok-4.5 拿到的是 off:null（不能关思考）+ low/medium/high，四个 provider 完全一致。
+ * 当前 grok-4.6 拿到的是 off:null（不能关思考）+ low/medium/high/xhigh，四个 provider 完全一致。
  */
 let piLevelMapIndex: Map<string, Record<string, unknown> | null> | null = null
 
@@ -1529,7 +1678,7 @@ function getPiEndpointIndex(): Map<string, string> {
  * 自定义端点的「双证据」认领：baseUrl 与 Pi 某个 provider 的官方地址完全一致，**且**该
  * provider 目录里确有用户填的这个 model id。两条都对上才认——只对上地址不够（同址可能挂着
  * 别人的模型），只对上模型名更不够（模型名满天飞）。认下来的收益是拿到 Pi 的真条目：
- * 协议、上下文窗口、能力位、思考档位表全都不用猜（grok-4.5 的 thinkingLevelMap.off=null
+ * 协议、上下文窗口、能力位、思考档位表全都不用猜（grok-4.6 的 thinkingLevelMap.off=null
  * 就是"这个模型不能关思考"的机器可读表达，猜是猜不出来的）。
  *
  * 用户显式声明过的字段仍然覆盖 Pi——他面对的是自己的网关，是最后的证据源。
@@ -1547,12 +1696,31 @@ function resolvePiCatalogModelForEndpoint(mc: ModelConfig): Model<any> | undefin
     return undefined
   }
   if (!model) return undefined
-  return {
+  return patchStaleGlmThinkingLevels({
     ...model,
     ...(mc.supportsThinking !== undefined ? { reasoning: mc.supportsThinking } : {}),
     ...(mc.supportsImages === false ? { input: ['text'] } : {}),
     ...(mc.contextWindow ? { contextWindow: mc.contextWindow } : {})
-  }
+  })
+}
+
+/**
+ * Pi 目录对 GLM-5.3 的思考数据还没跟上：zai 直连那条 `thinkingLevelMap` 是 null、
+ * `supportsReasoningEffort` 是 false。照它发的后果是两头都错——用户关思考时发出
+ * `thinking:{type:'disabled'}` 被服务端直接拒；开着思考又一个档位字段都不发，服务端按官方
+ * 默认的 max 猛想。官方文档已经白纸黑字（见 zaiThinkingAlwaysOn），这里给条目补上机器可读的
+ * 档位表。只补 zai 方言下的 5.3+，且只在 Pi 自己没写档位表时补（Pi 写了就以 Pi 为准）。
+ * 【日落条件】Pi 的 zai/glm-5.3 条目补齐 thinkingLevelMap 后整个函数删掉。
+ */
+function patchStaleGlmThinkingLevels(model: Model<any>): Model<any> {
+  if (!zaiThinkingAlwaysOn((model as any).id)) return model
+  if ((model as any).thinkingLevelMap) return model
+  if (piCompatThinkingFormat(model) !== 'zai') return model
+  return {
+    ...model,
+    thinkingLevelMap: { ...GLM_ALWAYS_THINKING_LEVEL_MAP },
+    compat: { ...(model as any).compat, supportsReasoningEffort: true }
+  } as Model<any>
 }
 
 export function buildModelFromConfig(mc: ModelConfig): Model<any> {
@@ -1582,7 +1750,7 @@ export function buildModelFromConfig(mc: ModelConfig): Model<any> {
     }
     if (model) {
       console.log(`[Config] Pi 模型已映射: ${piProvider}/${mc.model}`)
-      return model
+      return patchStaleGlmThinkingLevels(model)
     }
     console.warn(`[Config] Pi 内置模型表没有 ${piProvider}/${mc.model}`)
     const models = piGetModels(piProvider as any)
@@ -1645,7 +1813,8 @@ function piCatalogModelFor(mc: ModelConfig): Model<any> | undefined {
   const piProvider = resolvePiProvider(mc.provider)
   if (piProvider) {
     try {
-      return piGetModel(piProvider as any, (mc.model || '').trim() as any) || undefined
+      const model = piGetModel(piProvider as any, (mc.model || '').trim() as any)
+      return model ? patchStaleGlmThinkingLevels(model) : undefined
     } catch {
       return undefined
     }
@@ -1938,7 +2107,7 @@ export function updateModelProvider(
  * 获取所有可用模型。
  * 如果有未存为预设的 modelConfig，自动补录为真实预设。
  */
-export function getAvailableModels(): Array<{ id: string; name: string; model: string; active: boolean; supportsThinking: boolean; supportsEffortDial: boolean; providerId?: string; providerName: string; builtin: boolean }> {
+export function getAvailableModels(): Array<{ id: string; name: string; model: string; active: boolean; supportsThinking: boolean; supportsEffortDial: boolean; thinkingAlwaysOn: boolean; thinkingLevels: ThinkingLevelChoice[]; providerId?: string; providerName: string; builtin: boolean }> {
   const config = loadConfig()
   if (!config.modelPresets) config.modelPresets = []
 
@@ -1999,6 +2168,10 @@ export function getAvailableModels(): Array<{ id: string; name: string; model: s
       supportsThinking: !!resolved.supportsThinking,
       // 同理：档位菜单显隐也按所选预设的方言推导
       supportsEffortDial: supportsEffortDial(resolved),
+      // 思考关不掉的模型（GLM-5.3、grok-4 系）不给"关闭思考"那一行——它是个假开关
+      thinkingAlwaysOn: thinkingCannotBeDisabled(resolved),
+      // 菜单画哪几档也由主进程按 Pi 的档位表算（GLM-5.3 是 low/high/max，没有"中"）
+      thinkingLevels: resolveThinkingLevels(resolved),
       providerId: p.providerId,
       // 空串留给 renderer 走 t('chat.modelControl.ungrouped') 本地化兜底（ModelControl 已按 group || fallback 处理）
       providerName: builtin ? '内置服务' : (provider?.name || ''),

@@ -143,6 +143,57 @@ describe('OpenPipal public search tools', () => {
     }
   })
 
+  it('includeIgnored reaches dependencies and build output, but never .git or dotenv', async () => {
+    // 为什么要这个口子：本仓 .gitignore 第一行就是 node_modules，而编码助手维护的源码
+    // 有 5 处直接 import node_modules 里的具体路径（pi-tools.ts / evolver-tools.ts 等）。
+    // 影子运行实测过一次代价：任务要求「说清楚你凭什么定这个超时值」，权威答案
+    // （pi 自己的 DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000）就在依赖包第 3 行，
+    // 助手搜不到，只好用推理补上——把判死线定在了用户口中的「正常等待上限」，零余量。
+    const root = createRoot()
+    fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules\ndist\n')
+    fs.writeFileSync(path.join(root, 'visible.txt'), 'needle visible\n')
+    fs.mkdirSync(path.join(root, 'node_modules', 'somepkg'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'node_modules', 'somepkg', 'index.js'), 'needle upstream\n')
+    fs.mkdirSync(path.join(root, 'dist'))
+    fs.writeFileSync(path.join(root, 'dist', 'bundle.js'), 'needle generated\n')
+    // 这两样即便放开忽略规则也必须照旧挡住——排除写在 walk 里，不走 .gitignore
+    fs.mkdirSync(path.join(root, '.git'))
+    fs.writeFileSync(path.join(root, '.git', 'COMMIT_EDITMSG'), 'needle future-history\n')
+    fs.writeFileSync(path.join(root, '.env.local'), 'needle SECRET_TOKEN=abc\n')
+
+    const env = new NodeExecutionEnv({ cwd: root })
+    const context = { env }
+    try {
+      const off = await createOpenPipalGrepTool().execute(
+        'grep-default', { pattern: 'needle', path: '.' }, undefined, undefined, context
+      )
+      const offText = (off.content[0] as { text: string }).text
+      expect(offText).toContain('visible.txt')
+      expect(offText).not.toContain('upstream')
+      expect(offText).not.toContain('generated')
+
+      const on = await createOpenPipalGrepTool().execute(
+        'grep-included', { pattern: 'needle', path: '.', includeIgnored: true }, undefined, undefined, context
+      )
+      const onText = (on.content[0] as { text: string }).text
+      expect(onText).toContain('upstream')
+      expect(onText).toContain('generated')
+      // 硬边界：放开 .gitignore 动不到这两条
+      expect(onText).not.toContain('future-history')
+      expect(onText).not.toContain('SECRET_TOKEN')
+
+      const findOn = await createOpenPipalFindTool().execute(
+        'find-included', { pattern: '**/*.js', path: '.', includeIgnored: true }, undefined, undefined, context
+      )
+      const findText = (findOn.content[0] as { text: string }).text
+      expect(findText).toContain('node_modules/somepkg/index.js')
+      expect(findText).toContain('dist/bundle.js')
+      expect(findText).not.toContain('COMMIT_EDITMSG')
+    } finally {
+      await env.cleanup()
+    }
+  })
+
   it('honors a repository parent .gitignore when searching a subdirectory', async () => {
     const root = createRoot()
     const source = path.join(root, 'src')

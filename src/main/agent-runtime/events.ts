@@ -52,6 +52,12 @@ export type AgentEvent =
   | { type: 'questions_v2_delta'; id: string; title?: string; questions: any[] }
   | { type: 'permission_request'; requestId: string; tool: string; args: Record<string, any>; risk: string; reason: string }
   | { type: 'error'; content: string }
+  /**
+   * 上游断流后正在重连。渲染层收到它要做两件事：提示"正在重连 (n/m)"，
+   * 以及丢弃本次尝试已经流出的半截思考/正文——重连是整轮重发，不是断点续传，
+   * 不丢就会把两次尝试的内容拼在一起。
+   */
+  | { type: 'stream_retry'; attempt: number; maxRetries: number }
   | { type: 'goal_update'; goal: ConversationGoal }
   /**
    * 本轮 prompt 附带的 runtime-context 快照（时间/前台应用/产物清单）原文。

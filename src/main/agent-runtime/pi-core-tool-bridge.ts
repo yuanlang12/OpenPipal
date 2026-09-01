@@ -43,7 +43,7 @@ export interface PiCoreAgentToolBundle extends Omit<PiCoreHarnessToolBundle, 'to
  */
 export function buildPiCoreHarnessTools(options: PiCoreToolBuildOptions): PiCoreHarnessToolBundle {
   const askUserResolver = new AskUserResolver()
-  const execution = buildPiCoreExecutionTools(options.workingDir)
+  const execution = buildPiCoreExecutionTools(options.workingDir, {}, options.overrides?.conversationId)
   const productTools = buildOpenPipalProductTools(options.source, askUserResolver, {
     tools: options.overrides?.tools,
     disabledTools: options.disabledTools,
@@ -53,7 +53,8 @@ export function buildPiCoreHarnessTools(options: PiCoreToolBuildOptions): PiCore
     workspaceId: options.overrides?.workspaceId,
     conversationId: options.overrides?.conversationId,
     roleBrief: options.overrides?.roleBrief,
-    executeCodeBackend: execution.executeCode
+    executeCodeBackend: execution.executeCode,
+    permissionTier: options.overrides?.permissionTier
   })
   const productAndExecutionTools = filterOpenPipalTools<AgentHarnessTool<ExecutionToolContext>>(
     [
@@ -64,7 +65,8 @@ export function buildPiCoreHarnessTools(options: PiCoreToolBuildOptions): PiCore
       tools: options.overrides?.tools,
       disabledTools: options.disabledTools,
       roleName: options.overrides?.roleName,
-      conversationId: options.overrides?.conversationId
+      conversationId: options.overrides?.conversationId,
+      permissionTier: options.overrides?.permissionTier
     }
   )
   const mcpTools = buildMcpBridgeTools(

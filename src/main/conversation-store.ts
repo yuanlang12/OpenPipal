@@ -134,7 +134,12 @@ export interface ConversationConfig {
    * 思考档位（low/medium/high），undefined = 'low'。仅方言支持档位的模型
    * （supportsEffortDial）采纳；纯开关模型忽略此字段，配置预算的 Qwen 会映射为 thinking_budget。
    */
-  thinkingLevel?: 'low' | 'medium' | 'high'
+  thinkingLevel?: 'low' | 'medium' | 'high' | 'max'
+  /**
+   * 权限档位（只对编码助手生效，见 agent-overrides.ts 的角色门）。
+   * undefined = 'auto'，等于这个功能不存在时的行为。
+   */
+  permissionTier?: 'readonly' | 'auto' | 'full'
   /**
    * questions_v2 正在等待用户回答的状态。questions 是 ephemeral 过程物，不写 artifact
    * sidecar；答题前完整正文暂存在这里，切换/重启后据此恢复，提交答案后立即删除。
@@ -381,8 +386,19 @@ export function normalizeStoredMessage(message: StoredMessage): StoredMessage {
   }
 }
 
+/**
+ * 断流重连提示（"连接中断，正在重试 n/m"）是流进行中的实时状态行，不是记录。
+ * 落盘就等于把"正在"永久停在过去时；更要命的是撤销只跑在前台 stream-end —— 用户切走会话、
+ * 这一轮在后台收尾时，那条提示就永远留在了历史里。
+ * 读写共用这一个口子（渲染层防抖保存、插件 HTTP、定时任务、ACP 都走同一对 append/replace），
+ * 挡在这里才挡得全，旧记录里已经躺着的那些也会在读取时一并消失。
+ */
+function isLiveOnlyNotice(message: StoredMessage): boolean {
+  return message.messageKind === 'inject-notice' && message.messageSubtype === 'stream-retry'
+}
+
 function normalizeStoredMessages(messages: StoredMessage[]): StoredMessage[] {
-  return messages.map(normalizeStoredMessage)
+  return messages.map(normalizeStoredMessage).filter(m => !isLiveOnlyNotice(m))
 }
 
 function isSummaryCandidate(message: StoredMessage): boolean {
@@ -470,6 +486,20 @@ export function getConversationMessagesSerialized(id: string): Promise<StoredMes
 export function getConversationMessages(id: string): StoredMessage[] {
   const conv = readConversation(id)
   const msgs = normalizeStoredMessages(conv?.messages || [])
+  return rehydrateRecentConversationAttachments(id, msgs)
+}
+
+/**
+ * Re-inline only the recent attachment sidecars needed by the renderer.
+ *
+ * The JSONL Conversation Service reuses this exact read projection so legacy
+ * and v4 sessions do not drift in what the UI receives after a restart.
+ */
+export function rehydrateRecentConversationAttachments(
+  id: string,
+  messages: StoredMessage[]
+): StoredMessage[] {
+  const msgs = messages.map((message) => ({ ...message }))
   for (let i = Math.max(0, msgs.length - REHYDRATE_RECENT_ATTACHMENTS); i < msgs.length; i++) {
     const m = msgs[i] as StoredMessage & { mcpAppPayload?: unknown }
     if (m.screenshotRef && !m.screenshot) {

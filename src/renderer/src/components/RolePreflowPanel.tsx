@@ -20,7 +20,9 @@ import {
 } from 'lucide-react'
 import type { InitialAsset } from '../types'
 import { RoleAvatar, type RoleAvatarRole } from './shared/RoleAvatar'
-import { ModelControl } from './shared/ModelControl'
+import { ModelControl, type ThinkingLevel } from './shared/ModelControl'
+import { WorkingDirBar } from './shared/WorkingDirBar'
+import { PermissionTierControl } from './shared/PermissionTierControl'
 import { RoleArchiveViewer } from './RoleArchiveViewer'
 import { stripDcSuffix } from '../utils/format'
 import { DesignSystemView } from './artifacts/DesignSystemView'
@@ -312,7 +314,7 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
   // 模型（会话专属：本地记选择，随 onSubmit 带出去落进本会话 config，绝不切全局）
   const [modelName, setModelName] = useState('')
   const [modelIsBuiltin, setModelIsBuiltin] = useState(false)
-  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; model: string; active: boolean; supportsThinking?: boolean; supportsEffortDial?: boolean; providerName?: string; builtin?: boolean }>>([])
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; model: string; active: boolean; supportsThinking?: boolean; supportsEffortDial?: boolean; thinkingAlwaysOn?: boolean; thinkingLevels?: ThinkingLevel[]; providerName?: string; builtin?: boolean }>>([])
   // 前置页选中的预设 id；未选（undefined）则下拉沿用全局当前模型名，提交时不带 modelPresetId
   const [selectedModelPresetId, setSelectedModelPresetId] = useState<string | undefined>(undefined)
 
@@ -342,6 +344,10 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
   const dsSelectorEnabled = manifest.dsSelector?.enabled !== false
   const artifactsTabLabel = displayManifest.libraryTabs?.artifacts || t('chat.preflow.libraryTabs.artifacts')
   const systemsTabLabel = displayManifest.libraryTabs?.systems || t('chat.preflow.libraryTabs.systems')
+  // "系统"这一类东西不是每个角色都有：design 是设计系统、teacher 是教学风格，
+  // 编码助手两样都没有——不判这一条，它的库区会挂出一个写着"设计系统"的空 tab。
+  const hasSystemsCategory = dsSelectorEnabled || !!displayManifest.systemsCreate || roleSystems.length > 0
+  const libTabEffective = hasSystemsCategory ? libTab : 'products'
 
   const cardsField = (manifest.fields || []).find(f => f.display === 'cards' && f.kind === 'text-options' && !f.multi)
   const displayCardsField = displayManifest.fields?.find(field => field.id === cardsField?.id)
@@ -575,7 +581,7 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
         </h1>
 
         {/* 输入卡 */}
-        <div className="bg-white dark:bg-surface-50 border border-surface-100 rounded-2xl shadow-sm mb-8" ref={menuRootRef}>
+        <div className="relative z-10 bg-white dark:bg-surface-50 border border-surface-100 rounded-2xl shadow-sm" ref={menuRootRef}>
           {/* 已传资产 chips */}
           {assets.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-4 pt-3">
@@ -829,6 +835,8 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
                   displayModel={displayModel}
                   supportsThinking={!!effective?.supportsThinking}
                   supportsDial={!!effective?.supportsEffortDial}
+                  alwaysOn={!!effective?.thinkingAlwaysOn}
+                  levels={effective?.thinkingLevels || undefined}
                   selectedId={selectedModelPresetId}
                   onSelectModel={(id) => { if (id) handleSwitchModel(id) }}
                   triggerTestId="preflow-model-select"
@@ -848,6 +856,22 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
             </button>
           </div>
         </div>
+
+        {/* 工作目录 —— preflow 会整页替换欢迎页，不挂在这里，编码这类"先选仓库"的角色
+            就没地方选目录了。复用欢迎页那一份：选择、校验、"已读 AGENTS.md"徽标全在组件里 */}
+        {displayManifest.workingDir?.enabled
+          ? (
+            <WorkingDirBar
+              placement="below"
+              className="mb-8"
+              // 这一页的问题就是"在哪个仓库里干活"，最近用过的那几个直接列出来
+              recents
+              // 权限档位挂在目录名右边：这一排本来就是"这条会话怎么跑"。
+              // 只给编码助手（主进程那侧同一道角色门），别的角色不该被迫理解工具风险分级。
+              trailing={roleName === 'coding' ? <PermissionTierControl /> : undefined}
+            />
+          )
+          : <div className="mb-8" />}
 
         {/* Figma URL 内嵌输入 */}
         {figmaUrlOpen && (
@@ -996,16 +1020,18 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
         {/* 库区：产物 / 设计系统（tab 文案可被 manifest 覆盖）。
             dsSelector 关闭的角色（如 teacher）没有 dsList 可数，但"系统" tab 仍要露出空态文案，
             所以库区显隐额外认 !dsSelectorEnabled 这一条 */}
-        {(history.length > 0 || dsList.length > 0 || !dsSelectorEnabled) && (
+        {(history.length > 0 || dsList.length > 0 || hasSystemsCategory) && (
           <div data-testid="preflow-library">
             <div className="flex items-center gap-1 mb-3">
-              {([['products', artifactsTabLabel], ['systems', systemsTabLabel]] as const).map(([key, label]) => (
+              {([['products', artifactsTabLabel], ['systems', systemsTabLabel]] as const)
+                .filter(([key]) => key === 'products' || hasSystemsCategory)
+                .map(([key, label]) => (
                 <button
                   key={key}
                   onClick={() => setLibTab(key)}
                   data-testid={`preflow-lib-tab-${key}`}
                   className={`px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors ${
-                    libTab === key ? 'bg-white dark:bg-surface-50 shadow-sm text-ink-primary dark:text-surface-700 border border-surface-100' : 'text-ink-tertiary hover:text-ink-primary dark:hover:text-surface-600'
+                    libTabEffective === key ? 'bg-white dark:bg-surface-50 shadow-sm text-ink-primary dark:text-surface-700 border border-surface-100' : 'text-ink-tertiary hover:text-ink-primary dark:hover:text-surface-600'
                   }`}
                 >
                   {label}
@@ -1025,7 +1051,7 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
             </div>
 
             <div className="rounded-xl border border-surface-100 bg-white dark:bg-surface-50 divide-y divide-surface-100 overflow-hidden">
-              {libTab === 'products' && libProducts.map(item => {
+              {libTabEffective === 'products' && libProducts.map(item => {
                 const Icon = TYPE_FALLBACK_ICON[visualFor(item.title)]
                 return (
                   <button
@@ -1052,13 +1078,13 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
                   </button>
                 )
               })}
-              {libTab === 'products' && libProducts.length === 0 && (
+              {libTabEffective === 'products' && libProducts.length === 0 && (
                 <div className="px-3 py-6 text-center text-[12px] text-surface-400">
                   {t(libQuery ? 'chat.preflow.empty.artifactMatches' : 'chat.preflow.empty.artifacts')}
                 </div>
               )}
 
-              {libTab === 'systems' && dsSelectorEnabled && libSystems.map(d => (
+              {libTabEffective === 'systems' && dsSelectorEnabled && libSystems.map(d => (
                 <div
                   key={d.path}
                   data-testid="preflow-ds-row"
@@ -1084,14 +1110,14 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
                   </button>
                 </div>
               ))}
-              {libTab === 'systems' && dsSelectorEnabled && libSystems.length === 0 && (
+              {libTabEffective === 'systems' && dsSelectorEnabled && libSystems.length === 0 && (
                 <div className="px-3 py-6 text-center text-[12px] text-surface-400">
                   {t('chat.preflow.designSystem.empty')}
                 </div>
               )}
               {/* dsSelector 关闭时"系统" tab 不展示 design-systems 目录内容（挂着教学风格等自定义标签展示设计系统资产是错的）
                   ——改读角色资产库子文件夹（如 teacher 的教学风格）。行点击 → 档案内容预览（只读） */}
-              {libTab === 'systems' && !dsSelectorEnabled && libRoleSystems.map(s => (
+              {libTabEffective === 'systems' && !dsSelectorEnabled && libRoleSystems.map(s => (
                 <button
                   key={s.path}
                   data-testid="preflow-role-system-row"
@@ -1108,14 +1134,14 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
                   <ChevronRight className="w-4 h-4 text-surface-300 shrink-0" />
                 </button>
               ))}
-              {libTab === 'systems' && !dsSelectorEnabled && libRoleSystems.length === 0 && (
+              {libTabEffective === 'systems' && !dsSelectorEnabled && libRoleSystems.length === 0 && (
                 <div className="px-3 py-6 text-center text-[12px] text-surface-400">
                   {displayManifest.systemsEmptyHint || t('chat.preflow.empty.systems')}
                 </div>
               )}
               {/* 创建入口——manifest 显式声明才渲染（design 等其他角色 manifest 无此键，零影响）。
                   填输入框不直接开聊（同下拉里的创建项），kickoff 只声明意图、基本盘走对话里的选项卡 */}
-              {libTab === 'systems' && !dsSelectorEnabled && displayManifest.systemsCreate && (
+              {libTabEffective === 'systems' && !dsSelectorEnabled && displayManifest.systemsCreate && (
                 <div className="px-3 py-3">
                   <button
                     onClick={() => {

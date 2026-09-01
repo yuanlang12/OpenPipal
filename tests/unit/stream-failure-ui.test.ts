@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createAssistantMessage, createToolMessage, createUserMessage, failUnfinishedToolMessages, isRenderableToolMessage, shouldSendMessageToModel, stripOffloadedInline } from '../../src/renderer/src/chat/messages'
+import { createAssistantMessage, createToolMessage, createUserMessage, dropStreamRetryNotices, failUnfinishedToolMessages, isRegeneratableAssistantMessage, isRenderableToolMessage, shouldIncludeInTranscriptExport, shouldSendMessageToModel, stripOffloadedInline } from '../../src/renderer/src/chat/messages'
 
 describe('模型流失败时收敛空工具卡', () => {
   it('只标记当前用户回合里尚未收到结果的工具调用', () => {
@@ -92,5 +92,47 @@ describe('合成错误气泡不进模型历史', () => {
     expect(incomplete.content).toBe('尚未生成完的部分回复')
     expect(incomplete.messageKind).toBe('incomplete')
     expect(shouldSendMessageToModel(incomplete)).toBe(false)
+  })
+
+  it('重启恢复状态不是 AI 回答：不进模型、不可重新生成、也不导出为对话正文', () => {
+    const interrupted = createAssistantMessage({
+      id: 'runtime-interrupted-run1',
+      content: '上一次运行在完成保存前中断。',
+      messageKind: 'incomplete',
+      messageSubtype: 'runtime-interrupted',
+      timestamp: 4,
+    })
+
+    expect(shouldSendMessageToModel(interrupted)).toBe(false)
+    expect(isRegeneratableAssistantMessage(interrupted)).toBe(false)
+    expect(shouldIncludeInTranscriptExport(interrupted)).toBe(false)
+  })
+})
+
+describe('重连成功后撤掉断流提示', () => {
+  const notice = (id: string): ReturnType<typeof createAssistantMessage> =>
+    createAssistantMessage({ id, content: 'openpipal:stream-retry:1/5', messageKind: 'inject-notice', messageSubtype: 'stream-retry', timestamp: 3 })
+
+  it('只清当前这一轮的提示，上一轮失败留下的记录不动', () => {
+    const messages = [
+      createUserMessage({ id: 'u1', content: '第一问', timestamp: 1 }),
+      notice('old-notice'),
+      createAssistantMessage({ id: 'a1', content: '上一轮的答复', timestamp: 2 }),
+      createUserMessage({ id: 'u2', content: '第二问', timestamp: 4 }),
+      notice('new-notice')
+    ]
+
+    const kept = dropStreamRetryNotices(messages)
+
+    expect(kept.map(m => m.id)).toEqual(['u1', 'old-notice', 'a1', 'u2'])
+  })
+
+  it('没有提示可清就原样返回，调用方据此跳过整份重写', () => {
+    const messages = [
+      createUserMessage({ id: 'u1', content: '问', timestamp: 1 }),
+      createAssistantMessage({ id: 'a1', content: '答', timestamp: 2 })
+    ]
+
+    expect(dropStreamRetryNotices(messages)).toBe(messages)
   })
 })

@@ -6,6 +6,7 @@ import { loadRoleFromDisk, seedSystemAgents } from './role-loader'
 import { resolveDesignSystemDirectory } from './design-system-resource'
 import { buildOptionalRoles } from './roles/optional-roles'
 import { buildDesignRole } from './roles/design-role'
+import { buildCodingRole } from './roles/coding-role'
 import { dataPath } from './data-root'
 export {
   addDetectedApp,
@@ -132,7 +133,10 @@ const BUILTIN_ROLES: Record<string, RoleConfig> = {
   // 两处展开而不是一处：设计助手能不能随某个发行走，与另外四个角色是各自独立的判断，
   // 各自对应一个可被裁剪脚本换成空实现的文件（文件式取舍，见两个模块自己的说明）
   ...buildOptionalRoles(COMMON_TOOLS),
-  ...buildDesignRole(COMMON_TOOLS)
+  ...buildDesignRole(COMMON_TOOLS),
+  // 编码助手同样单独一个文件，与另外几个角色的取舍互不牵连。它的工具就是 COMMON_TOOLS
+  // 全量——差异化靠提示词与项目自己的 AGENTS.md，不靠砍工具（理由见 roles/coding-role.ts 文件头）
+  ...buildCodingRole(COMMON_TOOLS)
 }
 
 let currentRole: RoleConfig = BUILTIN_ROLES.general

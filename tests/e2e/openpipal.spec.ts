@@ -160,9 +160,10 @@ test.describe('2. 消息发送测试', () => {
     // 计时分割线自己就在扫光、还带真实秒数，方框点点是同一件事说两遍。
     const liveBar = page.locator('[data-testid="process-group-toggle"][data-active="true"]')
     await expect(liveBar).toBeVisible({ timeout: 3000 })
-    // 此刻模型还一个字节都没回来 —— 只写「连接模型…」,不报秒数(用户实锤:
-    // "发了消息就计时,其实模型还没通")。收到第一个模型事件后才切成「处理中 N 秒」。
-    await expect(liveBar).toContainText('连接模型')
+    // 此刻模型还一个字节都没回来 —— 明确写「等待模型响应 N 秒」，让等待从 0 连续可见；
+    // 收到第一个模型事件后再切成「处理中 N 秒」，不会让数字凭空跳出来。
+    await expect(liveBar).toContainText('等待模型响应')
+    await expect(liveBar).toContainText('秒')
     await expect(page.locator('.animate-pulse-soft')).toHaveCount(0)
     await page.screenshot({ path: `${ARTIFACTS_DIR}/02-03-thinking-indicator.png` })
 

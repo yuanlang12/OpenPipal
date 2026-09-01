@@ -63,21 +63,36 @@ function takeWithinTokenBudget(text: string, budget: number, fromEnd: boolean): 
  * Keep both the beginning (commands, headings, file paths) and the end (errors,
  * totals, final status). Returns the original string object when no cap is
  * needed, avoiding needless byte changes.
+ *
+ * 公式（头 60% / 尾 40%、marker 自身也计入预算）只在这里定义一份：工具结果限长和
+ * 项目入口文档注入（project-context.ts）共用同一把尺子，marker 文案各自传入。
  */
-export function capToolResultText(
+export function capTextHeadTail(
   text: string,
-  maxTokens = MAX_TOOL_RESULT_TOKENS
+  maxTokens: number,
+  buildMarker: (chars: number, tokens: number) => string
 ): string {
   const estimated = estimateTokens(text)
   if (estimated <= maxTokens) return text
 
-  const marker = `\n\n…[单条工具结果已确定性限长：原 ${text.length} 字符，约 ${estimated} tokens；保留头尾]…\n\n`
+  const marker = buildMarker(text.length, estimated)
   const available = Math.max(0, maxTokens - estimateTokens(marker))
   const headBudget = Math.floor(available * 0.6)
   const tailBudget = available - headBudget
   const head = takeWithinTokenBudget(text, headBudget, false)
   const tail = takeWithinTokenBudget(text, tailBudget, true)
   return head + marker + tail
+}
+
+export function capToolResultText(
+  text: string,
+  maxTokens = MAX_TOOL_RESULT_TOKENS
+): string {
+  return capTextHeadTail(
+    text,
+    maxTokens,
+    (chars, tokens) => `\n\n…[单条工具结果已确定性限长：原 ${chars} 字符，约 ${tokens} tokens；保留头尾]…\n\n`
+  )
 }
 
 function isToolResultMessage(message: AgentMessage): message is ToolResultMessage {

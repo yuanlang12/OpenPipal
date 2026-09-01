@@ -11,16 +11,84 @@ import {
 } from '@earendil-works/pi-agent-core'
 import { NodeExecutionEnv } from '@earendil-works/pi-agent-core/node'
 import {
+  getGitDotenvExcludesFile,
+  getGitTemplateDir,
   getSanitizedEnv,
   isSandboxed,
+  pickGitCredentialEnv,
   sanitizeEnvironment,
   wrapCommandStrict
 } from './sandbox-manager'
+import { detectGitRemoteUse } from './git-policy'
+import { hasGitGrant } from './git-policy-store'
+import { buildGitCredentialEnv, resolveGitToken } from './git-credential-bridge'
 import { createTemporaryCodeFile } from './code-execution-temp'
 import {
   OPENPIPAL_DEFAULT_MAX_CAPTURE_BYTES,
   OpenPipalBoundedOutputCapture
 } from './bounded-output-capture'
+
+/**
+ * 往 `GIT_CONFIG_*` 里**顺延追加一条**配置，返回要合进 env 的增量（不改入参）。
+ *
+ * git 读的是 `GIT_CONFIG_COUNT` + 一串按序号排的 KEY/VALUE，所以索引必须接着现有的数——
+ * 从 0 开始写会把已有的那条整个覆盖掉，而且**不报任何错**：git 照样跑，只是少了一条配置。
+ * 这个算术曾经在三处各写一遍（身份护栏、dotenv 排除、凭据桥），改一处漏两处不会有类型错误。
+ *
+ * `existingEnv` 里已经声明过同名 key 就返回空对象——**后写的赢**，我们再追一条等于替用户改主意。
+ */
+function appendGitConfig(
+  existingEnv: NodeJS.ProcessEnv,
+  key: string,
+  value: string
+): NodeJS.ProcessEnv {
+  const declared = Number.parseInt(String(existingEnv.GIT_CONFIG_COUNT || '0'), 10)
+  const start = declared > 0 ? declared : 0
+  for (let i = 0; i < start; i++) {
+    if (String(existingEnv[`GIT_CONFIG_KEY_${i}`] || '').toLowerCase() === key.toLowerCase()) return {}
+  }
+  return {
+    GIT_CONFIG_COUNT: String(start + 1),
+    [`GIT_CONFIG_KEY_${start}`]: key,
+    [`GIT_CONFIG_VALUE_${start}`]: value
+  }
+}
+
+/**
+ * git 身份护栏：没配 `user.name` / `user.email` 时，让 `git commit` **报错**，而不是瞎猜一个。
+ *
+ * git 默认会拿登录名 + 机器名拼一个身份盖上去，**退出码 0**，警告还印在提交*之后*
+ * ——2026-08-24 实测 git 2.50.1：作者落成 `alice <alice@Alices-MacBook-Pro.local>`，提交照样成立。
+ * 于是所有基于退出码的纪律都拦不住它；更糟的是编码助手提示词里那句"每条命令都要看退出码"
+ * 反而把模型引开了：退出码是 0，按我们自己的规矩它就该往下走。真机验收里模型正是这样
+ * 一路"成功"地把一个假署名写进了历史，全程没有任何一方察觉。
+ *
+ * **这不是能力拐杖**：再完美的模型也不知道用户叫什么、邮箱是什么——缺的是数据，不是判断力。
+ * 所以修在代码里：打开 `user.useConfigOnly`，把无声的失败变成有声的失败（退出码 128 +
+ * git 自己那段"请先 git config --global user.email …"的指引），剩下的交给模型——
+ * 它看得懂那段话，会转告用户。**不需要为此加一句提示词。**
+ *
+ * 用户已经配过身份时这一项是 no-op（实测退出码 0、作者正确），所以不分角色、不分沙箱一律注入。
+ * 唯一的让路：用户自己显式设过 `user.useConfigOnly` 就不插手——GIT_CONFIG_* 后写的赢，
+ * 我们再追一条等于替他改主意。
+ */
+export function buildGitIdentityGuardEnv(existingEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return appendGitConfig(existingEnv, 'user.useConfigOnly', 'true')
+}
+
+/**
+ * 沙箱下把 `core.excludesFile` 指到我们生成的那份清单上，让 git 别去 lstat 它读不到的 dotenv。
+ * 为什么需要、修好了哪些命令 → credential-paths.ts 的 `buildGitDotenvExcludeBody`。
+ *
+ * 和 `buildGitIdentityGuardEnv` 同一套写法（见 `appendGitConfig`）：按 `GIT_CONFIG_COUNT` 顺延写位，
+ * **用户自己设过就完全不插手**（GIT_CONFIG_* 后写的赢，我们再追一条等于替他改主意）。
+ */
+export function buildGitDotenvExcludeEnv(
+  excludesFile: string,
+  existingEnv: NodeJS.ProcessEnv = {}
+): NodeJS.ProcessEnv {
+  return appendGitConfig(existingEnv, 'core.excludesFile', excludesFile)
+}
 
 /** Commands without an explicit timeout cannot occupy an agent forever. */
 export const OPENPIPAL_DEFAULT_SHELL_TIMEOUT_SECONDS = 120
@@ -269,15 +337,25 @@ export class OpenPipalNodeExecutionEnv extends NodeExecutionEnv {
   private readonly safeEnv: Record<string, string>
   private readonly policy: OpenPipalExecutionPolicy
   private readonly activeExecutions = new Set<ActiveExecution>()
+  /**
+   * 只用来查 git 项目授权里的「本次对话」那一半。缺省 undefined = 只认持久授权，
+   * 这正是子代理该有的保守面：子代理自带一整套工具，档位与本对话授权都不往下传。
+   */
+  private readonly conversationId?: string
   private closed = false
 
-  constructor(cwd: string, policy: Partial<OpenPipalExecutionPolicy> = {}) {
+  constructor(
+    cwd: string,
+    policy: Partial<OpenPipalExecutionPolicy> = {},
+    conversationId?: string
+  ) {
     const safeEnv = Object.fromEntries(
       Object.entries(getSanitizedEnv())
         .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
     )
     super({ cwd, shellEnv: safeEnv })
     this.safeEnv = safeEnv
+    this.conversationId = conversationId
     this.policy = {
       defaultTimeoutSeconds: policy.defaultTimeoutSeconds ?? OPENPIPAL_DEFAULT_SHELL_TIMEOUT_SECONDS,
       maxTimeoutSeconds: policy.maxTimeoutSeconds ?? OPENPIPAL_MAX_SHELL_TIMEOUT_SECONDS,
@@ -332,12 +410,38 @@ export class OpenPipalNodeExecutionEnv extends NodeExecutionEnv {
         return { ok: false, error: new ExecutionError('aborted', 'aborted') }
       }
 
+      // git token 只在「这条命令真的要连远端」且「用户授权过这个项目」时才发下去。
+      // 两个条件都要，是为了缩小暴露面：一个项目被授权后，`npm install` 的 postinstall
+      // 脚本仍然看不到 token —— 那才是现实里最像样的外泄路径。
+      // this.safeEnv 在构造时就被抹过了，留底只能从 process.env 现取。
+      const allowGitCredentials = !!detectGitRemoteUse(command) && hasGitGrant(cwd, this.conversationId)
+      const baseEnv = {
+        // 沙箱下 `.git/hooks/*` 拒写，而 git init/clone 一定会拷模板里的 hooks 示例 ——
+        // 不指个空模板，这两条命令在沙箱里必失败。放在最前面：用户自己设过就让用户的赢。
+        ...(sandboxed ? { GIT_TEMPLATE_DIR: getGitTemplateDir() } : {}),
+        ...(options?.inheritEnv === false ? {} : this.safeEnv),
+        ...(allowGitCredentials ? pickGitCredentialEnv(process.env) : {}),
+        ...options?.env,
+        ...(sandboxed ? { OPENPIPAL_SANDBOXED: '1' } : {})
+      }
+      // dotenv 排除清单见 buildGitDotenvExcludeEnv。三处 GIT_CONFIG_* 注入必须**依次**算，
+      // 每一处都拿上一处的结果当输入——都按 GIT_CONFIG_COUNT 顺延写位，
+      // 谁看的是旧计数谁就会把前一条覆盖掉。
+      const excludedEnv = sandboxed
+        ? { ...baseEnv, ...buildGitDotenvExcludeEnv(getGitDotenvExcludesFile(), baseEnv) }
+        : baseEnv
+      // 身份护栏见 buildGitIdentityGuardEnv。必须排在凭据桥前面算，同一个理由。
+      const guardedEnv = { ...excludedEnv, ...buildGitIdentityGuardEnv(excludedEnv) }
+      // 凭据桥：主进程在沙箱外取到 token（`gh auth token` 等），只给这一条命令挂一个
+      // 内联 credential helper。凭据文件继续拒读——放开 ~/.config/gh 等于把 token
+      // 交给整个会话，而这样只交给"已授权项目里真要连远端"的那条命令。
+      // 取不到 token 就什么都不注入，让 git 走它原本的通道，不伪造成功。
+      const gitToken = allowGitCredentials ? await resolveGitToken() : null
       const childEnvironment = Object.fromEntries(
         Object.entries(sanitizeEnvironment({
-          ...(options?.inheritEnv === false ? {} : this.safeEnv),
-          ...options?.env,
-          ...(sandboxed ? { OPENPIPAL_SANDBOXED: '1' } : {})
-        })).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+          ...guardedEnv,
+          ...(gitToken ? buildGitCredentialEnv(gitToken, guardedEnv) : {})
+        }, { allowGitCredentials })).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
       )
       return await this.spawnBounded(executableCommand, cwd, timeoutResult.value, {
         ...options,

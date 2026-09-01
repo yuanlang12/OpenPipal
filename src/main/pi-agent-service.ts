@@ -26,6 +26,7 @@ import {
   adaptModelRequestPayload,
   createModelPayloadAdapter,
   resolveAuxThinkingLevel,
+  resolveThinkingOffLevel,
   supportsEffortDial,
   type ModelConfig
 } from './config-manager'
@@ -48,7 +49,8 @@ import { promptWithEmptyCompletionRetry } from './empty-completion-guard'
 import {
   createIsolatedStreamSimple,
   isolatedStreamSimple,
-  type StreamBoundaryPhase
+  type StreamBoundaryPhase,
+  type StreamRetryInfo
 } from './isolated-stream-signal'
 import { createStallWatchdog, resolveModelStallTimeoutMs } from './stall-watchdog'
 import type {
@@ -249,7 +251,8 @@ export async function* agentChat(
     modelPresetId: overrides?.modelPresetId,
     workspaceId,
     conversationId: overrides?.conversationId,
-    roleBrief: overrides?.roleBrief
+    roleBrief: overrides?.roleBrief,
+    permissionTier: overrides?.permissionTier
   })
   const mcpTools = buildMcpBridgeTools(toolsCfg?.mcpServers, overrides?.conversationId, source)
   const allTools = filterToolsForChatSource(source, [...builtinTools, ...mcpTools])
@@ -293,15 +296,24 @@ export async function* agentChat(
   const userWantsThinking = overrides?.thinkingEnabled !== false
   // 档位：仅能力解析确认支持的模型采纳用户所选；纯开关模型回落 'low'。
   const dialLevel = (overrides?.thinkingLevel && supportsEffortDial(mc)) ? overrides.thinkingLevel : 'low'
-  const thinkingLevel = (modelSupportsThinking && userWantsThinking) ? dialLevel : 'off'
+  // "关"不一定关得掉：思考关不掉的模型（GLM-5.3、grok-4 系）落到最低档，见 resolveThinkingOffLevel。
+  const thinkingLevel = (modelSupportsThinking && userWantsThinking) ? dialLevel : resolveThinkingOffLevel(model)
 
   // 加载历史消息（先做"保近压远"压缩——只影响发给模型的载荷，UI/落盘历史不动）。
   // 仅按总 token 预算做整体历史压缩。工具轨迹和图片不再有独立的消息数/年龄窗口；
   // 它们与普通对话一起保留，直到整段历史接近模型上下文上限。
-  const { contextWindow: usageContextWindow, budget: usageBudget } = getContextBudget(historyModelConfig)
+  // 本轮真实的提示词开销（含技能段的系统提示 + 内置/MCP 工具 schema）。观测与压缩共用同一个数，
+  // 否则会出现"用量卡说快满了、压缩器说还早得很"的分裂。
+  const promptOverheadTokens = segmentEstimate.systemPromptTokens
+    + segmentEstimate.builtinToolTokens
+    + segmentEstimate.mcpToolTokens
+  const { contextWindow: usageContextWindow, budget: usageBudget } =
+    getContextBudget(historyModelConfig, promptOverheadTokens)
   let historyForModel = history
   try {
-    historyForModel = await compactHistoryForModel(history, overrides?.conversationId, historyModelConfig)
+    historyForModel = await compactHistoryForModel(history, overrides?.conversationId, historyModelConfig, {
+      promptOverheadTokens
+    })
   } catch (err: any) {
     console.warn('[Compactor] 压缩流程异常，回退全量历史:', err?.message)
   }
@@ -319,9 +331,11 @@ export async function* agentChat(
   // Agent 在下面构造、观测器在稍后初始化；保留一个稳定闭包，确保每次 Provider
   // StreamFn 都能把本地边界回填到当时活跃的 OpenPipal turn。
   let recordStreamBoundary: (phase: StreamBoundaryPhase, attempt: number) => void = () => {}
+  let recordStreamRetry: (info: StreamRetryInfo) => void = () => {}
   const sessionStreamFn = withSessionStreamOptions(
     createIsolatedStreamSimple({
-      onStreamBoundary: (phase, attempt) => recordStreamBoundary(phase, attempt)
+      onStreamBoundary: (phase, attempt) => recordStreamBoundary(phase, attempt),
+      onStreamRetry: (info) => recordStreamRetry(info)
     }),
     mc
   )
@@ -346,7 +360,7 @@ export async function* agentChat(
     //  (1) 不可结构化克隆 → 权限气泡序列化失败发不出去;
     //  (2) 站点轴 grant/decide 用函数当 key → 永不命中 → 每次写操作都重复弹确认。
     // conversationId 用真实会话 id,handler 作第二参回退(内联模式优先,弹窗模式兜底)。
-    beforeToolCall: createSecurityHook(overrides?.conversationId, _permissionHandler, { workspaceId, workingDir }),
+    beforeToolCall: createSecurityHook(overrides?.conversationId, _permissionHandler, { workspaceId, workingDir }, overrides?.permissionTier),
     // 只做与消息年龄无关的单条工具结果上限。旧工具结果、旧图片和工具入参不会在
     // assistant 消费后或跨过固定窗口时被改写；整体历史压缩由上面的 token 预算统一负责。
     transformContext: createStableContextTransform(),
@@ -557,6 +571,15 @@ export async function* agentChat(
       const armStall = (): void => watchdog.arm()
       const disarmStall = (): void => watchdog.disarm()
       armStall()
+      recordStreamRetry = (info) => {
+        console.warn(`[Pi] 上游断流，第 ${info.attempt}/${info.maxRetries} 次重连（${info.delayMs}ms 后）：${info.reason}`)
+        observeTurn('stream_retry')
+        // 重连是整轮重发：适配器要回到"这条 assistant 消息还没开始"的状态，
+        // 渲染层收到 stream_retry 会把已上屏的半截思考/正文丢掉。
+        adapter.reset()
+        armStall()
+        eventQueue.push({ type: 'stream_retry', attempt: info.attempt, maxRetries: info.maxRetries })
+      }
 
       // 8.2 订阅本轮事件
       const unsubscribe = agent.subscribe(async (piEvent: PiAgentEvent) => {

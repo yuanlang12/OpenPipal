@@ -14,6 +14,7 @@
     "dev": "electron-vite dev",
     "prebuild": "npm run electron:install",
     "build": "electron-vite build",
+    "postbuild": "node scripts/copy-photon-wasm.mjs",
     "build:acp": "npm --prefix openpipal-acp run build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && npm run build:acp && electron-builder --dir",
@@ -45,9 +46,9 @@
     "yaml": "2.9.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "0.84.1",
-    "@earendil-works/pi-ai": "0.84.1",
-    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-agent-core": "0.84.4",
+    "@earendil-works/pi-ai": "0.84.4",
+    "@earendil-works/pi-coding-agent": "0.84.4",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
     "@eslint/js": "^10.0.1",

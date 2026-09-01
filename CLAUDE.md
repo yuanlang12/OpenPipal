@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 **本文档 = 核心原则 + 高频协作契约，其余一切靠文末「入口目录」渐进式披露。** 上下文再大，注意力也是稀缺的——细节住在子文档里，需要时再读。
 
 ## Project Overview
@@ -26,7 +24,6 @@ OpenPipal is a macOS Electron app + Chrome extension — a universal AI companio
 - **新功能**（涉及 3+ 文件）：拆 4-6 个可验证阶段逐段实现；同一阶段卡住 2 次停下来给用户替代方案。
 - **UI/UX 改动**：写码前先用三句话说清交互模型——用户看见什么 / 什么进文档持久化 / 什么是渲染时算出来的——等确认再动手；改完真机截图目视验收（观感问题读代码看不出来）。
 - **Bug 修复**：修前写三点等确认（Root cause / Files / Proposed fix）。修后：build 通过但 **build ≠ 类型检查**（改签名必跑双 tsc）；测试报数读完整 summary 行、回归看通过集不变量；UI 变更目视验证、流式修复验证增量行为；"看不见"类 bug 先查 DOM clipping 再查数据流；"改动后坏了"先对照实验证伪；同一 bug 两次未解停手派 agent 独立分析。案例库 → [debugging-discipline.md](docs/claude/debugging-discipline.md)。
-- **先有证据，再下结论**：根因、成本估算、服务健康度都不许靠推断——先写最小隔离探针脚本，或把真实数字对上，并说明证据出自哪个凭证/环境/构建。证据不全就明确标成假设，不和已验证的结论混在一句里说。
 
 ## 红线（违反即事故）
 
@@ -46,12 +43,7 @@ npx playwright test                          # E2E
 
 ## 构建与打包验证
 
-宣称"打好包了"或请用户上机测试之前，按序走完三步，一步都不许跳：
-
-1. 先跑完整 `npx electron-vite build`（renderer 改动不 build，插件和装机版看到的都是旧代码）；
-2. 再打包 / 安装；
-3. 再确认 /Applications 里正在跑的那个二进制就是新构建——查版本号或某个可见标记，别默认安装成功。
-
+打包 / 请用户上机测试前走 `/release`——打包、安装、用 asar 指纹证明装机版就是新构建（**版本号相等证明不了任何事**）。
 **没真正执行过命令，就绝不说"运行时已验证"，要说"尚未运行时验证"。** 装机版专属故障（Cannot find module 等 dev 复现不了的）→ [debugging-discipline.md](docs/claude/debugging-discipline.md)。
 
 ## 入口目录（渐进式披露：什么时候读什么）

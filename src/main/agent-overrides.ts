@@ -9,8 +9,8 @@
  */
 
 import type { AgentOverrides } from './agent-runtime/contracts'
-import type { ConversationConfig } from './conversation-store'
-import { getConversation } from './conversation-store'
+import type { ConversationConfig } from './conversation-service'
+import { peekConversation } from './conversation-service'
 import { getWorkspace } from './agent-workspace-store'
 import { getAgentTemplate } from './agent-template-manager'
 import { getCurrentRole, getRoleConfig } from './role-manager'
@@ -45,7 +45,7 @@ export function resolveExecutionRoleName(
   if (context?.roleName && getRoleConfig(context.roleName)) return context.roleName
   if (context?.conversationId) {
     try {
-      const conversationRole = getConversation(context.conversationId)?.role
+      const conversationRole = peekConversation(context.conversationId)?.role
       if (conversationRole && getRoleConfig(conversationRole)) return conversationRole
     } catch { /* missing/new conversation: capture the UI default below */ }
   }
@@ -70,10 +70,10 @@ export function resolveAgentOverrides(args: ResolveOverridesArgs): AgentOverride
   // 可能被其他表面（UI / HTTP / 语音）切走，因此这里只捕获会话角色，
   // 不再 switchRole 或改写 UI 默认值。
   // 单次读盘复用（效率评审：此前角色对齐与磁盘钉住兜底各读一遍同一份会话文件——每消息热点）
-  let diskConv: ReturnType<typeof getConversation> | null = null
+  let diskConv: ReturnType<typeof peekConversation> | null = null
   if (conversationId) {
     try {
-      diskConv = getConversation(conversationId)
+      diskConv = peekConversation(conversationId)
       const conv = diskConv
       if (conv?.role) {
         const conversationRole = getRoleConfig(conv.role)
@@ -156,6 +156,13 @@ export function resolveAgentOverrides(args: ResolveOverridesArgs): AgentOverride
     overrides.conversationId = conversationId
   }
 
+  // 权限档位只在编码助手的会话上生效。别的角色的会话即便 config 里带了这个字段也忽略——
+  // UI 不给它们这个开关，而 ACP / HTTP 那条路上外部客户端能 PATCH 会话 config，
+  // 不设这道门就等于留了一条"把任意会话提成完全允许"的路子（放宽必须有门，收紧不必）。
+  if (overrides && conversationConfig?.permissionTier && roleName === 'coding') {
+    overrides.permissionTier = conversationConfig.permissionTier
+  }
+
   // thinkingEnabled / thinkingLevel 是 UI 级运行参数,与 agent/workspace 模板无关 —— 透传
   if (overrides && conversationConfig?.thinkingEnabled !== undefined && overrides.thinkingEnabled === undefined) {
     overrides.thinkingEnabled = conversationConfig.thinkingEnabled
@@ -188,6 +195,15 @@ export function resolveAgentOverrides(args: ResolveOverridesArgs): AgentOverride
     if (conversationConfig.roleBrief && overrides.roleBrief === undefined) overrides.roleBrief = conversationConfig.roleBrief
     if (conversationConfig.initialAssets?.length && overrides.initialAssets === undefined) overrides.initialAssets = conversationConfig.initialAssets
     if (conversationConfig.projectName && overrides.projectName === undefined) overrides.projectName = conversationConfig.projectName
+    // workingDir 与 goal/projectName 同一口径：**会话级选择优先于模板默认**。
+    // 旧行为是 workspace/agent 分支把它留空、由 Runtime 回落到 Agent 自己的
+    // ~/.openpipal/agents/<id>/workspace，症状是用户在目录条上看见仓库名、模型却在
+    // 另一个目录里干活；Zed 经 ACP 打开的仓库同样读不到（编辑器的 cwd 就落在这条 config 上）。
+    // 注意只在会话**显式选了**目录时才覆盖：没选就仍然走 Agent 自己的工作区，
+    // 自定义 Agent「自带一块地」的语义不变。
+    if (conversationConfig.workingDir && overrides.workingDir === undefined) {
+      overrides.workingDir = conversationConfig.workingDir
+    }
   }
 
   // 执行期角色必须是会话级快照。全局 role 仅保留用于 UI 默认值/历史兼容；

@@ -266,7 +266,7 @@ describe('scheduler Runtime safety', () => {
     })
   })
 
-  it('leaves workspace working directory resolution to the ordinary Runtime path', async () => {
+  it('lets an explicit conversation working directory win over the workspace default', async () => {
     state.workspaces.set('workspace-1', {
       id: 'workspace-1',
       agentMd: 'Workspace prompt',
@@ -287,8 +287,31 @@ describe('scheduler Runtime safety', () => {
       workspaceId: 'workspace-1',
       systemPrompt: 'Workspace prompt'
     })
-    // resolveAgentOverrides intentionally leaves this unset for workspace
-    // Agents; the Runtime then applies tools/config.json before global fallback.
+    // 会话级选择优先于模板默认，与 goal/projectName 同一口径。旧契约是这里留空、
+    // 由 Runtime 回落 tools/config.json，代价是用户在目录条上选的目录、以及 Zed 经 ACP
+    // 传进来的仓库 cwd，对自定义 Agent 会话一律静默失效。
+    expect(state.agentCalls[0].overrides.workingDir).toBe('/conversation/config')
+  })
+
+  it('still falls back to the workspace default when the conversation picked no directory', async () => {
+    state.workspaces.set('workspace-1', {
+      id: 'workspace-1',
+      agentMd: 'Workspace prompt',
+      memories: []
+    })
+    state.tasks.set('task-1', task({ workspaceId: 'workspace-1' }))
+    state.conversations.set('conversation-1', {
+      ...state.conversations.get('conversation-1'),
+      config: {}
+    })
+    state.agentChat = async function* () {
+      yield { type: 'text', content: '任务完成' }
+    }
+
+    await scheduler.executeTask('task-1')
+
+    // 没显式选目录就保持原样——自定义 Agent「自带一块地」的语义不变，
+    // Runtime 继续按 tools/config.json → 全局工作区回落。
     expect(state.agentCalls[0].overrides.workingDir).toBeUndefined()
   })
 

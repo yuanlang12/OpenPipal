@@ -320,6 +320,19 @@ function isSyntheticErrorBubble(message: ChatMessage): boolean {
     /^\[Error\] [^\r\n]+$/.test(message.content || '')
 }
 
+/**
+ * 丢掉当前这一轮的"连接中断，正在重试"提示。重连救回来了就不该留——它的价值只在
+ * 解释"为什么等了这么久还失败"。返回原数组表示无需改动（调用方据此跳过落盘）。
+ */
+export function dropStreamRetryNotices(messages: ChatMessage[]): ChatMessage[] {
+  let lastUserIndex = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') { lastUserIndex = i; break }
+  }
+  const kept = messages.filter((m, i) => i <= lastUserIndex || m.messageSubtype !== 'stream-retry')
+  return kept.length === messages.length ? messages : kept
+}
+
 export function shouldSendMessageToModel(message: ChatMessage): boolean {
   if (isSyntheticErrorBubble(message)) return false
   const normalized = normalizeChatMessage(message)
@@ -341,12 +354,14 @@ export function shouldSendMessageToModel(message: ChatMessage): boolean {
 export function isRegeneratableAssistantMessage(message: ChatMessage): boolean {
   const normalized = normalizeChatMessage(message)
   if (normalized.role !== 'assistant') return false
+  if (normalized.messageSubtype === 'runtime-interrupted') return false
   if (normalized.messageKind === 'thinking' || normalized.messageKind === 'permission_request' || normalized.messageKind === 'inject-notice') return false
   return Boolean(normalized.content?.trim())
 }
 
 export function shouldIncludeInTranscriptExport(message: ChatMessage): boolean {
   const normalized = normalizeChatMessage(message)
+  if (normalized.messageSubtype === 'runtime-interrupted') return false
   if (normalized.messageKind === 'tool' || normalized.messageKind === 'thinking' || normalized.messageKind === 'permission_request' || normalized.messageKind === 'inject-notice') {
     return false
   }

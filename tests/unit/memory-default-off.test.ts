@@ -38,7 +38,7 @@ describe('关闭时提示词不留记忆痕迹', () => {
     expect(source).toContain('const memoryOn = isAutoMemoryEnabled() && role.memoryEnabled !== false')
     expect(source).toContain('const memories = !memoryOn')
     // 工作区提示词按同一个闸控制记忆格式与读写指引
-    expect(source).toContain('buildWorkspaceLayoutPrompt(overrides?.workspaceId, role.name, memoryOn)')
+    expect(source).toContain('buildWorkspaceLayoutPrompt(overrides?.workspaceId, role.name, memoryOn, effectiveWorkingDir)')
     expect(source).toContain("const memoryFormat = !memoryEnabled ? '' : `")
     expect(source).toContain('const memoryRules = memoryEnabled')
     expect(source).toContain('const globalMemoryRules = memoryEnabled')

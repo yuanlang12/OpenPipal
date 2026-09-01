@@ -24,18 +24,22 @@ import path from 'path'
 import { createHash } from 'crypto'
 import type { BrowserWindow } from 'electron'
 import type { BeforeToolCallContext, BeforeToolCallResult } from '@earendil-works/pi-agent-core'
-import { isSandboxed } from './sandbox-manager'
+import { isSandboxed, syncSandboxWorkspaceRoots } from './sandbox-manager'
 import { decideForCommand } from './browser-policy-store'
 import { getWorkingDir } from './config-manager'
+import { decideGitAccess, detectGitRemoteUse } from './git-policy'
+import { grantSessionProject, hasGitGrant, resolveProjectKey } from './git-policy-store'
 import { containsReceiptPlaceholder } from './tool-content-compactor'
 import { dataPath, getDataRoot } from './data-root'
 import { normalizeCodeExecutionLanguage } from './code-execution-language'
 import {
   discoveryRootContainsPluginMcpConfig,
+  ENV_TEMPLATE_BASENAMES,
   getAuditLogPath,
   getCredentialDiscoveryDenyRoots,
   getCredentialReadDenyPaths,
   getPluginsRootPath,
+  isEnvTemplateBasename,
   isPluginMcpConfigPath,
   SENSITIVE_READ_GLOBS
 } from './credential-paths'
@@ -157,6 +161,15 @@ const SENSITIVE_DIRS = [
   '.docker', '.kube', '.npmrc', '.netrc',
   '.bash_history', '.zsh_history',
   '.env', '.credentials', '.password-store',
+  // git / GitHub 凭证。2026-08-21 复核发现这几条一直没被覆盖——既不在这张表里、
+  // 也不在沙箱 denyRead 里，模型一条 `cat ~/.git-credentials` 就能拿走用户已有的
+  // git 凭证（配了 store helper 时是明文 https://user:token@host）。
+  // 做「按项目授权再放行凭证」之前必须先堵这道门，否则那套设计从一开始就绕得过去。
+  '.git-credentials',            // credential.helper=store 的默认落点
+  '.config/git/credentials',     // 同上的 XDG 位置
+  '.config/gh',                  // gh CLI 的 hosts.yml（含 oauth token）
+  '.config/hub',                 // hub CLI 的老位置
+  '.gitconfig.local',            // 常见的"把 token 塞进 url.insteadOf"私有配置
 ].map(d => path.join(HOME, d)).concat([
   // Keep the rest of the data root available for legitimate memories and
   // artifacts while hard-denying every authoritative credential location.
@@ -170,7 +183,21 @@ const SYSTEM_DIRS = [
   '/private/etc',
 ]
 
-/** 允许操作的目录白名单 */
+/**
+ * 允许操作的目录白名单。
+ *
+ * **这张表被两个层消费，而它们的匹配语义不一样**——加条目前先想清楚要哪一层生效：
+ *   - `isAllowedPath()`（本文件的授权层）把每条都过一遍 `resolveRealPath`，所以 `/tmp`
+ *     会解析成 `/private/tmp`，**能匹配上**；
+ *   - 沙箱 profile（`sandbox-manager.ts` 的 `allowWrite`）拿到的是这里的**原始字符串**，
+ *     渲染成 `(subpath "/tmp")`，而 seatbelt 比的是内核给的真实路径 `/private/tmp`，
+ *     **匹配不上**。
+ * 于是 `/tmp` 今天是"授权层放行、沙箱不放行"：结构化文件工具判 safe，真去写时 bash 那边
+ * 拿 EPERM。方向是偏严不是偏松，不构成安全问题，所以没顺手"修"——把沙箱那条对齐等于
+ * 把整个 `/private/tmp` 放开给 bash 写，那是扩大写权限，要单独决定。
+ * 别删 `/tmp`：授权层那一半是活的，`tests/bench/*` 六个脚本的 scratch 默认就在
+ * `/tmp/opb-shadow`（`os.tmpdir()` 在 macOS 是 `/var/folders/…/T`，盖不住它）。
+ */
 const ALLOWED_DIRS = [
   getDataRoot(),
   path.join(HOME, 'Documents'),
@@ -180,14 +207,32 @@ const ALLOWED_DIRS = [
   os.tmpdir(),
 ]
 
-/** 解析真实路径（追踪符号链接） */
+/**
+ * 解析成磁盘上的真实路径。
+ *
+ * 必须用 `realpathSync.native`：它走内核（macOS 上是 F_GETPATH），返回**磁盘真实大小写**；
+ * JS 版的 realpathSync 只跟符号链接，大小写原样返回。而 macOS 默认 APFS 不区分大小写，
+ * 本文件所有边界判定（pathWithin / SENSITIVE_DIRS / SYSTEM_DIRS / ALLOWED_DIRS）都是字节
+ * 前缀比较——不规范化的话，`~/.SSH` 与 `~/.ssh` 是同一个目录却比不上，整层黑名单被大小写
+ * 变体绕过。native 版对不存在的路径同样抛错，所以下面那套逐级回退原样保留。
+ */
+function realpathCanonical(p: string): string {
+  try {
+    return fs.realpathSync.native(p)
+  } catch {
+    // native 在极少数情况下（超长路径等）会失败，退回 JS 实现总比放弃解析强。
+    return fs.realpathSync(p)
+  }
+}
+
+/** 解析真实路径（追踪符号链接 + 规范化大小写） */
 function resolveRealPath(filePath: string): string {
   const visitedLinks = new Set<string>()
 
   const resolveAddressedPath = (input: string): string => {
     const addressed = path.resolve(input)
     try {
-      return fs.realpathSync(addressed)
+      return realpathCanonical(addressed)
     } catch {
       // Continue so new paths and dangling symlinks can still be classified.
     }
@@ -206,7 +251,7 @@ function resolveRealPath(filePath: string): string {
           return resolveAddressedPath(path.resolve(path.dirname(cursor), target, ...tail))
         }
         try {
-          return path.join(fs.realpathSync(cursor), ...tail)
+          return path.join(realpathCanonical(cursor), ...tail)
         } catch {
           return path.join(path.parse(addressed).root, '__openpipal_unresolvable_symlink__')
         }
@@ -239,21 +284,57 @@ function pathWithin(candidate: string, root: string): boolean {
   return candidate === root || candidate.startsWith(root + path.sep)
 }
 
-/** 检查路径是否触及敏感目录 */
-function isSensitivePath(filePath: string): boolean {
+/**
+ * 拦下来的是哪一类凭据。**分类不是为了改判据，是为了把话说准**——
+ * 三类共用一句「属于敏感目录（如 .ssh、.aws）」时，助手撞上工作目录里的 `.env`
+ * 会被告知那是个「敏感目录」，于是它去猜是不是路径写错了、要不要换个目录，
+ * 而真正的原因是「这个文件里是密钥」。判据一个字没动，只是让拒绝的理由和事实对上。
+ */
+type SensitivePathKind = 'dotenv' | 'plugin-mcp' | 'credential-dir'
+
+/** 拒绝理由。第二人称、说清「为什么」和「还能做什么」，别让模型去猜。 */
+function sensitivePathReason(kind: SensitivePathKind, resolvedPath: string): string {
+  switch (kind) {
+    case 'dotenv':
+      // 模板名单从 credential-paths 直接取：写死一份 prose 的话，名单一改，
+      // 这句话就会向模型陈述一条已经不成立的规则——而说准正是这个函数存在的理由。
+      return `${resolvedPath} 是 dotenv 文件，里面是密钥，不对助手开放。`
+        + `只有模板（${ENV_TEMPLATE_BASENAMES.join(' / ')}）可以读，且一律不能写。`
+    case 'plugin-mcp':
+      return `${resolvedPath} 是插件的 MCP 配置，里面存着服务器凭据，禁止访问。`
+    case 'credential-dir':
+      return `${resolvedPath} 在凭据目录里（.ssh / .aws / .gnupg / ~/.openpipal 这类），禁止访问。`
+  }
+}
+
+function classifySensitivePath(filePath: string, readOnly = false): SensitivePathKind | null {
   const real = resolveRealPath(filePath)
   const addressed = path.resolve(filePath)
   // Provider dotenv files can live in any user-selected workspace. Treat both
   // the addressed and canonical basenames as credentials so symlink aliases
   // cannot bypass the structured read tools' boundary.
+  // `.env.example` 这类**模板**不算凭据：它们本来就提交在版本库里给人看
+  // （判据与放行理由见 credential-paths.ts 的 `isEnvTemplateBasename`）。
+  //
+  // **只在只读访问上放行**。这道判据是读写共用的总闸：不加 `readOnly` 门的话，
+  // 模板会一路落到下面 `WRITE_FILE_TOOLS` 分支，而那里 `isSandboxed()` 为真时直接返回
+  // `safe`——于是装机版里助手能**静默覆写**别人仓库里已提交的 `.env.example`。
+  // 2026-08-28 第一版就漏了这道门，评审逮到、真机复现过（dev 下是 needs_confirmation，
+  // 沙箱下是 safe，所以只跑单测看不出来）。放宽读是有代价证据的，放宽写没有。
+  //
+  // 两个候选名都得是模板才放行——软链名和真实名不一致时按最严的算。
   const isDotEnv = [addressed, real].some(candidate => /^\.env/i.test(path.basename(candidate)))
+    && !(readOnly && [addressed, real].every(candidate => isEnvTemplateBasename(path.basename(candidate))))
   const pluginsRoot = getPluginsRootPath()
   const isPluginCredential = isPluginMcpConfigPath(addressed, pluginsRoot)
     || isPluginMcpConfigPath(real, resolveRealPath(pluginsRoot))
-  return isDotEnv || isPluginCredential || SENSITIVE_DIRS.some(d => (
+  if (isDotEnv) return 'dotenv'
+  if (isPluginCredential) return 'plugin-mcp'
+  const inCredentialDir = SENSITIVE_DIRS.some(d => (
     pathWithin(addressed, path.resolve(d))
     || pathWithin(real, resolveRealPath(d))
   ))
+  return inCredentialDir ? 'credential-dir' : null
 }
 
 /** Whether a recursive/discovery root would include a sensitive entry. */
@@ -275,11 +356,212 @@ function isSystemPath(filePath: string): boolean {
   return SYSTEM_DIRS.some(d => pathWithin(real, d))
 }
 
-/** 检查路径是否在允许目录内 */
-function isAllowedPath(filePath: string): boolean {
+/**
+ * 会话工作目录能不能当"允许根"。
+ *
+ * ALLOWED_DIRS 是编译期常量，只覆盖 ~/Documents|Desktop|Downloads、/tmp 和数据根——
+ * 代码仓库住在 ~/code、~/work、/Volumes/… 是常态，落在表外时六个结构化文件工具会被
+ * 判 risky 并硬拒（没有弹窗、没有会话放行），而目录选择器又不校验，症状是"选完了，
+ * 一动手全拒、且无声"。这里让用户显式选定的那个目录成为允许根，但只放行"足够窄"的：
+ * 整个家目录、/Users、/Volumes、根目录这类会把整台机器带进来的一律不算。
+ *
+ * 这不放松 Layer 3：具体文件仍要过敏感目录（.ssh/.aws/凭证）与系统目录检查，
+ * 那两道在 classifyToolRisk 里跑在本函数之前，工作目录再宽也绕不过去。
+ */
+export type WorkspaceRootRejection =
+  | 'empty'        // 没给目录
+  | 'not_found'    // 目录不存在
+  | 'not_dir'      // 给的是文件不是目录
+  | 'too_broad'    // 家目录 / /Users / 根目录这类，等于把整台机器放进来
+  | 'system'       // 系统目录
+  | 'sensitive'    // 目录本身或其下含凭证文件
+
+export interface WorkspaceRootVerdict {
+  ok: boolean
+  /** 不通过的机器可读原因——渲染层按它取 i18n 文案，不要直接展示 reason */
+  code?: WorkspaceRootRejection
+  /** 主进程日志用的中文原因（渲染层没有对应文案时的兜底） */
+  reason?: string
+  /** 参与判定的规范化路径，给 UI 拼进提示 */
+  resolved?: string
+}
+
+/**
+ * 不能当工作根的目录。
+ *
+ * 分两类：
+ * - equal：本身就等于"整台机器"，但它们的**子目录**是正常项目位置（~/xxx、/Volumes/Disk/repo），
+ *   所以只能等值拒绝，不能按子树拒。
+ * - subtree：整棵树都是配置 / 凭证 / 可执行体，里面没有合法的"项目目录"。必须按子树拒，
+ *   否则用户选到 ~/Library/Application Support 这类更深的目录就绕过了根判定。
+ *
+ * 为什么 ~/Library 这类要单列：它们既不等于家目录（逃过 equal），也不在 SENSITIVE_DIRS
+ * 那张固定表里（逃过敏感判定），而里面装着钥匙串、浏览器 Cookie、LaunchAgents——
+ * 一旦成为允许根，读就是 safe、写在沙箱下也是 safe，等于把持久化后门开成免确认操作。
+ */
+function deniedWorkspaceRoots(): { equal: string[]; subtree: string[] } {
+  return {
+    equal: [path.parse(HOME).root, HOME, path.dirname(HOME), '/Volumes', '/home', '/mnt', '/media'],
+    subtree: [
+      path.join(HOME, 'Library'),
+      path.join(HOME, '.config'),
+      path.join(HOME, '.local'),
+      path.join(HOME, '.cache'),
+      '/Library',
+      '/Applications',
+      '/opt',
+      '/private/var',
+      '/var',
+    ],
+  }
+}
+
+/**
+ * 家目录下形如 `~/.foo` 的**单层**点目录一律不当工作根（~/.claude、~/.ssh、~/.openpipal、
+ * ~/.cargo…都是工具的私产，不是项目）。只挡这一层：`~/.openpipal/workspace` 是我们自己的
+ * 默认工作区，必须继续可用。
+ */
+function isBareHomeDotDir(real: string): boolean {
+  return path.dirname(real) === HOME && path.basename(real).startsWith('.')
+}
+
+export function assessWorkspaceRoot(dir: string | null | undefined): WorkspaceRootVerdict {
+  if (!dir || typeof dir !== 'string' || !dir.trim()) {
+    return { ok: false, code: 'empty', reason: '没有指定目录' }
+  }
+  const addressed = resolveAgentPath(dir.trim(), HOME)
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(addressed)
+  } catch {
+    return { ok: false, code: 'not_found', reason: `目录不存在：${addressed}`, resolved: addressed }
+  }
+  if (!stat.isDirectory()) {
+    return { ok: false, code: 'not_dir', reason: `不是目录：${addressed}`, resolved: addressed }
+  }
+  const real = resolveRealPath(addressed)
+  // 过宽 / 系统 / 敏感三类一律不接受。注意比的是 real——符号链接指回家目录、
+  // 或大小写变体（macOS 默认不区分大小写）都已经在 resolveRealPath 里规范化掉。
+  const denied = deniedWorkspaceRoots()
+  if (denied.equal.some(root => real === resolveRealPath(root))) {
+    return { ok: false, code: 'too_broad', reason: `目录太宽，会把整台机器都放进工作范围：${real}`, resolved: real }
+  }
+  if (denied.subtree.some(root => pathWithin(real, resolveRealPath(root))) || isBareHomeDotDir(real)) {
+    return { ok: false, code: 'too_broad', reason: `这是系统或工具的私有目录，不是项目目录：${real}`, resolved: real }
+  }
+  // 别人的家目录：在 /Users 下但不在自己家里
+  if (pathWithin(real, resolveRealPath(path.dirname(HOME))) && !pathWithin(real, resolveRealPath(HOME))) {
+    return { ok: false, code: 'too_broad', reason: `不是当前用户的目录：${real}`, resolved: real }
+  }
+  if (isSystemPath(real) || SYSTEM_DIRS.some(d => pathWithin(path.resolve(d), real))) {
+    return { ok: false, code: 'system', reason: `系统目录不能作为工作目录：${real}`, resolved: real }
+  }
+  // 工作目录整个不许落在凭据上，读写一视同仁——所以这里**不传 readOnly**：
+  // 模板放行是给单个文件的读操作开的口子，不是给「拿凭据目录当工作根」开的。
+  if (classifySensitivePath(real) !== null || containsSensitivePath(real)) {
+    return { ok: false, code: 'sensitive', reason: `该目录包含凭证文件，不能作为工作目录：${real}`, resolved: real }
+  }
+  return { ok: true, resolved: real }
+}
+
+/**
+ * 工作目录当允许根时的规范化路径；不合格返回 null（不合格 = 只剩 ALLOWED_DIRS 那张表）。
+ * 每次文件工具分类都会走到这里，而工作目录在一次会话里几乎不变——按输入字符串记忆一格，
+ * 省掉每次 stat + realpath。目录被删或被换成文件属于跨会话事件，下次换目录自然失效。
+ */
+let _workspaceRootMemo: { key: string; value: string } | null = null
+function workspaceAllowRoot(dir: string | null | undefined): string | null {
+  if (!dir) return null
+  if (_workspaceRootMemo?.key === dir) return _workspaceRootMemo.value
+  const verdict = assessWorkspaceRoot(dir)
+  // **只缓存成功**。失败缓存会让"目录后来变可用了"永远恢复不了：工作目录在外置盘上、
+  // 开机时盘还没挂载，启动期那次判定写进 null，用户插上硬盘后本进程再也认不出来，
+  // 症状恰好就是这次要根治的"一动手全拒且无声"。失败本来就是异常路径，多跑一次 stat 无所谓。
+  if (!verdict.ok) {
+    _workspaceRootMemo = null
+    return null
+  }
+  _workspaceRootMemo = { key: dir, value: verdict.resolved! }
+  return verdict.resolved!
+}
+
+/** 工作目录变更后清掉记忆（换目录 / 目录被移走都要重新判一次） */
+export function invalidateWorkspaceRootCache(): void {
+  _workspaceRootMemo = null
+}
+
+/**
+ * 沙箱 allowWrite 用的工作根集合。
+ *
+ * 分层约定：**分类器是精确闸门，沙箱是粗网**。每次工具调用都按本次会话的 workingDir
+ * 精确判定（isAllowedPath），而 OS 沙箱是进程级的、一次配置对所有会话生效，做不到按
+ * 会话收窄——多个会话可以各带各的工作目录同时在跑，所以这里是并集。
+ *
+ * ⚠️ 并集对 bash / execute_code 是**真实的写权限**，不是"只少了 OS 那一层"：这两个工具
+ * 的分类器分支只看危险命令正则和 isSandboxed()，完全不做路径归属判定，OS 沙箱是它们
+ * 唯一的写边界。所以集合里多留一个根 = 那个根对 bash 一直可写。为此在用户显式换全局
+ * 工作目录时整表重置（见 replaceGlobalWorkspaceRoot）——那是用户在说"我不干那个项目了"；
+ * 仍在跑的会话会在下一次工具调用时把自己的根重新登记回来，自愈且失败方向是收紧。
+ */
+const _sandboxWorkspaceRoots = new Set<string>()
+let _sandboxRootsDirty = false
+
+/** 登记一个工作根供沙箱放行；不合格返回 null（此时沙箱维持原样） */
+export function registerWorkspaceRoot(dir: string | null | undefined): string | null {
+  const root = workspaceAllowRoot(dir)
+  if (!root) return null
+  if (!_sandboxWorkspaceRoots.has(root)) {
+    _sandboxWorkspaceRoots.add(root)
+    _sandboxRootsDirty = true
+  }
+  return root
+}
+
+/**
+ * 授权链路每次工具调用都会走到这里。登记本身是「memo 命中 + Set.has」两步，
+ * 真正贵的 updateConfig 只在集合确实变大时才发一次。
+ *
+ * 挂在 authorizeToolCall 而不是 createSecurityHook：现役的 pi-core 主循环是自己
+ * new PiCoreToolAuthorizer（pi-core-runtime.ts:489），根本不经过 createSecurityHook——
+ * 挂错地方就是「登记了但实体从未创建」那类静默落空，症状是沙箱始终不认新目录。
+ */
+function noteActiveWorkspaceRoot(dir: string | null | undefined): void {
+  registerWorkspaceRoot(dir)
+  if (!_sandboxRootsDirty) return
+  _sandboxRootsDirty = false
+  void syncSandboxWorkspaceRoots()
+}
+
+export function listWorkspaceRoots(): string[] {
+  return Array.from(_sandboxWorkspaceRoots)
+}
+
+/**
+ * 用户显式换了全局工作目录：整表重置成新根，不再累积。
+ * 见上方并集说明——旧根留着等于对 bash 一直可写。
+ */
+export function replaceGlobalWorkspaceRoot(dir: string | null | undefined): string | null {
+  _sandboxWorkspaceRoots.clear()
+  _workspaceRootMemo = null
+  const root = registerWorkspaceRoot(dir)
+  _sandboxRootsDirty = true
+  return root
+}
+
+/** 仅供测试：清空登记表 */
+export function resetWorkspaceRoots(): void {
+  _sandboxWorkspaceRoots.clear()
+  _sandboxRootsDirty = false
+  _workspaceRootMemo = null
+}
+
+/** 检查路径是否在允许目录内（ALLOWED_DIRS ∪ 本次会话的工作目录） */
+function isAllowedPath(filePath: string, workingDir?: string | null): boolean {
   if (!filePath) return false
   const real = resolveRealPath(filePath)
-  return ALLOWED_DIRS.some(d => pathWithin(real, resolveRealPath(d)))
+  if (ALLOWED_DIRS.some(d => pathWithin(real, resolveRealPath(d)))) return true
+  const root = workspaceAllowRoot(workingDir)
+  return !!root && pathWithin(real, root)
 }
 
 /**
@@ -318,6 +600,14 @@ export type RiskLevel = 'safe' | 'risky' | 'needs_confirmation'
 export interface RiskAssessment {
   level: RiskLevel
   reason: string
+  /**
+   * 这一次确认**不许被"完全允许"档吃掉**。
+   *
+   * 用来区分两种 needs_confirmation：一种是"别老打扰我"（改文件、可逆的破坏性命令），
+   * 用户选 full 就是在说这个；另一种是隐私暴露面（主目录/全盘遍历会触发 TCC 连环授权、
+   * 读遍桌面与 iCloud），那不是打扰，是另一件事的知情同意，不该被一次"别问我了"顺带关掉。
+   */
+  alwaysConfirm?: boolean
 }
 
 export interface ToolScope {
@@ -469,7 +759,13 @@ const READONLY_TOOLS = new Set([
 // ---- 文件工具按读写分组（均先过 ALLOWED_DIRS 路径验证）----
 // 只读发现类验证后免确认；写类继续走 artifact sidecar 封锁 + 沙箱分级。
 // 实案教训：ls/find/grep 实体补上后漏了这里 → 每次列目录弹确认，一次内联请求挂满 1800s 超时
-const READONLY_FILE_TOOLS = new Set(['read', 'read_file', 'ls', 'find', 'grep'])
+// 发现类 = 省略 path 时默认扫**整个工作目录**的那几个（对比 read：不给 path 就没得读）。
+// 单列一张表是因为下面要用它判两件不同的事——「path 省略时补哪个根」和「要不要查递归会不会
+// 扫进凭据目录」——而这两处以前各自写死了一遍 `ls || find || grep`。
+// 是 READONLY_FILE_TOOLS 的子集：加一个新的发现类工具，两张表都得进。
+const DISCOVERY_FILE_TOOL_NAMES = ['ls', 'find', 'grep']
+const DISCOVERY_FILE_TOOLS = new Set(DISCOVERY_FILE_TOOL_NAMES)
+const READONLY_FILE_TOOLS = new Set(['read', 'read_file', ...DISCOVERY_FILE_TOOL_NAMES])
 const WRITE_FILE_TOOLS = new Set(['write', 'edit', 'write_file', 'create_file'])
 
 // ---- MCP 工具名前缀分类 ----
@@ -479,19 +775,77 @@ const MCP_DESTRUCTIVE_PREFIXES = ['delete_', 'remove_', 'drop_', 'stop_', 'end_'
 // ---- 代码执行中的删除类 API（execute_code 的 python/js 与 bash rm 同权确认）----
 const DESTRUCTIVE_CODE_RE = /\bshutil\.rmtree\b|\bos\.(remove|unlink|rmdir|removedirs)\b|\.unlink\s*\(|\bsend2trash\b|\bfs\.(rmSync|rm|unlinkSync|unlink|rmdirSync|rmdir)\b|\brimraf\b/
 
-// ---- 危险 bash 命令模式 ----
-const DANGEROUS_BASH_PATTERNS = [
-  /\brm\s+(-[rRfF]+\s+|--recursive\s+)/,
-  /\bsudo\b/,
-  /\b(chmod|chown)\b.*\b777\b/,
-  /\bgit\s+(push\s+--force|reset\s+--hard|clean\s+-[fdx])/,
-  /\bfind\b.*\b-delete\b/,
-  /\bmkfs\b/,
-  /\bdd\s+if=/,
-  /\b(curl|wget)\b.*\|\s*(ba)?sh/,
-  /\beval\b/,
-  /\bexec\s+[^&|;]/,
+/**
+ * 命令位置：行首、或紧跟在 `;` `&&` `||` `|` `(` 之后。
+ *
+ * 之前 `eval` / `exec` 用的是裸 `\bword\b`，于是 `npm run test:eval`、
+ * `npx vitest run src/eval.test.ts`、`npm exec tsc` 全被当危险命令硬拒——它们里的
+ * eval/exec 是脚本名和子命令，不是 shell 内建。只在命令位置匹配，既保住防绕过的原意，
+ * 又不再打日常命令。
+ */
+function atCommandPosition(word: string): RegExp {
+  return new RegExp(String.raw`(?:^|[\n;&|(])\s*${word}\b`)
+}
+
+/**
+ * 危险命令分两档——依据是 CLAUDE.md 的判定公式「如果模型是完美的，这机制还需要吗？」
+ *
+ * blocked（永久硬边界）：不可逆、或越过沙箱的信任模型。完美的模型也不该在别人机器上
+ * 干这些，所以不给放行通道。
+ *
+ * confirm（交给用户裁决）：在编码工作里是**日常操作**——回滚一次失败的改动、清掉
+ * node_modules 重装、强推一个自己的分支。硬拒它们不是安全，是让 agent 在需要回滚时
+ * 走投无路；而且此前只拦 bash 这一条通道，模型转头用 python subprocess 就绕过去了
+ * （2026-07-26 实案：rm 被拦 → 改用 shutil.rmtree 把上个会话的产物删了）。
+ * 现在三条通道同一套判据、同一档结果：要么都问，要么都拦，不再有"堵一扇门开一扇窗"。
+ */
+const IRREVERSIBLE_COMMANDS: Array<[RegExp, string]> = [
+  [/\bsudo\b/, 'sudo 提权'],
+  [/\bmkfs\b/, '格式化文件系统'],
+  [/\bdd\s+if=/, 'dd 裸设备写入'],
+  [/\b(curl|wget)\b[^\n]*\|\s*(ba|z|k)?sh\b/, '把下载内容直接喂给 shell'],
+  [/\b(chmod|chown)\b.*\b777\b/, '把权限改成 777'],
+  [atCommandPosition('eval'), 'shell eval'],
+  [atCommandPosition('exec'), 'shell exec'],
 ]
+
+const DESTRUCTIVE_COMMANDS: Array<[RegExp, string]> = [
+  // rm 的开关可以连写也可以分开：-rf / -r -f / --recursive / --force
+  [/\brm\s+(-[a-zA-Z]*[rRfF]|--recursive\b|--force\b)/, '递归或强制删除（rm）'],
+  [/\bgit\s+reset\s+--hard\b/, 'git reset --hard'],
+  [/\bgit\s+clean\s+-[a-zA-Z]*[fdx]/, 'git clean'],
+  // --force-with-lease 恰恰是 --force 的安全替代，不能一起拦
+  [/\bgit\s+push\b[^\n;&|]*(--force(?!-with-lease)\b|\s-f\b)/, 'git push 强推'],
+  // 不能写 `\b-delete\b`：`\b` 要求非词字符与词字符相邻，而 `-` 前面是空格——两边都是
+  // 非词字符，边界不成立，这条规则原本从来没有命中过（继承自旧的 DANGEROUS_BASH_PATTERNS）
+  [/\bfind\b.*(?:^|\s)-delete\b/, 'find -delete'],
+]
+
+export type DestructiveTier = 'blocked' | 'confirm'
+export interface DestructiveVerdict { tier: DestructiveTier; label: string }
+
+/**
+ * 把参数数组式的调用摊平成近似命令行，让 python/js 通道也能被同一套判据看见：
+ * `subprocess.run(["git", "reset", "--hard"])` → `subprocess.run( git   reset   --hard )`。
+ * 只用于 confirm 档——多问一次的代价远小于漏过；blocked 档仍只看原文，避免字符串里
+ * 提一句 sudo 就把整段代码硬拒。
+ */
+function flattenArgvLiterals(code: string): string {
+  return code.replace(/['"`,[\]]/g, ' ')
+}
+
+/** 三条通道（bash / execute_code(bash) / execute_code(python|js)）共用的危险判据 */
+export function assessDestructiveCommand(text: string, isShell: boolean): DestructiveVerdict | null {
+  if (!text) return null
+  for (const [re, label] of IRREVERSIBLE_COMMANDS) {
+    if (re.test(text)) return { tier: 'blocked', label }
+  }
+  const scanned = isShell ? [text] : [text, flattenArgvLiterals(text)]
+  for (const [re, label] of DESTRUCTIVE_COMMANDS) {
+    if (scanned.some(candidate => re.test(candidate))) return { tier: 'confirm', label }
+  }
+  return null
+}
 
 // ---- bash 直写 artifact sidecar 旁路封锁 ----
 // write/edit 工具已锁死 ARTIFACTS_SIDECAR_ROOT（见下方 write/edit 分支），但 bash 里的
@@ -579,20 +933,29 @@ export function classifyToolRisk(
 
   // ---- Layer 3 硬性边界（路径检查优先）----
   const requestedFilePath = extractPath(args)
+  // 工具真正会用的那个工作目录：显式 scope 优先，否则用全局配置的。相对路径解析、
+  // discovery 的默认根、允许根判定三处必须用同一个值，否则会出现"按 A 解析、按 B 判"。
+  const effectiveWorkingDir = scope.workingDir || getWorkingDir()
   // Discovery tools default to the active working directory when path is
   // omitted. Authorize the same effective path the tool will actually scan;
   // otherwise `grep({ pattern })` from the data root bypasses the explicit
   // config.json check by searching `.`.
-  const filePath = requestedFilePath || (
-    toolName === 'ls' || toolName === 'find' || toolName === 'grep'
-      ? (scope.workingDir || getWorkingDir())
-      : null
-  )
+  const discoveryRoot = DISCOVERY_FILE_TOOLS.has(toolName)
+  const filePath = requestedFilePath || (discoveryRoot ? effectiveWorkingDir : null)
   const resolvedFilePath = filePath ? resolveAgentPath(filePath, scope.workingDir) : null
   if (filePath) {
-    const discoveryRoot = toolName === 'ls' || toolName === 'find' || toolName === 'grep'
-    if (isSensitivePath(resolvedFilePath!) || (discoveryRoot && containsSensitivePath(resolvedFilePath!))) {
-      return { level: 'risky', reason: `路径 ${resolvedFilePath} 属于敏感目录（如 .ssh、.aws），禁止访问` }
+    // 只读工具（read/read_file 与 ls/find/grep 这类发现）才享受 dotenv 模板放行；
+    // write/edit 一律按凭据拦死，理由见 classifySensitivePath 里那段。
+    const readOnlyAccess = READONLY_FILE_TOOLS.has(toolName)
+    const sensitiveKind = classifySensitivePath(resolvedFilePath!, readOnlyAccess)
+    if (sensitiveKind) {
+      return { level: 'risky', reason: sensitivePathReason(sensitiveKind, resolvedFilePath!) }
+    }
+    if (discoveryRoot && containsSensitivePath(resolvedFilePath!)) {
+      return {
+        level: 'risky',
+        reason: `${resolvedFilePath} 下面就是凭据目录，整个递归会把密钥一起读出来，禁止访问。换一个更具体的子目录。`
+      }
     }
     if (isSystemPath(resolvedFilePath!)) {
       return { level: 'risky', reason: `路径 ${resolvedFilePath} 属于系统目录，禁止操作` }
@@ -611,10 +974,10 @@ export function classifyToolRisk(
     if (commandWritesArtifactSidecar(command)) {
       return { level: 'risky', reason: 'artifact 内容必须走 edit_artifact / create_artifact；bash 直写 sidecar 会绕过编译与完整性护栏（grep/cat/ls 只读核查不受限）' }
     }
-    const matched = DANGEROUS_BASH_PATTERNS.find(p => p.test(command))
-    if (matched) {
-      // 危险命令即使有沙箱也阻止（Layer 3 硬性边界）
-      return { level: 'risky', reason: `检测到危险命令: ${command.substring(0, 80)}` }
+    const destructive = assessDestructiveCommand(command, true)
+    if (destructive?.tier === 'blocked') {
+      // 不可逆 / 越过沙箱信任模型的那一档：有沙箱也拦（Layer 3 硬性边界）
+      return { level: 'risky', reason: `检测到危险命令（${destructive.label}）: ${command.substring(0, 80)}` }
     }
     // Shell text is not a reliably parseable filesystem policy boundary: a
     // sensitive path can be assembled through variables, substitutions, or a
@@ -623,13 +986,27 @@ export function classifyToolRisk(
     if (!isSandboxed()) {
       return { level: 'risky', reason: '系统沙箱未启用，已安全禁用 Shell 执行' }
     }
+    // 破坏性但可逆的那一档放在沙箱判定之后：没有沙箱时 shell 整条已被禁，
+    // 先判会得到「rm -rf 只要确认、ls 反而硬拒」的倒挂。
+    if (destructive?.tier === 'confirm') {
+      // alwaysConfirm：这一档是「交给用户裁决」的破坏性操作（rm -rf / git reset --hard /
+      // git clean / 强推）。它们在编码工作里是日常操作所以没被硬拒，但**裁决人是用户**——
+      // "完全允许"表达的是嫌弹框烦，不是授权 agent 自己决定要不要抹掉未提交的改动。
+      // 少问这一次省下几秒，问漏一次可能是别人半天的活。
+      return {
+        level: 'needs_confirmation',
+        reason: `${destructive.label}: ${command.substring(0, 80)}`,
+        alwaysConfirm: true
+      }
+    }
     // 主目录/全盘遍历防线（2026-07-22 实案：模型找不到粘贴图 → `find /Users/xxx -name image.png`
     // 全盘扫描，触发 iCloud/桌面/音乐等 TCC 连环授权弹窗）。读操作虽无破坏性，但隐私暴露面 =
     // 整个主目录；**不因沙箱降级**——沙箱管写与网络，不管读隐私。升级为需用户确认；
     // 具体子目录（~/Documents/code 等）不受影响。
     const homeScan = detectHomeWideScan(command)
     if (homeScan) {
-      return { level: 'needs_confirmation', reason: homeScan }
+      // alwaysConfirm：隐私边界与"要不要每次问"无关，完全允许档也得问（见 RiskAssessment 注释）
+      return { level: 'needs_confirmation', reason: homeScan, alwaysConfirm: true }
     }
     return { level: 'safe', reason: `沙箱保护下执行: ${command.substring(0, 80)}` }
   }
@@ -702,16 +1079,25 @@ export function classifyToolRisk(
     if (!lang) {
       return { level: 'risky', reason: `不支持的代码语言: ${String(args?.language || '(空)')}` }
     }
-    if (DESTRUCTIVE_CODE_RE.test(code) || (lang === 'bash' && DANGEROUS_BASH_PATTERNS.some((re) => re.test(code)))) {
-      return isSandboxed()
-        ? { level: 'needs_confirmation', reason: '代码包含删除/危险操作（与 bash 同级确认）' }
-        : { level: 'risky', reason: '代码包含删除/危险操作，且系统沙箱未启用，已安全阻止' }
+    // 与 bash 通道同一套判据、同一档结果——此前只有 lang==='bash' 才过危险命令表，
+    // python 里 subprocess 调 git reset --hard 是静默放行的。
+    const destructiveCode = assessDestructiveCommand(code, lang === 'bash')
+    if (destructiveCode?.tier === 'blocked') {
+      return { level: 'risky', reason: `代码包含危险操作（${destructiveCode.label}），已安全阻止` }
     }
     // Arbitrary Python/JavaScript/Bash can construct sensitive paths in ways a
     // source regex cannot soundly recognize. Fail closed unless the execution
     // backend has the denyRead sandbox that protects credential files.
     if (!isSandboxed()) {
       return { level: 'risky', reason: '系统沙箱未启用，已安全禁用代码执行' }
+    }
+    if (destructiveCode?.tier === 'confirm' || DESTRUCTIVE_CODE_RE.test(code)) {
+      // 与 bash 同档同待遇：完全允许档也吃不掉（否则堵了 bash 这扇门又从代码执行开一扇窗）
+      return {
+        level: 'needs_confirmation',
+        reason: `代码包含删除/破坏性操作${destructiveCode ? `（${destructiveCode.label}）` : ''}，与 bash 同级确认`,
+        alwaysConfirm: true
+      }
     }
     return { level: 'safe', reason: '沙箱保护下执行代码' }
   }
@@ -737,8 +1123,17 @@ export function classifyToolRisk(
     if (!readOnly && builtinResource) {
       return { level: 'risky', reason: `内置资源只读，路径 ${resolvedFilePath} 不在允许的工作目录内` }
     }
-    if (filePath && !isAllowedPath(resolvedFilePath!) && !(readOnly && builtinResource)) {
-      return { level: 'risky', reason: `路径 ${resolvedFilePath} 不在允许的工作目录内` }
+    if (filePath && !isAllowedPath(resolvedFilePath!, effectiveWorkingDir) && !(readOnly && builtinResource)) {
+      // 理由要能让模型自己纠偏：告诉它当前工作目录是什么，而不是只说"不允许"。
+      // 否则历史行为是降级去 bash cat/sed 硬读（2026-07-22 实案），丢行号与分页语义。
+      return {
+        level: 'risky',
+        // 只陈述事实，不指定人机流程：定时任务面没有 ask_user（source-tool-policy 剔掉了），
+        // ACP 面用户根本不在 OpenPipal 界面里——指路"去重新选目录"两边都是错的。
+        // 确定性归代码，判断力归模型：告诉它边界在哪，下一步由它按手上有什么工具决定。
+        reason: `路径 ${resolvedFilePath} 不在允许的工作目录内（当前工作目录：${effectiveWorkingDir}）。`
+          + `请在当前工作目录内操作；确需其他目录时说明原因并停止本次操作。`
+      }
     }
     if (READONLY_FILE_TOOLS.has(toolName)) {
       return { level: 'safe', reason: '只读文件访问（路径已验证）' }
@@ -962,7 +1357,13 @@ export async function requestUserConfirmation(
   reason: string,
   conversationId?: string,
   signal?: AbortSignal,
-  approvalScope: SessionApprovalScope = localSessionApprovalScope()
+  approvalScope: SessionApprovalScope = localSessionApprovalScope(),
+  /**
+   * 这次操作实际会跑在哪个目录。只给主进程侧的「本次会话允许」用（git 按项目授权），
+   * 不进渲染层载荷。必须显式传：config-manager 的 getWorkingDir() 是全局值，
+   * 而每条会话可以有自己的工作目录，拿错了就会把授权记到别的仓库上。
+   */
+  workingDir?: string
 ): Promise<boolean> {
   // A cancelled run must never consume a cached approval or create a new
   // permission request. The caller checks again before invoking the remote
@@ -1028,6 +1429,7 @@ export async function requestUserConfirmation(
         reason,
         conversationId,
         approvalScope,
+        workingDir,
       })
     } catch (error) {
       console.error(`[Security] 内联权限请求发送失败,自动拒绝: ${toolName}`, error)
@@ -1041,10 +1443,113 @@ export async function requestUserConfirmation(
  * @param onConfirmation needs_confirmation 级别的处理器（desktop: dialog 弹窗）
  *   不再提供 autoApprove 模式——所有环境都必须有明确的权限处理器。
  */
+/**
+ * 权限档位 —— 只给编码助手用的会话级开关（不做全局：日常用户不该被逼着理解这个概念）。
+ *
+ * - `readonly` 只看不动：写类工具连 schema 都拿不到（`filterOpenPipalTools` 收窄），
+ *   这里再拦一道纵深防御——万一某条路径漏了收窄，工具名不在白名单就直接拒。
+ * - `auto` 自动审核：今天的行为，缺省值。
+ * - `full` 完全允许：只短路 `needs_confirmation` 那一档的弹框。
+ *
+ * **不可破的不变量**：`full` 绝不放行 `risky`，也绝不越过 `assessToolScope` 的任务边界。
+ * 那两层拦的是敏感目录、破坏性命令、沙箱未启用、跨租户越界——它们不是"要不要打扰用户"
+ * 的问题，是"这件事本来就不该发生"。用户点"完全允许"表达的是"别再问我了"，
+ * 不是"把安全层关掉"。回归在 tests/unit/permission-tier.test.ts。
+ */
+export type PermissionTier = 'readonly' | 'auto' | 'full'
+
+/**
+ * 只读档放行的工具白名单。**显式清单而不是"名字里带 read 就放行"**——
+ * 后者会把 `read_page_content` 之外将来任何叫 `read_*` 的写工具误放进来。
+ *
+ * 刻意不含 `bash`：它能 `echo x > file`，而"命令是不是只读"没法可靠判定
+ * （`git log; rm -rf` 这种拼接一破就破）。只读档因此跑不了 `git log`——
+ * 这是第一版故意选的保守面，要跑命令就切 `auto`。
+ * 也不含 `subagent`：子代理自己带一整套工具，档位不会跟着传下去。
+ *
+ * 浏览器三个读工具与 browser-tools.ts 的 BROWSER_READ_TOOLS 必须一致
+ * （不 import 是为了不把 browser-control 那条依赖链拖进安全层，改由测试钉住）。
+ */
+export const READONLY_TIER_TOOLS: readonly string[] = [
+  'read', 'ls', 'find', 'grep',
+  'read_artifact',
+  'read_screen', 'capture_screenshot',
+  'web_search', 'read_page_content',
+  'get_environment',
+  'ask_user', 'update_todos',
+  'browser_list_tabs', 'browser_read_page', 'browser_screenshot'
+]
+
 export interface ToolAuthorizationOptions {
   conversationId?: string
   onConfirmation?: PermissionHandler
   scope?: Omit<ToolScope, 'conversationId'>
+  /** 会话级权限档位，缺省 'auto'（= 历史行为，不传等于没这个功能） */
+  tier?: PermissionTier
+}
+
+/**
+ * git 凭据的项目轴门。
+ *
+ * 为什么单开一道门，而不是塞进 classifyToolRisk：那里没有 conversationId、也没有
+ * 「用户授权过这个项目」这个状态，而这道门的全部意义就是那两样。
+ *
+ * **这一条是收紧不是放宽**（2026-08-23 实测）：沙箱里钥匙串 helper 是通的，
+ * 而 `git push origin main` 不在破坏性命令表里（表里只有强推）、沙箱下判 `safe`——
+ * 也就是说这道门加上之前，模型可以拿用户已存的凭据直接推代码，一次都不问。
+ *
+ * 命令认得出来才拦，认不出就当普通命令走原路（detectGitRemoteUse 已刻意偏向多认）。
+ */
+async function enforceGitProjectGrant(
+  toolName: string,
+  args: Record<string, any>,
+  context: { conversationId?: string; tier: PermissionTier; workingDir?: string },
+  signal?: AbortSignal
+): Promise<BeforeToolCallResult | undefined> {
+  if (toolName !== 'bash' && toolName !== 'shell' && toolName !== 'execute_code') return undefined
+  const command = String(
+    (toolName === 'execute_code' ? args?.code : args?.command) || ''
+  )
+  const use = detectGitRemoteUse(command)
+  if (!use) return undefined
+
+  const workingDir = context.workingDir || getWorkingDir()
+  const decision = decideGitAccess(context.tier, {
+    granted: hasGitGrant(workingDir, context.conversationId)
+  })
+  if (decision === 'allow') {
+    // 完全允许档也要把授权记下来：执行层（openpipal-execution-env）按同一份授权决定
+    // 要不要把 GITHUB_TOKEN 发给子进程。不记的话「完全允许」对用 gh 的人是空的。
+    if (context.conversationId) grantSessionProject(context.conversationId, workingDir)
+    return undefined
+  }
+  if (decision === 'deny') {
+    const reason = `只读档不动远端：${use.label} 会用你的 git 凭据联网。要跑就请用户切到"自动审核"。`
+    writeAuditLog(toolName, args, { level: 'risky', reason })
+    console.warn(`[Security] 只读档阻止 git 远端操作: ${use.label}`)
+    return { block: true, reason }
+  }
+
+  const project = resolveProjectKey(workingDir)
+  const reason = `${use.label} 会用你的 git 凭据访问远端。允许「${project}」这个项目使用你的 git 凭据吗？`
+  const approved = await requestUserConfirmation(
+    toolName,
+    args,
+    reason,
+    context.conversationId,
+    signal,
+    localSessionApprovalScope(workingDir),
+    workingDir
+  )
+  if (!approved) {
+    console.log(`[Security] 用户拒绝 git 项目授权: ${project}`)
+    return { block: true, reason: '用户没有授权这个项目使用 git 凭据' }
+  }
+  // 只记本对话。持久授权走「本次会话允许」那个按钮（ipc-handlers 里落盘），
+  // 免得一次误点就把某个仓库永久授权出去。
+  if (context.conversationId) grantSessionProject(context.conversationId, workingDir)
+  console.log(`[Security] 用户授权 git 项目: ${project}`)
+  return undefined
 }
 
 /** Runtime-neutral authorization entrypoint shared by low-level Agent and AgentHarness. */
@@ -1054,7 +1559,9 @@ export async function authorizeToolCall(
   options: ToolAuthorizationOptions = {},
   signal?: AbortSignal
 ): Promise<BeforeToolCallResult | undefined> {
-  const { conversationId, onConfirmation, scope } = options
+  const { conversationId, onConfirmation, scope, tier = 'auto' } = options
+  // 本次调用用的工作根要进沙箱 allowWrite，否则分类器放行了 OS 那层还拦着。
+  noteActiveWorkspaceRoot(scope?.workingDir)
   const handler = onConfirmation || defaultDenyHandler
   const approvalScope = scope?.origin === 'mcp'
     ? { namespace: 'mcp:unscoped', argumentScoped: true }
@@ -1066,6 +1573,23 @@ export async function authorizeToolCall(
       console.warn(`[Security] 任务边界阻止: ${toolName} — ${scopeAssessment.reason}`)
       return { block: true, reason: scopeAssessment.reason }
     }
+
+    // 只读档纵深防御：正常路径上写类工具的 schema 根本不会发给模型
+    // （filterOpenPipalTools 已收窄），这里兜住"某条组装路径漏了收窄"的情况。
+    // 理由写清楚是给模型看的——让它知道不是工具坏了，而是这一档就不给动手，
+    // 于是它会去汇报发现而不是换个工具再试一遍。
+    if (tier === 'readonly' && !READONLY_TIER_TOOLS.includes(toolName)) {
+      const reason = `只读档：${toolName} 会改动东西，本档只放行读取类工具。把结论告诉用户，需要动手就请用户切到"自动审核"。`
+      writeAuditLog(toolName, args, { level: 'risky', reason })
+      console.warn(`[Security] 只读档阻止: ${toolName}`)
+      return { block: true, reason }
+    }
+
+    // git 项目轴授权：这条命令要用用户的 git 凭据吗？
+    const gitBlock = await enforceGitProjectGrant(toolName, args, {
+      conversationId, tier, workingDir: scope?.workingDir
+    }, signal)
+    if (gitBlock) return gitBlock
 
     // 分类
     const assessment = classifyToolRisk(toolName, args, scope)
@@ -1082,6 +1606,15 @@ export async function authorizeToolCall(
         return { block: true, reason: assessment.reason }
 
       case 'needs_confirmation': {
+        // 完全允许档：用户已经说过"这段活别再问我"。只吃掉这一档的弹框——
+        // 上面的 risky 与 assessToolScope 走不到这里，安全层没有被关掉。
+        // **远程 MCP 工具除外**：它的名字和实现都由对方控制，classifyToolRisk 把它无条件
+        // 判成 needs_confirmation 正是为了不让它继承内置工具的自动放行，这里跟着守住。
+        if (tier === 'full' && scope?.origin !== 'mcp' && !assessment.alwaysConfirm) {
+          console.log(`[Security] 完全允许档: ${toolName}`)
+          return undefined
+        }
+
         // 浏览器站点轴:本对话已对该 host 授权 → 放行(丝滑:同站点不反复弹)
         if (toolName.startsWith('browser_') && conversationId) {
           const { decision } = decideForCommand(toolName, args, conversationId)
@@ -1182,12 +1715,13 @@ export async function authorizeToolCall(
 export function createSecurityHook(
   conversationId?: string,
   onConfirmation?: PermissionHandler,
-  scope?: Omit<ToolScope, 'conversationId'>
+  scope?: Omit<ToolScope, 'conversationId'>,
+  tier?: PermissionTier
 ) {
   return (context: BeforeToolCallContext, signal?: AbortSignal) => authorizeToolCall(
     context.toolCall.name,
     context.args as Record<string, any>,
-    { conversationId, onConfirmation, scope },
+    { conversationId, onConfirmation, scope, tier },
     signal
   )
 }

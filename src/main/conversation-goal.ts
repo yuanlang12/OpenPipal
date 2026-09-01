@@ -7,7 +7,7 @@
  */
 
 import type { ConversationGoal } from './goal-checker'
-import { getConversation, mutateConversationConfig } from './conversation-store'
+import { mutateConversationConfig, peekConversation } from './conversation-service'
 
 /** 与 Claude Code Stop hook 的 BLOCK_CAP 对齐（见 goal-checker.ts 的字段注释） */
 export const GOAL_MAX_TURNS = 8
@@ -57,5 +57,5 @@ export function clearConversationGoal(conversationId: string): Promise<boolean> 
 
 export function readConversationGoal(conversationId: string): ConversationGoal | null {
   if (!conversationId) return null
-  return getConversation(conversationId)?.config?.goal || null
+  return peekConversation(conversationId)?.config?.goal || null
 }

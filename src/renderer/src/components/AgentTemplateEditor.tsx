@@ -16,10 +16,25 @@ export function AgentTemplateEditor({ initial, onSave, onCancel }: EditorProps) 
   const [icon, setIcon] = useState(initial?.icon || '🤖')
   const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt || '')
   const [workingDir, setWorkingDir] = useState(initial?.workingDir || '')
+  const [workingDirError, setWorkingDirError] = useState<string | null>(null)
 
   const handleSelectDir = async () => {
     const dir = await window.api.selectDirectory?.()
-    if (dir) setWorkingDir(dir)
+    if (!dir) return
+    // 第三个选工作目录的入口，与设置页/目录条共用同一套判据与文案。
+    // 不校验的话这里存下的目录会在起会话时被安全层静默拒绝，用户还是那句"选完了却动不了"。
+    const verdict = await window.api.validateWorkingDir?.(dir)
+    if (verdict && !verdict.ok) {
+      setWorkingDirError(
+        t(`settings.apps.workingDirectory.rejected.${verdict.code || 'unknown'}`, {
+          path: verdict.resolved || dir,
+          defaultValue: verdict.reason || ''
+        })
+      )
+      return
+    }
+    setWorkingDirError(null)
+    setWorkingDir(dir)
   }
 
   const handleSave = () => {
@@ -115,6 +130,9 @@ export function AgentTemplateEditor({ initial, onSave, onCancel }: EditorProps) 
             <FolderOpen className="w-4 h-4 text-surface-500" />
           </button>
         </div>
+        {workingDirError && (
+          <p role="alert" className="mt-1 text-[11px] text-red-500 break-words">{workingDirError}</p>
+        )}
       </div>
 
       {/* 系统提示词 */}

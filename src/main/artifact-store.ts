@@ -16,7 +16,11 @@
 import fs from 'fs'
 import path from 'path'
 import { homedir } from 'os'
-import { listConversations, getConversationMessages } from './conversation-store'
+import {
+  getConversationMessages,
+  listConversations,
+  peekConversationMessages,
+} from './conversation-service'
 import { dataPath } from './data-root'
 
 /**
@@ -575,7 +579,7 @@ export function listConversationArtifacts(conversationId: string): ConversationA
   let files: string[]
   try { files = fs.readdirSync(dir) } catch { return [] }
   const titles = new Map<string, string>()
-  for (const m of getConversationMessages(conversationId)) {
+  for (const m of peekConversationMessages(conversationId)) {
     const ref = m.artifactRef
     if (ref?.id) titles.set(ref.id, ref.title || '')
   }
@@ -630,14 +634,14 @@ export interface ArtifactHistoryEntry {
  * 历史产物枚举（首屏产物列表用）——只扫消息里的 artifactRef 元数据，不读 content。
  * 会话按 updatedAt 降序，同 id 多次迭代取最后一次的 ref（title 最新）。
  */
-export function listArtifactHistory(opts?: { role?: string; limit?: number }): ArtifactHistoryEntry[] {
+export async function listArtifactHistory(opts?: { role?: string; limit?: number }): Promise<ArtifactHistoryEntry[]> {
   const role = opts?.role
   const limit = opts?.limit ?? 24
   const out: ArtifactHistoryEntry[] = []
   const seen = new Set<string>()
-  for (const conv of listConversations()) {
+  for (const conv of await listConversations()) {
     if (role && conv.role !== role) continue
-    const msgs = getConversationMessages(conv.id)
+    const msgs = await getConversationMessages(conv.id)
     for (let i = msgs.length - 1; i >= 0; i--) {
       const ref = msgs[i].artifactRef
       if (!ref?.id || seen.has(ref.id)) continue

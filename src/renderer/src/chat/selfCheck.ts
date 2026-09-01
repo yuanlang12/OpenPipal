@@ -140,11 +140,16 @@ export function resolveSelfCheckTarget(
   return textualHit
 }
 
-/** 最近一条 render_artifact 的工具结果文本（有 content 才算已返回） */
-export function latestSelfCheckResult(messages: ChatMessage[]): string | null {
+/** 最近一条 render_artifact 的已完成工具消息。对象身份用于识别“新一次复检”。 */
+export function latestSelfCheckResultMessage(messages: ChatMessage[]): ChatMessage | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
-    if (getMessageKind(m) === 'tool' && m.toolName === SELF_CHECK_TOOL && m.content) return m.content
+    if (getMessageKind(m) === 'tool' && m.toolName === SELF_CHECK_TOOL && m.content) return m
   }
   return null
+}
+
+/** 最近一条 render_artifact 的工具结果文本（兼容既有纯逻辑调用方）。 */
+export function latestSelfCheckResult(messages: ChatMessage[]): string | null {
+  return latestSelfCheckResultMessage(messages)?.content || null
 }

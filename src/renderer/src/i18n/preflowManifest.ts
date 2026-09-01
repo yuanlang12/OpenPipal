@@ -57,6 +57,12 @@ export interface PreflowManifest {
   allowSkip?: boolean
   inputPlaceholder?: string
   dsSelector?: { enabled?: boolean }
+  /**
+   * 前置页要不要带工作目录选择器。开着就把 WorkingDirBar 原样挂进输入卡下沿——
+   * preflow 会整页替换欢迎页，不挂的话编码这类「先选仓库」的角色反而没地方选目录。
+   * 目录直接写进 chatStore.conversationConfig.workingDir，不走 PreflowSubmitData。
+   */
+  workingDir?: { enabled?: boolean }
   libraryTabs?: { artifacts?: string; systems?: string }
   systemsEmptyHint?: string
   systemsCreate?: { label?: string; kickoff?: string }

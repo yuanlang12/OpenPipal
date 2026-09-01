@@ -281,6 +281,11 @@ export function createTranscriptCollector(): {
     feed(event) {
       if (event.type === 'text' && typeof event.content === 'string') currentSegment += event.content
       else if (event.type === 'text_flush') commit()
+      // 重连是整轮重发，模型从零重写：本次尝试已累积的半截正文必须丢掉，
+      // 否则第一次尝试的残句会和第二次的完整答案粘成一条落进历史。
+      // （渲染层在 chatStore 的 onStreamRetry 里做同一件事；这里是无渲染层的那两条路
+      //  ——定时任务与 ACP——唯一的写侧。）
+      else if (event.type === 'stream_retry') currentSegment = ''
       // 本轮 RC 快照，主进程在 turn 开跑时广播一次。桌面由渲染层落盘，服务端两条路（ACP /
       // 定时任务）没有渲染层，只能在这里接住——不落盘则下轮无快照可回放，前缀缓存从这条消息
       // 断掉（pi-message-conversion.buildRuntimeContextMessage 要求回放与实发逐字节一致）。

@@ -568,14 +568,14 @@ test.describe('Focus 模式:turn 完成态收敛', () => {
     await expect(thinkRow).toContainText('思考过程')
   })
 
-  test('F14: 模型没通就不报秒数;步骤空档有一行不带边框的进行中标记', async ({ page }) => {
-    // 用户实锤(2026-08-18):① "发了消息就计时,其实模型还没通" ②"去掉深度思考中的 loading
-    // 以后,经常看不到下一步,总感觉是中断的"。①→ 连接期间只写「连接模型…」;
-    // ②→ 步骤之间补一行标记,但**不能是带边框的气泡**(上一版就是因为那个框被退回的)。
+  test('F14: 等待模型阶段从 0 连续报秒;步骤空档有一行不带边框的进行中标记', async ({ page }) => {
+    // 等待首字节与模型生成是两个状态，但等待时间必须透明可见。否则首个事件到达时，
+    // 文案会从「连接模型…」直接跳成「处理中 7 秒」，让人误以为客户端攒了一批内容。
+    // 步骤之间仍补一行标记，但**不能是带边框的气泡**。
     await page.addInitScript({ content: MOCK_API })
     await page.goto('/')
     await page.waitForLoadState('networkidle')
-    const t0 = 1787018758000
+    const t0 = Date.now() - 2100
     const bar = page.locator('[data-testid="process-group-toggle"]')
 
     // 发了消息,模型一个事件都还没回来
@@ -587,8 +587,9 @@ test.describe('Focus 模式:turn 完成态收敛', () => {
         messages: [{ id: 'u1', role: 'user', content: '在吗', timestamp: t0, messageKind: 'user' }],
       })
     }, t0)
-    await expect(bar).toContainText('连接模型')
-    await expect(bar).not.toContainText('秒')
+    await expect(bar).toContainText('等待模型响应')
+    await expect(bar).toContainText('秒')
+    await page.screenshot({ path: `${ARTIFACTS_DIR}/F14-waiting-model-timer.png`, fullPage: true })
 
     // 模型开口了(第一条思考落地)—— 这才开始报秒数
     await page.evaluate(async (t0) => {
@@ -602,7 +603,7 @@ test.describe('Focus 模式:turn 完成态收敛', () => {
         ],
       })
     }, t0)
-    await expect(bar).not.toContainText('连接模型')
+    await expect(bar).not.toContainText('等待模型响应')
     await expect(bar).toContainText('处理中')
 
     // 步骤空档:一行标记顶着,且它没有边框/底色(上一版那个气泡带 border + bg)
@@ -628,6 +629,46 @@ test.describe('Focus 模式:turn 完成态收敛', () => {
     })
     await expect(page.getByText('正在作答…')).toBeVisible()
     await expect(marker).toHaveCount(0)
+  })
+
+  test('F15: 重启恢复提示是产品状态卡，不冒充 AI 回答', async ({ page }) => {
+    await page.addInitScript({ content: MOCK_API })
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    const t0 = Date.now() - 5000
+    await page.evaluate(async (t0) => {
+      const store = (window as any).__chatStore
+      await store.getState().newConversation('coding')
+      store.setState({
+        isStreaming: false,
+        messages: [
+          { id: 'u1', role: 'user', content: '继续完成任务', timestamp: t0, messageKind: 'user' },
+          { id: 'rc1', role: 'user', content: '<runtime-context>x</runtime-context>', timestamp: t0 + 100, messageKind: 'runtime-context' },
+          { id: 'tool1', role: 'tool', toolName: 'web_search', content: '已找到 4 条结果', timestamp: t0 + 1000, messageKind: 'tool' },
+          {
+            id: 'runtime-interrupted-run1',
+            role: 'assistant',
+            content: '上一次运行在完成保存前中断。为避免重复执行工具，OpenPipal 没有自动重跑；请检查最后的结果后再继续。',
+            timestamp: t0 + 5000,
+            messageKind: 'incomplete',
+            messageSubtype: 'runtime-interrupted',
+          },
+        ],
+      })
+    }, t0)
+
+    const notice = page.getByTestId('runtime-interrupted-notice')
+    await expect(notice).toBeVisible()
+    await expect(notice).toContainText('上次任务已中断')
+    await expect(notice).toContainText('没有自动继续')
+    await expect(notice.locator('button')).toHaveCount(0)
+    await expect(notice.locator('.prose-light')).toHaveCount(0)
+    await expect(page.getByText('上一次运行在完成保存前中断')).toHaveCount(0)
+
+    const bar = page.locator('[data-testid="process-group-toggle"]')
+    await expect(bar).toContainText('处理已中断')
+    await expect(bar).not.toContainText('处理完成')
+    await page.screenshot({ path: `${ARTIFACTS_DIR}/F15-runtime-interrupted-notice.png`, fullPage: true })
   })
 
   test('F12: 一步过程都没有的轮次照样画线(直接作答 / 服务报错 / 只出成品)', async ({ page }) => {

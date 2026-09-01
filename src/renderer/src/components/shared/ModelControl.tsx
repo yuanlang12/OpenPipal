@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Bot, ChevronRight, ChevronLeft, RotateCcw } from 'lucide-react'
+import { ChevronRight, ChevronLeft, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../stores/chatStore'
 import { displayModelEntryName, displayModelGroupLabel } from '../../utils/modelDisplay'
@@ -13,6 +13,11 @@ import { displayModelEntryName, displayModelGroupLabel } from '../../utils/model
  * 通过 onSelectModel 回调注入；思考状态统一走会话配置（thinkingEnabled/thinkingLevel）。
  */
 
+export type ThinkingLevel = 'low' | 'medium' | 'high' | 'max'
+
+/** 认不出模型时的保守档位（与旧行为一致）；真实档位由主进程下发 */
+const DEFAULT_LEVELS: ThinkingLevel[] = ['low', 'medium', 'high']
+
 export interface ModelControlItem {
   id: string
   name: string
@@ -20,6 +25,8 @@ export interface ModelControlItem {
   active: boolean
   supportsThinking?: boolean
   supportsEffortDial?: boolean
+  thinkingAlwaysOn?: boolean
+  thinkingLevels?: ThinkingLevel[]
   providerName?: string
   builtin?: boolean
 }
@@ -29,6 +36,8 @@ export function ModelControl({
   displayModel,
   supportsThinking,
   supportsDial,
+  alwaysOn = false,
+  levels = DEFAULT_LEVELS,
   selectedId,
   resetRow,
   notice,
@@ -42,6 +51,10 @@ export function ModelControl({
   displayModel: string
   supportsThinking: boolean
   supportsDial: boolean
+  /** 思考关不掉（GLM-5.3、grok-4 系）：不画"不思考"那一行，胶囊上也不显示"关" */
+  alwaysOn?: boolean
+  /** 这个模型真正有哪几档（主进程按 Pi 档位表算）。缺省三档 = 改动前的行为 */
+  levels?: ThinkingLevel[]
   /** 模型子面板里打 ✓ 的目标；null/undefined 时回落各项的 active（全局默认） */
   selectedId?: string | null
   /** 主面板底部的重置行（如对话页"跟随全局默认"）；点击回调 onSelectModel(null) */
@@ -72,8 +85,13 @@ export function ModelControl({
   }, [open])
   useEffect(() => { if (!open) setPanel('main') }, [open])
 
-  const thinkingOn = conversationConfig?.thinkingEnabled !== false
-  const thinkingLevel = conversationConfig?.thinkingLevel || 'low'
+  // 关不掉思考的模型上，会话里存的那个"关"不算数——请求侧已由 resolveThinkingOffLevel
+  // 落到最低档，界面这边同步显示成"开着"，免得写着关、气泡照冒。
+  const thinkingOn = alwaysOn || conversationConfig?.thinkingEnabled !== false
+  const stored = conversationConfig?.thinkingLevel || 'low'
+  // 换模型后旧档位可能不在新模型的清单里（比如从有"中"的模型换到 GLM-5.3）——
+  // 显示上落到清单里最接近的一档，发请求那侧由 Pi 的 clampThinkingLevel 兜同一件事。
+  const thinkingLevel = levels.includes(stored) ? stored : (levels[0] || 'low')
   const thinkingValue = !supportsThinking
     ? ''
     : !thinkingOn
@@ -107,7 +125,6 @@ export function ModelControl({
             : 'text-surface-400 hover:text-surface-600'
         }`}
       >
-        <Bot className="w-3 h-3 shrink-0" />
         <span className="max-w-[140px] min-w-0 truncate">{displayModel}</span>
         {thinkingValue && thinkingOn && <span className="shrink-0">· {thinkingValue}</span>}
       </button>
@@ -125,7 +142,7 @@ export function ModelControl({
                 <span className="flex-1 text-right text-surface-400 truncate">{displayModel}</span>
                 <ChevronRight className="w-3 h-3 shrink-0 text-surface-300" />
               </button>
-              {supportsThinking && (
+              {supportsThinking && !(alwaysOn && !supportsDial) && (
                 <button onClick={() => setPanel('thinking')} className={itemCls(false)}>
                   <span className="shrink-0">{t('chat.modelControl.thinkingDepth')}</span>
                   <span className="flex-1 text-right text-surface-400">{thinkingValue}</span>
@@ -171,12 +188,14 @@ export function ModelControl({
           {panel === 'thinking' && (
             <>
               {backRow(t('chat.modelControl.thinkingDepth'))}
-              <button onClick={() => { setConversationThinking(false); setOpen(false) }} className={itemCls(!thinkingOn)}>
-                <span className="flex-1">{t('chat.modelControl.noThinking')}</span>
-                {!thinkingOn && <span className="text-brand-500 shrink-0">✓</span>}
-              </button>
+              {!alwaysOn && (
+                <button onClick={() => { setConversationThinking(false); setOpen(false) }} className={itemCls(!thinkingOn)}>
+                  <span className="flex-1">{t('chat.modelControl.noThinking')}</span>
+                  {!thinkingOn && <span className="text-brand-500 shrink-0">✓</span>}
+                </button>
+              )}
               {supportsDial ? (
-                (['low', 'medium', 'high'] as const).map(level => (
+                levels.map(level => (
                   <button key={level} onClick={() => { setConversationThinkingLevel(level); setOpen(false) }} className={itemCls(thinkingOn && thinkingLevel === level)}>
                     <span className="flex-1">{t(`chat.modelControl.levels.${level}`)}</span>
                     {thinkingOn && thinkingLevel === level && <span className="text-brand-500 shrink-0">✓</span>}

@@ -38,6 +38,7 @@
     "resources/entitlements.mac.plist",
     "resources/mac/en.lproj/InfoPlist.strings",
     "resources/mac/zh-Hans.lproj/InfoPlist.strings",
+    "scripts/copy-photon-wasm.mjs",
     "scripts/embed-macos-release-build-manifest.mjs",
     "scripts/generate-third-party-inventory.mjs",
     "scripts/verify-macos-release.mjs"

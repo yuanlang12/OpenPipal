@@ -48,14 +48,6 @@ mac:
       arch:
         - arm64
         - x64
-  # pi-coding-agent 的图片读取器会在 Photon 模块加载时从 process.execPath 同目录兜底找 WASM。
-  # electron-vite 只打进 JS chunk，不会自动复制这个二进制资源；缺失时所有图片都会误报"无法缩小"。
-  # npm 嵌套/提升位置都列上——缺席的那条只警告不报错，哪条存在拷哪条。
-  extraFiles:
-    - from: node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm
-      to: MacOS/photon_rs_bg.wasm
-    - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm
-      to: MacOS/photon_rs_bg.wasm
 extraResources:
   # dc 渲染/导出运行时 —— dc-export.ts / dc-headless.ts 打包态读 process.resourcesPath/dc-runtime；
   # 漏掉会导致正式版导出 ENOENT（vendor/react.production.min.js 找不到）

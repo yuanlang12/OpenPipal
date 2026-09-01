@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, ClipboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUp, FileText, X } from 'lucide-react'
-import { ModelControl } from './shared/ModelControl'
+import { ModelControl, type ThinkingLevel } from './shared/ModelControl'
 import { VoiceCallInline } from './VoiceCallInline'
 import type { VoiceSessionState } from '../types'
 import { useAppStore } from '../stores/appStore'
@@ -85,7 +85,9 @@ export function WelcomePage({
   const [modelIsBuiltin, setModelIsBuiltin] = useState(false)
   const [modelSupportsThinking, setModelSupportsThinking] = useState(false)
   const [modelSupportsDial, setModelSupportsDial] = useState(false)
-  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; model: string; active: boolean; supportsThinking?: boolean; supportsEffortDial?: boolean; providerName?: string; builtin?: boolean }>>([])
+  const [modelThinkingAlwaysOn, setModelThinkingAlwaysOn] = useState(false)
+  const [modelThinkingLevels, setModelThinkingLevels] = useState<ThinkingLevel[] | undefined>(undefined)
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; model: string; active: boolean; supportsThinking?: boolean; supportsEffortDial?: boolean; thinkingAlwaysOn?: boolean; thinkingLevels?: ThinkingLevel[]; providerName?: string; builtin?: boolean }>>([])
 
   // 读当前激活模型的完整配置（含 supportsThinking / 派生的档位能力位）
   const refreshActiveModel = useCallback(async () => {
@@ -95,6 +97,8 @@ export function WelcomePage({
       setModelIsBuiltin(!!mc.builtin)
       setModelSupportsThinking(!!mc.supportsThinking)
       setModelSupportsDial(!!mc.supportsEffortDial)
+      setModelThinkingAlwaysOn(!!mc.thinkingAlwaysOn)
+      setModelThinkingLevels(mc.thinkingLevels?.length ? mc.thinkingLevels : undefined)
     }
   }, [])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -143,6 +147,8 @@ export function WelcomePage({
     : (modelIsBuiltin ? t('chat.modelControl.builtinModel') : modelName)
   const effectiveSupportsThinking = sessionPreset ? !!sessionPreset.supportsThinking : modelSupportsThinking
   const effectiveSupportsDial = sessionPreset ? !!sessionPreset.supportsEffortDial : modelSupportsDial
+  const effectiveThinkingAlwaysOn = sessionPreset ? !!sessionPreset.thinkingAlwaysOn : modelThinkingAlwaysOn
+  const effectiveThinkingLevels = (sessionPreset ? sessionPreset.thinkingLevels : modelThinkingLevels) || undefined
   const handleSwitchModel = (id: string) => setConversationModelPreset(id)
 
   // 思考开关/档位 UI 已抽到 shared/ThinkingControl（与对话页 InputBar 共用）
@@ -468,6 +474,8 @@ export function WelcomePage({
                   displayModel={effectiveModelName}
                   supportsThinking={effectiveSupportsThinking}
                   supportsDial={effectiveSupportsDial}
+                  alwaysOn={effectiveThinkingAlwaysOn}
+                  levels={effectiveThinkingLevels}
                   selectedId={sessionPresetId}
                   onSelectModel={(id) => { if (id) handleSwitchModel(id) }}
                   className="ml-auto"

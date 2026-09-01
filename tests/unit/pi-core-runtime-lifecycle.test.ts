@@ -38,6 +38,7 @@ vi.mock('../../src/main/config-manager', () => ({
   // TypeError、被 catch 成"安全阻止"，现象是所有工具静默不执行。
   getWorkingDir: () => '/tmp',
   resolveAuxThinkingLevel: () => 'off',
+  resolveThinkingOffLevel: () => 'off',
   resolveConversationModelConfig: () => ({
     source: 'global',
     config: {

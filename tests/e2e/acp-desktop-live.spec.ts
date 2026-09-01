@@ -115,6 +115,14 @@ async function waitForOurDesktop(home: string): Promise<string> {
   return (await readFile(tokenPath, 'utf8')).trim()
 }
 
+async function readDesktopConversation(token: string, conversationId: string): Promise<any> {
+  const response = await fetch(`${BASE_URL}/api/conversations/${encodeURIComponent(conversationId)}`, {
+    headers: { 'X-OpenPipal-ACP-Token': token },
+  })
+  expect(response.ok, `读取会话 ${conversationId} 应当成功`).toBe(true)
+  return response.json()
+}
+
 async function waitFor(predicate: () => boolean | Promise<boolean>, what: string, timeoutMs = 30_000): Promise<void> {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
@@ -186,8 +194,7 @@ test('真机：编辑器经 ACP 选自定义 Agent、外部改动回推、设置
       sessionId, configId: 'openpipal.role', type: 'id', value: `agent:${CUSTOM_AGENT_ID}`
     })
     expect(picked.result.configOptions[0].currentValue).toBe(`agent:${CUSTOM_AGENT_ID}`)
-    const conversationFile = join(home, '.openpipal', 'conversations', `${sessionId}.json`)
-    const stored = JSON.parse(await readFile(conversationFile, 'utf8'))
+    const stored = await readDesktopConversation(token, sessionId)
     expect(stored.workspaceId).toBe(CUSTOM_AGENT_ID)
     expect(stored.config.acp).toMatchObject({ adapter: 'openpipal-acp', protocolVersion: 2 })
 
@@ -208,7 +215,7 @@ test('真机：编辑器经 ACP 选自定义 Agent、外部改动回推、设置
     )
     const pushed = client.updates.find(u => u.update.sessionUpdate === 'config_option_update')
     expect(pushed.update.configOptions[0].currentValue).toBe('design')
-    const conversationAfter = JSON.parse(await readFile(conversationFile, 'utf8'))
+    const conversationAfter = await readDesktopConversation(token, sessionId)
     expect(conversationAfter.workspaceId).toBeUndefined()
     expect(conversationAfter.role).toBe('design')
 
@@ -244,9 +251,7 @@ test('真机：编辑器经 ACP 选自定义 Agent、外部改动回推、设置
     })
     expect(lateSwitch.error, '新存的 Agent 必须能选').toBeUndefined()
     expect(lateSwitch.result.configOptions[0].currentValue).toBe(`agent:${lateAgentId}`)
-    expect(
-      JSON.parse(await readFile(join(home, '.openpipal', 'conversations', `${lateSession.result.sessionId}.json`), 'utf8')).workspaceId
-    ).toBe(lateAgentId)
+    expect((await readDesktopConversation(token, lateSession.result.sessionId)).workspaceId).toBe(lateAgentId)
 
     // 推送已经把状态对齐了，下一轮开跑前的对账就该是 no-op（不重复推同一件事）
     client.updates.length = 0
@@ -340,8 +345,7 @@ test('真机：斜杠命令落到模型、流式产物走 tool_call_content_chun
     )
     const idle = client.updates.find(u => u.update.sessionUpdate === 'state_update' && u.update.state === 'idle')
     expect(idle.update.stopReason).toBe('end_turn')
-    const conversationFile = join(home, '.openpipal', 'conversations', `${sessionId}.json`)
-    const stored = JSON.parse(await readFile(conversationFile, 'utf8'))
+    const stored = await readDesktopConversation(token, sessionId)
     const userMessage = stored.messages.find((m: any) => m.role === 'user' && m.messageKind !== 'runtime-context')
     expect(userMessage.content).toBe('请使用技能 <skill-request>live-report</skill-request> 完成以下任务：\n\n帮我做份周报')
 
@@ -371,7 +375,7 @@ test('真机：斜杠命令落到模型、流式产物走 tool_call_content_chun
       () => client!.updates.some(u => u.update.sessionUpdate === 'state_update' && u.update.state === 'idle'),
       '/goal 这一轮结束'
     )
-    const withGoal = JSON.parse(await readFile(conversationFile, 'utf8'))
+    const withGoal = await readDesktopConversation(token, sessionId)
     expect(withGoal.config.goal).toMatchObject({ text: '把周报写完', maxTurns: 8, status: 'active' })
 
     // 下一轮普通对话跑完后，goal loop 会把状态判回来并落盘（fixture 不返 JSON →
@@ -379,7 +383,7 @@ test('真机：斜杠命令落到模型、流式产物走 tool_call_content_chun
     client.updates.length = 0
     await client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '继续' }] })
     await waitFor(async () => {
-      const conv = JSON.parse(await readFile(conversationFile, 'utf8'))
+      const conv = await readDesktopConversation(token, sessionId)
       return conv.config?.goal?.status === 'done'
     }, 'goal loop 判定回写', 60_000)
     // 终态要说人话：用户在编辑器里设了目标，得知道它是达成了还是撞了上限
@@ -390,7 +394,7 @@ test('真机：斜杠命令落到模型、流式产物走 tool_call_content_chun
 
     await client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '/goal clear' }] })
     await waitFor(async () => {
-      const conv = JSON.parse(await readFile(conversationFile, 'utf8'))
+      const conv = await readDesktopConversation(token, sessionId)
       return conv.config?.goal === undefined
     }, '/goal clear 落盘')
 

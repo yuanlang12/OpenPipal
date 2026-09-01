@@ -9,7 +9,7 @@
 import type { AcpPendingPermission, AcpSessionStatus, AcpStatus } from '../shared/acp-status-contract'
 import { getAcpMcpTokenPath } from './credential-paths'
 import { getAcpLastHandshakeAt, getAcpLiveEntry } from './acp-session-registry'
-import { listConversations } from './conversation-store'
+import { listConversationsCached } from './conversation-service'
 import { listSessionMcpServers } from './mcp-manager'
 import { listWorkspaces } from './agent-workspace-store'
 import { getHttpListeningPort } from './http-server'
@@ -28,7 +28,7 @@ export function buildAcpStatus(pendingPermissions: AcpPendingPermission[] = []):
   }
 
   const sessions: AcpSessionStatus[] = []
-  for (const conversation of listConversations()) {
+  for (const conversation of listConversationsCached()) {
     const acp = conversation.config?.acp
     if (acp?.adapter !== ACP_ADAPTER) continue
     const live = getAcpLiveEntry(conversation.id)

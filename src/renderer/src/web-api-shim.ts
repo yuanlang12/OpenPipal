@@ -193,6 +193,7 @@ export function installWebApiShim(): void {
         case 'text_flush': emit('text-flush', cid); break
         case 'thinking': emit('thinking', cid, data.content); break
         case 'thinking_end': emit('thinking-end', cid); break
+        case 'stream_retry': emit('stream-retry', cid, data.attempt, data.maxRetries); break
         case 'tool_start': emit('tool-start', cid, data.name, data.toolCallId); break
         case 'tool_progress': emit('tool-progress', cid, data.name, data.chars); break
         case 'tool_end': emit('tool-end', cid, data.name, data.screenshot, data.searchResults, data.mcpResult, data.mcpArgs, data.visualizer, data.toolCallId, data.modelToolArgs); break
@@ -353,6 +354,7 @@ export function installWebApiShim(): void {
     onThinking: (cb: Callback) => on('thinking', cb),
     onThinkingEnd: (cb: Callback) => on('thinking-end', cb),
     onToolStart: (cb: Callback) => on('tool-start', cb),
+    onStreamRetry: (cb: Callback) => on('stream-retry', cb),
     onToolProgress: (cb: Callback) => on('tool-progress', cb),
     onToolEnd: (cb: Callback) => on('tool-end', cb),
     onArtifact: (cb: Callback) => on('artifact', cb),

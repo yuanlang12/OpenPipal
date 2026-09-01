@@ -22,11 +22,12 @@ import { createHash } from 'crypto'
 import { estimateTokens } from './token-estimate'
 import type { ChatMessage } from './agent-runtime/contracts'
 import { getEffectiveModelConfig, type ModelConfig } from './config-manager'
-import { getConversation, updateConversationConfig } from './conversation-store'
+import { peekConversation, updateConversationConfig } from './conversation-service'
 import { simpleComplete } from './simple-completion'
 
 const DEFAULT_CONTEXT_WINDOW = 131072
-const MAX_RESERVE_TOKENS = 32000    // 系统提示 + 工具 schema + 本轮输出的最大预留
+const MAX_RESERVE_TOKENS = 32000    // 系统提示 + 工具 schema + 本轮输出的**下限**预留（实测更大时按实测走）
+const MIN_OUTPUT_RESERVE_TOKENS = 8192  // 按实测算预留时，额外给本轮输出留的空间
 const KEEP_RECENT_TOKENS = 20000    // 对齐 Pi 默认：最近 20k 原文保留
 const MIN_KEEP_MESSAGES = 4         // 极短会话不值得触发摘要
 const MAX_SUMMARY_TOKENS = 2048     // 给摘要（含前情提要壳）留出的上限
@@ -53,15 +54,41 @@ export function recordMeasuredPromptTokens(
 }
 
 /** contextWindow/budget 同口径计算——供 agentChat 的 context_usage 观测事件复用，避免两处算法漂移 */
-/** mc 可选：会话专属模型场景传解析后的配置（contextWindow 按实际发往的模型算）；缺省用全局。 */
-export function getContextBudget(mc?: Pick<ModelConfig, 'contextWindow'>): { contextWindow: number; budget: number } {
+/**
+ * @param mc 可选：会话专属模型场景传解析后的配置（contextWindow 按实际发往的模型算）；缺省用全局。
+ * @param promptOverheadTokens 可选：本轮实际的「系统提示词（含技能段）+ 工具 schema」估算量。
+ *   不传则沿用固定预留（历史行为）。
+ *
+ * 为什么要这个参数：MAX_RESERVE_TOKENS 是编译期常量，**与实际提示词长度完全脱钩**。
+ * 提示词一旦变大（典型来源：注入项目的 AGENTS.md／大量 MCP 工具 schema），真实占用
+ * 越过 32k 之后，压缩器仍以为历史预算充足，于是不压缩——直到实测用量或 stopReason=length
+ * 才反应过来，而那时整轮已经废了。给它真实数字，它才知道该早点动手。
+ */
+export function getContextBudget(
+  mc?: Pick<ModelConfig, 'contextWindow'>,
+  promptOverheadTokens?: number
+): { contextWindow: number; budget: number } {
   const configured = (mc ?? getEffectiveModelConfig())?.contextWindow
   const contextWindow = Number.isFinite(configured) && (configured as number) > 0
     ? Math.floor(configured as number)
     : DEFAULT_CONTEXT_WINDOW
+  // 只增不减：实测开销比固定预留小的时候维持 32k 不动。把预留调小会让历史预算越过
+  // 已验证过的范围，属于没人要求的行为变更；调大才是这次要修的方向。
+  const measured = Number.isFinite(promptOverheadTokens) && (promptOverheadTokens as number) > 0
+    ? Math.ceil(promptOverheadTokens as number) + MIN_OUTPUT_RESERVE_TOKENS
+    : 0
   // 低上下文模型不能继续沿用固定 32k 预留，更不能把预算抬回 16k。
   // 最多占模型窗口的一半，始终确保 history budget 不会宣称超过真实窗口。
-  const reserve = Math.min(MAX_RESERVE_TOKENS, Math.floor(contextWindow / 2))
+  const half = Math.floor(contextWindow / 2)
+  const wanted = Math.max(MAX_RESERVE_TOKENS, measured)
+  const reserve = Math.min(wanted, half)
+  if (measured > half) {
+    // 提示词本身就吃掉半个窗口——压缩再狠也救不回来，先把证据打出来
+    console.warn(
+      `[Compactor] 系统提示词+工具 schema 约 ${promptOverheadTokens}t，已超过模型窗口 ${contextWindow}t 的一半；`
+      + `预留被钳到 ${half}t，历史预算可能仍然偏乐观。考虑精简项目文档或减少启用的 MCP 工具。`
+    )
+  }
   const budget = Math.max(1, contextWindow - reserve)
   return { contextWindow, budget }
 }
@@ -192,11 +219,13 @@ export async function compactHistoryForModel(
   history: ChatMessage[],
   conversationId?: string,
   mc?: ModelConfig,
-  opts?: { force?: boolean; signal?: AbortSignal }
+  opts?: { force?: boolean; signal?: AbortSignal; promptOverheadTokens?: number }
 ): Promise<ChatMessage[]> {
   if (opts?.signal?.aborted) throw new Error('history compaction aborted')
   if (history.length <= MIN_KEEP_MESSAGES) return history
-  const { budget } = getContextBudget(mc)
+  // 预算必须和观测用的那一份同口径：两边都把本轮真实的提示词开销传进来，
+  // 否则会出现"用量卡说快满了、压缩器说还早得很"的分裂。
+  const { budget } = getContextBudget(mc, opts?.promptOverheadTokens)
   // 只需要"是否超预算"，累加过线即停（长会话逐字符估算不便宜）
   let total = 0
   for (const m of history) {
@@ -235,7 +264,7 @@ export async function compactHistoryForModel(
   // 避免压缩激活后每一轮都调一次 LLM 增量合并；落后超过滞回带才真正重摘
   const HYSTERESIS_MSGS = 6
   const HYSTERESIS_TOKENS = 8000
-  const conv = conversationId ? getConversation(conversationId) : null
+  const conv = conversationId ? peekConversation(conversationId) : null
   const cached = (conv?.config as any)?.historyCompaction as {
     summary: string
     coveredCount: number

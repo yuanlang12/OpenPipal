@@ -215,12 +215,14 @@ interface ProcessGroupProps {
   /** 完成后的默认展开态:focus 关时已完成 turn 直接铺开台面,不再折叠 */
   defaultExpanded?: boolean
   /** 本轮还在等模型服务开口(按下回车了,但一个模型事件都没到)。
-   *  为真时这一行只写「连接模型…」不报秒数 —— 连接/排队/429 换端点重试那段时间
-   *  不是"处理",给它记秒等于替模型认领它没干过的活。 */
+   *  为真时明确写「等待模型响应 N 秒」：把连接/排队/首字节延迟与生成阶段分开，
+   *  同时让计时从 0 连续可见，避免首个事件到达时数字凭空跳到数秒。 */
   awaitingModel?: boolean
+  /** 运行没有正常收尾。产品恢复提示仍留在台面，但不能把分割线写成「处理完成」。 */
+  interrupted?: boolean
 }
 
-function ProcessGroupComponent({ messages, isActive, roleIcon, turnStartTs, turnEndTs, defaultExpanded = false, awaitingModel = false }: ProcessGroupProps) {
+function ProcessGroupComponent({ messages, isActive, roleIcon, turnStartTs, turnEndTs, defaultExpanded = false, awaitingModel = false, interrupted = false }: ProcessGroupProps) {
   const { t, i18n } = useTranslation()
   // 进行中默认展开;完成后按 defaultExpanded(focus 关 → 铺开)
   const [expanded, setExpanded] = useState(isActive || defaultExpanded)
@@ -274,11 +276,17 @@ function ProcessGroupComponent({ messages, isActive, roleIcon, turnStartTs, turn
   const durationLabel =
     durationMs === null ? '' : formatProcessDuration(durationMs, i18n.resolvedLanguage || i18n.language, t)
   const label = awaitingModel
-    ? t('chat.process.connecting')
+    ? durationMs === null
+      ? t('chat.process.connecting')
+      : t('chat.process.waitingForModelWithDuration', { duration: durationLabel })
     : isActive
       ? durationMs === null
         ? t('chat.process.processing')
         : t('chat.process.processingWithDuration', { duration: durationLabel })
+      : interrupted
+        ? durationMs === null || durationMs < 1000
+          ? t('chat.process.interruptedNoDuration')
+          : t('chat.process.interruptedWithDuration', { duration: durationLabel })
       : durationMs === null || durationMs < 1000
         ? t('chat.process.completedNoDuration')
         : t('chat.process.completedWithDuration2', { duration: durationLabel })
@@ -392,7 +400,8 @@ function processGroupPropsEqual(prev: ProcessGroupProps, next: ProcessGroupProps
     prev.turnStartTs !== next.turnStartTs ||
     prev.turnEndTs !== next.turnEndTs ||
     prev.defaultExpanded !== next.defaultExpanded ||
-    prev.awaitingModel !== next.awaitingModel
+    prev.awaitingModel !== next.awaitingModel ||
+    prev.interrupted !== next.interrupted
   ) return false
   if (prev.messages === next.messages) return true
   if (prev.messages.length !== next.messages.length) return false

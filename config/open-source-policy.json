@@ -544,14 +544,15 @@
         "docs/brand/**",
         "resources/brand/README.md",
         "resources/brand/*.html",
-        "resources/brand/logos/**"
+        "resources/brand/logos/**",
+        "docs/claude/openpipal-jsonl-session-reuse-implementation-brief.md"
       ],
       "overrides": [
         "reviewed-baseline-default",
         "remove-private-history-and-qa",
         "exclude-renamed-private-material"
       ],
-      "note": "评审基线之后新增的私有材料，判断与既有规则同源，只是作用在候选域。resources/brand 下点名的是探索期材料——README、22 个没选上的 logo 候选、几份展示页，与项目功能无关，别人拿去也用不到；它们是 remove-private-history-and-qa 那条的候选域另一半。**agent-mark-source.svg 不在其列，随发行走**：App 自带捏头像功能，那份 SVG 是标识几何的事实源，代码（agent-mark/geometry.ts、expressions.ts）逐项对着它写，tests/unit/agent-mark-engine.test.ts 直接解析它做回归，所以素材与测试一起发行。docs/brand/** 是官网换标任务书，website/** 已整体不公开，讲怎么换官网素材的文档同理。docs/acp-review-backlog.md 是三个评审 agent 跑出来的内部待办（15 条未修项带 file:line），属于过程物，与 exclude-design-rewrite-process 同一判断：过程留私仓，交付物才发行。"
+      "note": "评审基线之后新增的私有材料，判断与既有规则同源，只是作用在候选域。resources/brand 下点名的是探索期材料——README、22 个没选上的 logo 候选、几份展示页，与项目功能无关，别人拿去也用不到；它们是 remove-private-history-and-qa 那条的候选域另一半。**agent-mark-source.svg 不在其列，随发行走**：App 自带捏头像功能，那份 SVG 是标识几何的事实源，代码（agent-mark/geometry.ts、expressions.ts）逐项对着它写，tests/unit/agent-mark-engine.test.ts 直接解析它做回归，所以素材与测试一起发行。docs/brand/** 是官网换标任务书，website/** 已整体不公开，讲怎么换官网素材的文档同理。docs/acp-review-backlog.md 是三个评审 agent 跑出来的内部待办（15 条未修项带 file:line），属于过程物，与 exclude-design-rewrite-process 同一判断：过程留私仓，交付物才发行。 后补（所有者 2026-09-01 决定）：docs/claude/openpipal-jsonl-session-reuse-implementation-brief.md 是面向执行 agent 的实现合同（Pi JSONL 会话树的调研结论与执行 brief），属于过程物，与 acp-review-backlog 同一判断，不发行；它描述的实现本身（src/main/session/** 等）随 review-coding-agent-and-session-delta 发行。"
     },
     {
       "id": "review-acp-agent-mark-and-composer-delta",
@@ -587,6 +588,83 @@
         "reviewed-baseline-default"
       ],
       "note": "这一轮（首启四步引导、工作目录条、模型页主从两栏、ACP 接入、技能改打 / 唤起、Agent Mark）新增的第一方产品源码与其回归用例，晚于评审基线。ACP 一组是把编辑器/其他 AI 接进来的适配层：adapter-launch 只拼本地启动命令、session-registry 管会话映射、acp-status 是状态机，对端地址与凭证全部来自用户自己配的连接，代码里没有任何内置端点。agent-mark/ 是标识的代码实现（几何、表情、配饰、驱动），素材 SVG 不随发行走，形状在代码里。已逐文件核查这 34 份文件：无 API Key、无 Base URL、无内置模型名、无个人路径与邮箱，与 CLAUDE.md 红线一致。测试侧的 mock 用的都是占位值。 后补（所有者 2026-08-21 决定）：resources/brand/agent-mark-source.svg 与解析它的tests/unit/agent-mark-engine.test.ts 一并发行——捏头像是产品功能，标识素材是它的事实源。同目录其余品牌材料仍不发行，见 exclude-brand-exploration-and-internal-process-docs。"
+    },
+    {
+      "id": "review-coding-agent-and-session-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "src/main/agent-runtime/project-context.ts",
+        "src/main/conversation-service.ts",
+        "src/main/durable-voice-session.ts",
+        "src/main/git-credential-bridge.ts",
+        "src/main/git-policy-store.ts",
+        "src/main/git-policy.ts",
+        "src/main/login-shell-path.ts",
+        "src/main/render-artifact-diagnostics.ts",
+        "src/main/roles/coding-role.ts",
+        "src/main/session/**",
+        "src/renderer/src/components/shared/PermissionTierControl.tsx",
+        "resources/system-agents/coding/**",
+        "scripts/copy-photon-wasm.mjs",
+        "scripts/qa/session-real-model-acceptance.mjs",
+        "tests/e2e/coding-agent-headless.spec.ts",
+        "tests/e2e/coding-agent-live.spec.ts",
+        "tests/e2e/coding-depth.spec.ts",
+        "tests/e2e/coding-discipline.spec.ts",
+        "tests/e2e/coding-preflow.spec.ts",
+        "tests/e2e/depth-fixtures.ts",
+        "tests/e2e/followup-probe.spec.ts",
+        "tests/e2e/headless-driver.ts",
+        "tests/e2e/model-control.spec.ts",
+        "tests/e2e/permission-tier.spec.ts",
+        "tests/e2e/session-jsonl-live.spec.ts",
+        "tests/e2e/stream-retry.spec.ts",
+        "tests/e2e/tier-menu-shot.spec.ts",
+        "tests/unit/coding-depth-fixtures.test.ts",
+        "tests/unit/coding-repo-onboarding-skill.test.ts",
+        "tests/unit/coding-role-shape.test.ts",
+        "tests/unit/context-budget-reserve.test.ts",
+        "tests/unit/conversation-live-notice.test.ts",
+        "tests/unit/conversation-service-jsonl-integration.test.ts",
+        "tests/unit/copy-photon-wasm.test.ts",
+        "tests/unit/destructive-command-tiers.test.ts",
+        "tests/unit/durable-voice-session.test.ts",
+        "tests/unit/git-credential-bridge.test.ts",
+        "tests/unit/git-policy-real-run.test.ts",
+        "tests/unit/git-policy.test.ts",
+        "tests/unit/login-shell-path.test.ts",
+        "tests/unit/permission-tier.test.ts",
+        "tests/unit/pi-security-workspace-root.test.ts",
+        "tests/unit/pi-v4-jsonl-session-store.test.ts",
+        "tests/unit/project-context-injection.test.ts",
+        "tests/unit/project-context-prompt-wiring.test.ts",
+        "tests/unit/render-artifact-diagnostics.test.ts",
+        "tests/unit/role-prompt-tool-drift.test.ts",
+        "tests/unit/sandbox-network-allowlist.test.ts",
+        "tests/unit/secure-session-filesystem.test.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ],
+      "note": "上一次发行（私仓 f872835，2026-08-21）之后新增的第一方产品源码与其回归用例，晚于评审基线：编码助手角色（coding-role.ts、agent-runtime/project-context.ts 注入 AGENTS.md / CLAUDE.md，resources/system-agents/coding 的 preflow 与 repo-onboarding 技能）、权限档位（PermissionTierControl.tsx）、git 远端操作的项目轴授权（git-policy.ts 纯判据 + git-policy-store.ts 状态层）与凭据桥（git-credential-bridge.ts：主进程用 `gh auth token` 取到 token 后经一条只回显环境变量的内联 credential helper 送进沙箱子进程，不放开凭据目录；代码里没有任何 token 字面量）、装机版登录 shell PATH 补齐（login-shell-path.ts）、Pi JSONL 耐久会话（src/main/session/** 六个模块 + conversation-service.ts + durable-voice-session.ts）、产物自检诊断（render-artifact-diagnostics.ts）、Photon WASM 的构建期拷贝（copy-photon-wasm.mjs）和一份真模型验收脚本（scripts/qa/session-real-model-acceptance.mjs）。已逐文件核查这 56 份：无 API Key（唯一 key 形状的字符串是 git-policy-real-run.test.ts 里的 `sk-fake-for-test`）；无内置 Base URL（sandbox-network-allowlist.test.ts 里只有公开域 api.anthropic.com 与 example 域，model-control / stream-retry 两份 e2e 以 provider custom、baseUrl 与 apiKey 空串起 mock）；无内置模型名（e2e 里的 `glm-5.3` 是思考档位测试的样例值，不是内置配置）；无个人路径与邮箱。与 CLAUDE.md 红线一致。coding-role.ts 文件头注明的是编写提示词时逐条比对过的公开编码 agent 出处（pi / Codex / DeepSeek Harness / Claude Code），头注释自己写明「文字自己写」并列出没抄的部分。"
+    },
+    {
+      "id": "review-coding-bench-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "tests/bench/**",
+        "tests/e2e/bench-arms.ts",
+        "tests/e2e/shadow-run.spec.ts",
+        "tests/e2e/swebench-ab.spec.ts",
+        "tests/e2e/swebench-one.spec.ts",
+        "docs/claude/bench-handoff.md"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ],
+      "note": "编码助手评测台，随发行（所有者 2026-09-01 决定）：tests/bench/** 是 SWE-bench 与影子运行两套评测的脚本（题库准备、标准答案闸门、泄题体检、判分、跑批、报表），tests/e2e 里的 shadow-run / swebench-* / bench-arms 是它们的 Playwright 驱动，docs/claude/bench-handoff.md 是交接文档（三轮 24 次运行的逐题实数与「判据绑作者实现选择」的实证）。与已发行的 scripts/qa/**、docs/claude/** 同一性质：过程物里可复现的那一部分。已核查这 24 份：无密钥；无内置端点（出现的 URL 只有 github / registry.npmjs.org / huggingface 数据集接口 / pi.dev）；无个人路径（数据目录一律写成 `~/openpipal-bench`）；shadow_leakcheck.py 里的品牌词表是泄题体检的白名单，bench-handoff.md 里提到的模型名是评测结果的事实记录。脚本只依赖系统 python3 与仓库自身的单测，无第三方依赖；评测数据（题面、结果）本身不在仓库里。"
     }
   ],
   "classificationOnly": true,
@@ -622,9 +700,10 @@
     },
     {
       "rowContains": "resources/system-agents/**/skills/**",
-      "reason": "evolver 的三个技能经审计确认是第一方：内容全部是 OpenPipal 自己的记忆/工作空间流程，extract-memory 主体为中文。台账当时按目录整组判 EXCLUDED，没有逐份核过。待办：修订 NOTICE，把第一方作者归属声明补上，否则每轮审计都会再撞一次。",
+      "reason": "evolver 的三个技能经审计确认是第一方：内容全部是 OpenPipal 自己的记忆/工作空间流程，extract-memory 主体为中文。台账当时按目录整组判 EXCLUDED，没有逐份核过。待办：修订 NOTICE，把第一方作者归属声明补上，否则每轮审计都会再撞一次。 2026-09-01 追加：编码助手的 repo-onboarding 技能（resources/system-agents/coding/skills/）同样是第一方——所有者 2026-08-23 提交 d884b5f 新写，全文中文，内容是 OpenPipal 自己的 <project_context> / AGENTS.md 上手流程，无任何署名、许可或出处标记。随 review-coding-agent-and-session-delta 发行。NOTICE 修订时把它和 evolver 三个技能一起补第一方声明。",
       "allow": [
-        "resources/system-agents/evolver/skills/**"
+        "resources/system-agents/evolver/skills/**",
+        "resources/system-agents/coding/skills/**"
       ]
     }
   ]

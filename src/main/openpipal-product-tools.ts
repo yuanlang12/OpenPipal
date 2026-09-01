@@ -31,6 +31,7 @@ import { createBrowserControlTools, isBrowserControlAvailable } from './browser-
 // AI 通过通用 read/write 工具完成 skill 加载和创建
 import { getActiveContext, formatContext } from './accessibility'
 import { isToolAllowed, getRoleConfig, getDsReview } from './role-manager'
+import { READONLY_TIER_TOOLS, type PermissionTier } from './pi-security'
 import {
   listConversationArtifacts,
   compileJsxArtifact, findSimilarArtifact, coarseTypeFromFile, normalizeArtifactLanguage
@@ -61,6 +62,7 @@ import { sliceArtifactContent, formatArtifactReadHeader, formatArtifactTruncatio
 import type { ChatSource } from './agent-runtime/contracts'
 import { dataPath } from './data-root'
 import { resolveCodeExecutionLanguage } from './code-execution-language'
+import { isRenderArtifactConsoleNoise } from './render-artifact-diagnostics'
 
 // 'acp' = 外部 ACP 客户端（openpipal-acp 经 HTTP 转发）：无浏览器页面也无桌面 UI 在场，
 // 不注入 extension/desktop 专属工具；服务端负责会话落盘（renderer 不在场）
@@ -532,11 +534,6 @@ function createEditArtifactTool(conversationId?: string): AgentTool {
   }
 }
 
-// 通用无害噪音（任何页面都会有）
-const HEADLESS_NOISE_RE = /favicon|Slow network|preload/i
-// 浏览器对原始 <x-dc> 模板的预解析抱怨（编译前噪音）——只对 dc 内容过滤；非 dc 的同类 SVG 报错是真问题
-const DC_PREPARSE_NOISE_RE = /Expected (length|number|moveto)/i
-
 function createRenderArtifactTool(conversationId?: string): AgentTool {
   return {
     name: 'render_artifact',
@@ -603,8 +600,7 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
       win.webContents.on('console-message', ({ level, message }: { level: string; message: string }) => {
         if (!collectConsole) return
         const msg = String(message)
-        if (HEADLESS_NOISE_RE.test(msg)) return
-        if (isDc && DC_PREPARSE_NOISE_RE.test(msg)) return
+        if (isRenderArtifactConsoleNoise(msg, isDc)) return
         if (level === 'warning' || level === 'error' || /never resolved|eval FAILED|SyntaxError|TypeError|ReferenceError/i.test(msg)) {
           if (problems.length < 20) problems.push(msg.slice(0, 200))
         }
@@ -1860,6 +1856,8 @@ export interface OpenPipalProductToolOptions {
   conversationId?: string
   roleBrief?: Record<string, Record<string, any>>
   executeCodeBackend?: CodeExecutionBackend
+  /** 会话级权限档位（编码助手专属）。'readonly' 时写类工具连 schema 都不发给模型。 */
+  permissionTier?: PermissionTier
 }
 
 export function buildOpenPipalProductTools(
@@ -1934,10 +1932,17 @@ export function buildOpenPipalProductTools(
 /** Apply the product-owned disabled/allow-list/role policy after composition. */
 export function filterOpenPipalTools<TTool extends { name: string }>(
   tools: TTool[],
-  overrides?: Pick<OpenPipalProductToolOptions, 'tools' | 'disabledTools' | 'roleName' | 'conversationId'>
+  overrides?: Pick<OpenPipalProductToolOptions, 'tools' | 'disabledTools' | 'roleName' | 'conversationId' | 'permissionTier'>
 ): TTool[] {
   const disabled = new Set(overrides?.disabledTools || [])
-  const withoutDisabled = tools.filter((t) => !disabled.has(t.name))
+  let withoutDisabled = tools.filter((t) => !disabled.has(t.name))
+
+  // 只读档：写类工具根本不发给模型。**在 schema 这一层收窄而不是只在执行时拒**——
+  // 拿得到工具却每次被拒，模型会反复重试、换着法子绕（改用 bash 写文件之类），
+  // 既浪费轮次又把上下文塞满。看不见就不会去想（pi-security 那道拦截留作纵深防御）。
+  if (overrides?.permissionTier === 'readonly') {
+    withoutDisabled = withoutDisabled.filter((t) => READONLY_TIER_TOOLS.includes(t.name))
+  }
 
   // 按 Agent 模板工具白名单或当前角色的白名单过滤
   if (overrides?.tools) {

@@ -43,7 +43,7 @@ describe('模型目录来自 Pi', () => {
   })
 
   it('模型条目带上能力位——设置页据此把开关变成只读展示，而不是继续问用户', () => {
-    const grok = catalog['opencode-go']?.models.find((m) => m.id === 'grok-4.5')
+    const grok = catalog['opencode-go']?.models.find((m) => m.id === 'grok-4.6')
     expect(grok).toBeDefined()
     expect(grok?.reasoning).toBe(true)
     expect(grok?.image).toBe(true)

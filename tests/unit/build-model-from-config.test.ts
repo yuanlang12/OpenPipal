@@ -283,7 +283,7 @@ describe('buildModelFromConfig — Pi 认识的 provider id 一律直接认', ()
 
 describe('buildModelFromConfig — 自定义端点的双证据认领', () => {
   const goConfig = (overrides: Partial<ModelConfig> = {}): ModelConfig => ({
-    provider: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', apiKey: 'sk-zen', model: 'grok-4.5', ...overrides
+    provider: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', apiKey: 'sk-zen', model: 'grok-4.6', ...overrides
   })
 
   it('官方地址 + 官方模型名 → 认领 Pi 条目，拿到猜不出来的元数据（协议 + off:null）', () => {
@@ -324,7 +324,7 @@ describe('buildModelFromConfig — 自定义端点的双证据认领', () => {
   })
 
   it('无关的第三方网关 → 认领不了，行为逐字节不变', () => {
-    const model = buildModelFromConfig(goConfig({ baseUrl: 'https://gateway.example.com/v1', model: 'grok-4.5' }))
+    const model = buildModelFromConfig(goConfig({ baseUrl: 'https://gateway.example.com/v1', model: 'grok-4.6' }))
     expect(model.api).toBe('openai-completions')
     expect(model.baseUrl).toBe('https://gateway.example.com/v1')
   })

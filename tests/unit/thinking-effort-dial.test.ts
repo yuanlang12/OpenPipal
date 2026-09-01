@@ -11,7 +11,11 @@ import {
   supportsEffortDial,
   adaptModelRequestPayload,
   buildModelFromConfig,
-  isGlm52Model,
+  supportsZaiReasoningEffort,
+  zaiThinkingAlwaysOn,
+  resolveThinkingOffLevel,
+  thinkingCannotBeDisabled,
+  resolveThinkingLevels,
   resolveQwenThinkingControl,
   resolveQwenThinkingBudgets,
   resolveThinkingFormat,
@@ -184,10 +188,23 @@ describe('GLM 5.2 适配器档位透传', () => {
     expect(out.thinking).toEqual({ type: 'disabled' })
     expect(out.reasoning_effort).toBeUndefined()
   })
-  it('isGlm52Model 判定口径（三处共用的唯一维护点）', () => {
-    expect(isGlm52Model('glm-5.2-free')).toBe(true)
-    expect(isGlm52Model('z-ai/glm-5.2')).toBe(true)
-    expect(isGlm52Model('glm-5.1')).toBe(false)
+  it('supportsZaiReasoningEffort 判定口径：5.2 起一律支持，不是只认 5.2', () => {
+    expect(supportsZaiReasoningEffort('glm-5.2-free')).toBe(true)
+    expect(supportsZaiReasoningEffort('z-ai/glm-5.2')).toBe(true)
+    expect(supportsZaiReasoningEffort('glm-5.1')).toBe(false)
+    // 2026-08-21 事故：写死 "5.2" 把 glm-5.3 关在门外——档位菜单不出现、reasoning_effort 不发，
+    // 服务端按官方默认的 max 想，一轮几分钟。新版本必须自动继承。
+    expect(supportsZaiReasoningEffort('glm-5.3')).toBe(true)
+    expect(supportsZaiReasoningEffort('glm-6.0')).toBe(true)
+  })
+  it('5.3 起思考关不掉（官方文档：Disabling reasoning is no longer supported）', () => {
+    expect(zaiThinkingAlwaysOn('glm-5.3')).toBe(true)
+    expect(zaiThinkingAlwaysOn('glm-5.2')).toBe(false)
+    // 合成条目补出的档位表让"关思考"落到最低档，而不是发一个会被服务端拒的 disabled
+    const model = buildModelFromConfig({ ...base, model: 'glm-5.3' } as ModelConfig) as any
+    expect(model.thinkingLevelMap?.off).toBeNull()
+    expect(resolveThinkingOffLevel(model)).toBe('low')
+    expect(model.compat?.supportsReasoningEffort).toBe(true)
   })
 })
 
@@ -218,20 +235,27 @@ describe('自定义端点的思考方言默认', () => {
     expect(resolveThinkingFormat({ ...base, model: 'x-ai/grok-4-fast' } as ModelConfig)).toBe('openai')
   })
 
-  it('档位表去 Pi 目录借同名模型的，不再硬编码——grok-4.5 四家 provider 的表完全一致', () => {
-    const model = buildModelFromConfig({ ...base, model: 'grok-4.5' } as ModelConfig) as any
-    // Pi 的生成数据（出处 models.dev）：不能关思考，合法档位 low/medium/high
+  it('档位表去 Pi 目录借同名模型的，不再硬编码——grok-4.6 四家 provider 的表完全一致', () => {
+    const model = buildModelFromConfig({ ...base, model: 'grok-4.6' } as ModelConfig) as any
+    // Pi 的生成数据（出处 models.dev）：不能关思考，合法档位 low/medium/high/xhigh
     expect(model.thinkingLevelMap?.off).toBeNull()
     expect(model.thinkingLevelMap?.max).toBeNull()
     expect(clampThinkingLevel(model, 'medium')).toBe('medium')  // 旧硬编码表会挪成 high
     expect(getSupportedThinkingLevels(model)).not.toContain('off')
   })
 
-  it('Pi 目录里没有的模型 id（grok-4.6）→ 不借表，也不猜；关思考时照样不发禁用字段', () => {
-    const model = buildModelFromConfig({ ...base, model: 'grok-4.6' } as ModelConfig) as any
+  it('Pi 目录里根本没有的模型 id → 不借表，也不猜', () => {
+    const model = buildModelFromConfig({ ...base, model: 'mystery-gateway-v3' } as ModelConfig) as any
     expect(model.thinkingLevelMap).toBeUndefined()
     // pi 的 openai 分支：off 不是字符串就什么都不发（openai-completions.js:661），不会撞 1210
     expect(model.compat?.supportsReasoningEffort).toBe(true)
+    expect(resolveThinkingOffLevel(model)).toBe('off')   // 没有表 = 关得掉，"关"就照发
+  })
+
+  it('grok-4.6 在 Pi 0.84.4 里有条目 → 借到"思考关不掉"的表，"关"落到最低档', () => {
+    const model = buildModelFromConfig({ ...base, model: 'grok-4.6' } as ModelConfig) as any
+    expect(model.thinkingLevelMap?.off).toBeNull()
+    expect(resolveThinkingOffLevel(model)).toBe('low')
   })
 
   it('认不出来时说标准 OpenAI 方言，不再猜 qwen——猜错的代价是硬 400 而不是降级', () => {
@@ -275,12 +299,108 @@ describe('档位显隐以 Pi 目录为准', () => {
   })
 
   it('自定义端点被双证据认领后，档位也由 Pi 回答', () => {
-    const mc = { provider: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'grok-4.5', ...key } as ModelConfig
+    const mc = { provider: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'grok-4.6', ...key } as ModelConfig
     expect(supportsEffortDial(mc)).toBe(true)
   })
 
   it('认领不到的合成条目仍走方言推导（Pi 手里只有我们喂的模板，问它等于问自己）', () => {
     const mc = { provider: 'custom', baseUrl: 'https://gateway.example.com/v1', model: 'mystery-v3', ...key } as ModelConfig
     expect(supportsEffortDial(mc)).toBe(true)   // 兜底 openai 方言 → 有 reasoning_effort
+  })
+})
+
+/**
+ * 2026-08-21 真机事故：glm-5.3 走 opencode go 订阅（https://opencode.ai/zen/go/v1）。
+ * Pi 目录说这条中继是标准 openai 方言 + reasoning_effort low/high/max，而我们按模型名判成 zai，
+ * 于是往中继上发 Z.AI 私有的 thinking 对象和 tool_stream、真正的档位字段一个不发——服务端按
+ * 官方默认的 max 想，一轮思考几分钟，还经常被中继掐断（Stream ended without finish_reason）。
+ */
+describe('opencode go 上的 GLM：方言以端点为准，不看模型名', () => {
+  const mc = {
+    provider: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1',
+    model: 'glm-5.3', apiKey: 'sk-test', supportsThinking: true
+  } as ModelConfig
+
+  it('认领到 Pi 条目后说标准 openai 方言；同一个模型名在 Z.AI 直连才是 zai', () => {
+    expect(resolveThinkingFormat(mc)).toBe('openai')
+    expect(resolveThinkingFormat({
+      ...mc, provider: 'zai', baseUrl: 'https://api.z.ai/api/coding/paas/v4'
+    } as ModelConfig)).toBe('zai')
+  })
+
+  it('档位菜单出现：目录条目没写 supportsReasoningEffort，但 Pi 运行时兜底判 true', () => {
+    const model = buildModelFromConfig(mc) as any
+    expect(model.compat?.supportsReasoningEffort).toBeUndefined()   // 目录条目确实没写这一位
+    expect(supportsEffortDial(mc)).toBe(true)
+    expect(getSupportedThinkingLevels(model)).toEqual(['low', 'high', 'max'])
+    expect(model.contextWindow).toBe(1_000_000)                     // 不再是 zai 模板抄来的 204800
+  })
+
+  it('不再往中继上发 Z.AI 私有的 thinking / tool_stream', () => {
+    const payload = {
+      model: 'glm-5.3', stream: true, reasoning_effort: 'low',
+      tools: [{ type: 'function' }], messages: []
+    }
+    expect(adaptModelRequestPayload(payload, mc, { reasoningEffort: 'low' })).toBe(payload)
+  })
+
+  it('思考关不掉：Pi 的表里 off 是 null，"关"落到最低档而不是发被拒的字段', () => {
+    const model = buildModelFromConfig(mc) as any
+    expect(model.thinkingLevelMap?.off).toBeNull()
+    expect(resolveThinkingOffLevel(model)).toBe('low')
+  })
+})
+
+describe('思考关不掉的模型：界面不该画"关闭思考"那一行', () => {
+  const key = { apiKey: 'sk-test', supportsThinking: true }
+
+  it('GLM-5.3（opencode go 与合成条目两条路）都判为关不掉', () => {
+    expect(thinkingCannotBeDisabled({
+      provider: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'glm-5.3', ...key
+    } as ModelConfig)).toBe(true)
+    expect(thinkingCannotBeDisabled({ ...base, model: 'glm-5.3' } as ModelConfig)).toBe(true)
+  })
+
+  it('关得掉的模型不受影响；用户声明不支持思考时一律 false', () => {
+    expect(thinkingCannotBeDisabled({ ...base, model: 'glm-5.2' } as ModelConfig)).toBe(false)
+    expect(thinkingCannotBeDisabled({ ...base, model: 'mystery-gateway-v3' } as ModelConfig)).toBe(false)
+    expect(thinkingCannotBeDisabled({ ...base, model: 'glm-5.3', supportsThinking: false } as ModelConfig)).toBe(false)
+  })
+})
+
+describe('档位清单按 Pi 的档位表算，不写死三档', () => {
+  const key = { apiKey: 'sk-test', supportsThinking: true }
+
+  it('opencode go 上的 GLM-5.3：low/high/max——没有"中"（表里是 null），多出"最高"', () => {
+    expect(resolveThinkingLevels({
+      provider: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'glm-5.3', ...key
+    } as ModelConfig)).toEqual(['low', 'high', 'max'])
+  })
+
+  it('没有档位表的端点仍是三档（改动前的行为逐字不变）', () => {
+    expect(resolveThinkingLevels({ ...base, model: 'mystery-gateway-v3' } as ModelConfig)).toEqual(['low', 'medium', 'high'])
+  })
+
+  it('不支持思考就没有档位可言', () => {
+    expect(resolveThinkingLevels({ ...base, model: 'glm-5.3', supportsThinking: false } as ModelConfig)).toEqual([])
+  })
+
+  it('max 档能真的发出去：zai 方言注入 reasoning_effort=max', () => {
+    const glm = { ...base, model: 'glm-5.3' } as ModelConfig
+    const out = adaptModelRequestPayload(
+      { model: 'glm-5.3', enable_thinking: true, messages: [] }, glm, { reasoningEffort: 'max' }
+    ) as any
+    expect(out.reasoning_effort).toBe('max')
+  })
+
+  it('Qwen 的 token 预算只有三档：max 取最高那份，不会索引出 undefined', () => {
+    const qwen = {
+      ...base, model: 'qwen3.7-plus', thinkingFormat: 'qwen' as const,
+      thinkingBudgets: { low: 1024, medium: 4096, high: 16384 }
+    } as ModelConfig
+    const out = adaptModelRequestPayload(
+      { model: qwen.model, enable_thinking: true, messages: [] }, qwen, { reasoningEffort: 'max' }
+    ) as any
+    expect(out.thinking_budget).toBe(16384)
   })
 })

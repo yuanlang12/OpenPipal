@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import type { ChatMessage } from '../types'
-import { parseModelStallNotice } from '../../../shared/runtime-notice'
+import { parseModelStallNotice, parseStreamRetryNotice } from '../../../shared/runtime-notice'
 
 const QUESTIONS_ANSWERED = '[Questions answered]'
 const ERROR_PREFIX = '[Error]'
@@ -49,6 +49,10 @@ export function formatMessageContentForDisplay(
 }
 
 export function injectNoticeContentForDisplay(message: Pick<ChatMessage, 'content' | 'messageSubtype'>, t: TFunction): string {
+  if (message.messageSubtype === 'stream-retry') {
+    const retry = parseStreamRetryNotice(message.content || '')
+    if (retry) return t('chat.message.streamRetry', { attempt: retry.attempt, max: retry.maxRetries })
+  }
   if (message.messageSubtype === 'steer') return t('chat.message.injectSteered')
   if (message.messageSubtype === 'queue') return t('chat.message.injectQueued')
   if (message.content === '↳ 已引导对话') return t('chat.message.injectSteered')

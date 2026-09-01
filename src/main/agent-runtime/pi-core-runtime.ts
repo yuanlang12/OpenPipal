@@ -17,6 +17,7 @@ import {
   buildModelFromConfig,
   resolveAuxThinkingLevel,
   resolveConversationModelConfig,
+  resolveThinkingOffLevel,
   supportsEffortDial,
   withSessionStreamOptions,
   type ModelConfig
@@ -44,7 +45,7 @@ import { resolveCacheRetentionForModel } from '../prompt-cache-fifo'
 import { createStallWatchdog, resolveModelStallTimeoutMs } from '../stall-watchdog'
 import { measureToolTrail } from '../tool-trail'
 import { appendUsageRecord, type RuntimeTurnPhase } from '../usage-log'
-import type { StreamBoundaryPhase } from '../isolated-stream-signal'
+import type { StreamBoundaryPhase, StreamRetryInfo } from '../isolated-stream-signal'
 import { AsyncQueue } from './async-queue'
 import type {
   AgentEvent,
@@ -357,7 +358,7 @@ async function* runPiCoreAgentChat(
     && modelContextWindow > 0
     ? { ...modelConfig, contextWindow: modelContextWindow }
     : modelConfig
-  const { contextWindow, budget } = getContextBudget(historyModelConfig)
+  // 预算要等系统提示词和工具都装配完才算得准——见下方 promptOverheadTokens
   const preparedPrompt = prepareOpenPipalSystemPrompt(source, overrides, {
     stablePrefix: true,
     modelConfig
@@ -369,7 +370,11 @@ async function* runPiCoreAgentChat(
   const selectedLevel = overrides?.thinkingLevel && supportsEffortDial(modelConfig)
     ? overrides.thinkingLevel
     : 'low'
-  const thinkingLevel = modelSupportsThinking && userWantsThinking ? selectedLevel : 'off'
+  // "关"不一定关得掉：思考关不掉的模型（GLM-5.3、grok-4 系）要落到最低档，
+  // 否则要么发出被服务端拒的 disabled，要么什么都不发、被按默认档（GLM-5.3 是 max）猛想。
+  const thinkingLevel = modelSupportsThinking && userWantsThinking
+    ? selectedLevel
+    : resolveThinkingOffLevel(model)
   const builtTools = buildPiCoreAgentTools({
     source,
     overrides,
@@ -384,10 +389,17 @@ async function* runPiCoreAgentChat(
     tools: builtTools.tools
   })
   let recordStreamBoundary: (phase: StreamBoundaryPhase, attempt: number) => void = () => {}
+  let recordStreamRetry: (info: StreamRetryInfo) => void = () => {}
   const models = createOpenPipalPiCoreModels(model, modelConfig, {
-    onStreamBoundary: (phase, attempt) => recordStreamBoundary(phase, attempt)
+    onStreamBoundary: (phase, attempt) => recordStreamBoundary(phase, attempt),
+    onStreamRetry: (info) => recordStreamRetry(info)
   })
   const stableTransform = createStableContextTransform()
+  // 本轮真实的提示词开销（含技能段的系统提示 + 内置/MCP 工具 schema）。与 legacy 同口径。
+  const promptOverheadTokens = segmentEstimate.systemPromptTokens
+    + segmentEstimate.builtinToolTokens
+    + segmentEstimate.mcpToolTokens
+  const { contextWindow, budget } = getContextBudget(historyModelConfig, promptOverheadTokens)
   const { contextWindow: usageContextWindow, budget: usageBudget } = { contextWindow, budget }
 
   let historyForModel = history
@@ -396,7 +408,7 @@ async function* runPiCoreAgentChat(
       history,
       overrides?.conversationId,
       historyModelConfig,
-      { signal: lifecycleSignal }
+      { signal: lifecycleSignal, promptOverheadTokens }
     )
   } catch (error) {
     if (!lifecycleSignal.aborted) {
@@ -444,6 +456,16 @@ async function* runPiCoreAgentChat(
     console.log(`[RuntimeTurn] ${JSON.stringify(record)}`)
   }
   recordStreamBoundary = (phase, attempt) => observeTurn(phase, undefined, attempt)
+  recordStreamRetry = (info) => {
+    console.warn(`[AgentRuntime] 上游断流，第 ${info.attempt}/${info.maxRetries} 次重连（${info.delayMs}ms 后）：${info.reason}`)
+    observeTurn('stream_retry')
+    // 重连是整轮重发：适配器必须回到"这条 assistant 消息还没开始"的状态，
+    // 否则第二次尝试的 thinking/tool 会被当成第一次的续写。
+    adapter.reset()
+    // 退避期间没有模型事件，看门狗照常走；重连本身就是活着的证据，给它续一次命。
+    currentWatchdog?.arm()
+    eventQueue.push({ type: 'stream_retry', attempt: info.attempt, maxRetries: info.maxRetries })
+  }
   const markFirstModelEvent = (): void => {
     if (!activeTurnObservation || activeTurnObservation.firstModelEvent) return
     activeTurnObservation.firstModelEvent = true
@@ -489,7 +511,8 @@ async function* runPiCoreAgentChat(
     const authorizer = new PiCoreToolAuthorizer({
       conversationId: overrides?.conversationId,
       onConfirmation: permissionHandler,
-      scope: { workspaceId: workspace.workspaceId, workingDir: workspace.workingDir }
+      scope: { workspaceId: workspace.workspaceId, workingDir: workspace.workingDir },
+      tier: overrides?.permissionTier
     })
     const cleanups: Array<() => void> = []
 
@@ -875,7 +898,7 @@ async function* runPiCoreAgentChat(
               history,
               overrides?.conversationId,
               historyModelConfig,
-              { force: true, signal: lifecycleSignal }
+              { force: true, signal: lifecycleSignal, promptOverheadTokens }
             )
           } catch (error) {
             console.warn('[Compactor] pi-core overflow recovery failed:', safeErrorMessage(error))

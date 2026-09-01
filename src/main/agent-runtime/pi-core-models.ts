@@ -21,7 +21,8 @@ import { piMessagesApi } from '@earendil-works/pi-ai/api/pi-messages.lazy'
 import type { ModelConfig } from '../config-manager'
 import {
   isolateAbortSignalForStream,
-  type StreamBoundaryObserver
+  type StreamBoundaryObserver,
+  type StreamRetryObserver
 } from '../isolated-stream-signal'
 
 const API_STREAM_FACTORIES: Readonly<Record<string, () => ProviderStreams>> = {
@@ -52,13 +53,17 @@ const PROVIDER_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
   zai: ['ZAI_API_KEY']
 }
 
-function streamsFor(api: Api, onStreamBoundary?: StreamBoundaryObserver): ProviderStreams {
+function streamsFor(
+  api: Api,
+  onStreamBoundary?: StreamBoundaryObserver,
+  onStreamRetry?: StreamRetryObserver
+): ProviderStreams {
   const factory = API_STREAM_FACTORIES[api]
   if (!factory) {
     throw new Error(`[AgentRuntime] pi-core does not support model API "${api}" yet`)
   }
   const upstream = factory()
-  const isolatedStreamSimple = isolateAbortSignalForStream(upstream.streamSimple, { onStreamBoundary })
+  const isolatedStreamSimple = isolateAbortSignalForStream(upstream.streamSimple, { onStreamBoundary, onStreamRetry })
   return {
     stream: upstream.stream,
     streamSimple(model, context, options) {
@@ -91,7 +96,7 @@ async function ambientKey(
 export function createOpenPipalPiCoreModels(
   model: Model<Api>,
   config: ModelConfig,
-  options: { onStreamBoundary?: StreamBoundaryObserver } = {}
+  options: { onStreamBoundary?: StreamBoundaryObserver; onStreamRetry?: StreamRetryObserver } = {}
 ): Models {
   const models = createModels()
   const resolveKey = (ctx: { env(name: string): Promise<string | undefined> }) =>
@@ -116,7 +121,7 @@ export function createOpenPipalPiCoreModels(
       }
     },
     models: [model],
-    api: streamsFor(model.api, options.onStreamBoundary)
+    api: streamsFor(model.api, options.onStreamBoundary, options.onStreamRetry)
   }))
 
   return models

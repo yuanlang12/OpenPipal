@@ -23,6 +23,7 @@ import { gcArtifactDebris } from './artifact-store'
 import { BROWSER_APPS } from './app-detector'
 import { startHttpServer, setInlinePermissionResolver } from './http-server'
 import { initSandbox, resetSandbox } from './sandbox-manager'
+import { applyLoginShellPath } from './login-shell-path'
 import { initializeSecurityStorage, setInlinePermissionSender } from './pi-security'
 import { initMemoryExtractor } from './memory-extractor'
 import { initMemoryDreamer, setDreamStatusCallback } from './memory-dreamer'
@@ -33,6 +34,8 @@ import { changeMainLocale, initializeMainI18n, tMain } from './main-i18n'
 import { createLatestLocaleApplier } from './locale-apply-queue'
 import { DATA_DIR_NAME, dataPath, getOpenPipalHome } from './data-root'
 import { safeExternalHttpUrl } from './external-navigation-policy'
+import { drainConversationService, initializeConversationService } from './conversation-service'
+import { shutdownDurableVoiceSession } from './durable-voice-session'
 
 // Release/real-device QA must never borrow the operator's real OpenPipal data.
 // Release/real-device QA must never borrow the operator's real OpenPipal data.
@@ -71,6 +74,8 @@ if (isolatedHome) {
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false  // 真正退出 flag（区分"关窗"和"Cmd+Q"）
+let quitCleanupStarted = false
+let quitCleanupFinished = false
 let refreshTrayMenu: (() => void) | null = null  // createTray 会往这里写引用,供 applyAlwaysOnTop 刷新 checkbox
 let disposeLocaleListener: (() => void) | null = null
 const applyLocaleState = createLatestLocaleApplier<ReturnType<typeof getLocaleState>>({
@@ -323,6 +328,15 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  // 双击图标启动时 PATH 只有 launchd 那四项，编码助手的 bash 与 stdio MCP 都会找不到
+  // node / npm / npx —— 详见 login-shell-path.ts。**不 await**：探针要起一个登录 shell
+  // （本机空载 0.78s，机器忙时可能走到第二档，最坏十几秒），拖首屏不值得。
+  // 它领先整条启动链，两个消费方都在其后：MCP 在下面显式等它，bash 工具还要等
+  // 窗口 + 用户发话 + 模型回合，比这久得多。
+  const loginShellPathReady = applyLoginShellPath().then((report) => {
+    if (report.applied) console.log(`[PATH] 补上登录 shell 的目录 ${report.added.length} 个`)
+    return report
+  }).catch(() => ({ applied: false, added: [] }))
   // 升级后立即修复历史 audit.log 的文件权限；不等待下一次工具调用。
   // 失败时保持 fail-closed 的写入行为，并避免读取或打印日志内容。
   if (!initializeSecurityStorage()) {
@@ -355,6 +369,12 @@ app.whenReady().then(async () => {
   }
 
   initRoles()
+  // 沙箱要在 PATH 里找 ripgrep（`/opt/homebrew/bin/rg`，不在 launchd 那份里），找不到就整段
+  // 降级成应用层安全模型。2026-08-25 实测双击启动的时间线：沙箱 0.386s 就跑完了，而 PATH 探针
+  // 0.554s 才回来 —— 不等这一下，等于一个安全边界被无声地关掉。
+  // 但也不能无限等：探针最坏要走到第二档，把首屏卡住十几秒比沙箱降级更糟，所以封顶 2s
+  // （超时就维持今天的行为，不会更坏）。
+  await Promise.race([loginShellPathReady, new Promise((r) => setTimeout(r, 2000))])
   await initSandbox() // OS 级沙箱（失败时 graceful fallback）——本地快，且 _enabled 门闩要求先于任何 bash 执行
   // 技能/子 Agent 是首轮 prompt 的能力边界，必须先完成默认禁用配置迁移与扫描。
   // 若放到 createWindow 后的后台链，极快的首轮对话会把“配置尚不存在”误当成全部启用。
@@ -364,12 +384,21 @@ app.whenReady().then(async () => {
     initializeOptionalStartupCapability('技能', preloadSkillEngine, initSkills),
     initializeOptionalStartupCapability('子 Agent ', preloadSubagentEngine, initSubagents)
   ])
+  // 新会话默认进入 Pi JSONL；已有 JSON 会话继续原地读取，不做启动时批量改写。
+  // 出现兼容问题时可用 OPENPIPAL_SESSION_STORE=legacy-json 整体回退新建路径。
+  await initializeConversationService({
+    newSessionStorage: process.env.OPENPIPAL_SESSION_STORE?.trim().toLowerCase() === 'legacy-json'
+      ? 'legacy-json'
+      : 'pi-jsonl-v4'
+  })
   createWindow()
   createTray()
 
   // MCP 连接 / HTTP server / 调度器不阻塞首屏，放后台跑。基础技能目录已在上方就绪；
   // MCP server 连接完成后再把其 suggested skills 合并进现有目录。
   void (async () => {
+    // stdio MCP server 的命令常写成 `npx`，PATH 没补齐就直接连不上
+    await loginShellPathReady
     await initMcpServers()
     // MCP server 可能提供 suggested skills(resources 里的 skill:// URI),
     // 连接完成后重新扫描让它们并入 piSkills
@@ -400,21 +429,43 @@ app.on('window-all-closed', () => {
 })
 
 // 真正退出时清理（Cmd+Q / Tray 菜单 / app.quit()）
-app.on('before-quit', async (e) => {
-  if (!isQuitting) {
-    e.preventDefault()
-    isQuitting = true
+app.on('before-quit', (e) => {
+  if (quitCleanupFinished) return
+  e.preventDefault()
+  isQuitting = true
+  if (quitCleanupStarted) return
+  quitCleanupStarted = true
+
+  void (async () => {
     console.log('[App] 开始退出清理...')
     disposeLocaleListener?.()
     disposeLocaleListener = null
     stopTracking()
     shutdownScheduler()
+    // 先停语音输入与工具流，再等待 renderer 把最后一段逐字稿写入会话。
+    // 这一步必须在会话 store drain 之前，否则退出时最后一句可能只留在内存。
+    await shutdownDurableVoiceSession().catch((error) => {
+      console.warn('[Voice] 退出前收口失败:', error)
+    })
+    // 会话追加写先于 MCP/沙箱退出完成；设置上限避免损坏磁盘或网络盘让应用永远退不掉。
+    let drainTimer: NodeJS.Timeout | undefined
+    await Promise.race([
+      drainConversationService(),
+      new Promise<void>((resolve) => {
+        drainTimer = setTimeout(() => {
+          console.warn('[Conversation] 退出前等待落盘超过 5 秒，继续其余清理')
+          resolve()
+        }, 5_000)
+      })
+    ]).catch((error) => console.warn('[Conversation] 退出落盘失败:', error))
+    if (drainTimer) clearTimeout(drainTimer)
     await shutdownMcp()
     shutdownOAuth()
     await resetSandbox()
+    quitCleanupFinished = true
     console.log('[App] 清理完成，退出')
     app.quit()
-  }
+  })()
 })
 
 function createTray(): void {

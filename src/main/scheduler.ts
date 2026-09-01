@@ -26,8 +26,10 @@ import {
   getConversation,
   getConversationMessagesSerialized,
   shouldReplayStoredMessage,
-  type StoredMessage
-} from './conversation-store'
+  type StoredMessage,
+  beginConversationOperation,
+  finishConversationOperation
+} from './conversation-service'
 import { createTranscriptCollector } from './pi-event-adapter'
 import {
   getWorkspace,
@@ -190,16 +192,22 @@ interface EnsuredConversation {
  * 确保会话存在并返回本轮是否刚创建。
  * persistent + 已绑定 → 复用；否则新建（per-run 或首次 persistent）。
  */
-function ensureConversation(task: Task): EnsuredConversation {
+async function ensureConversation(task: Task): Promise<EnsuredConversation> {
   if (task.conversationMode === 'persistent' && task.boundConversationId) {
-    if (!getConversation(task.boundConversationId)) {
+    if (!await getConversation(task.boundConversationId)) {
       throw new Error(`任务绑定的会话 ${task.boundConversationId} 不存在，已停止执行`)
     }
     return { conversationId: task.boundConversationId, createdNow: false }
   }
   // 新建会话：使用任务记录的 role，缺失则 fallback 到当前活跃 role
   const role = task.role || getCurrentRole()?.name || 'learner'
-  const conv = createConversation(role, `[自动化] ${task.name}`, task.agentId, task.workspaceId)
+  const conv = await createConversation(
+    role,
+    `[自动化] ${task.name}`,
+    task.agentId,
+    task.workspaceId,
+    'scheduler'
+  )
 
   // persistent 模式首次执行：绑定会话
   if (task.conversationMode === 'persistent') {
@@ -343,29 +351,59 @@ function throwIfTaskAborted(signal: AbortSignal): void {
  * 而是把理由写进 task.silentLog 供审计。
  */
 async function runTask(task: Task, signal: AbortSignal, payload?: WebhookPayload): Promise<RunResult> {
-  const { conversationId, createdNow } = ensureConversation(task)
+  const { conversationId, createdNow } = await ensureConversation(task)
   const execution = await acquireConversationExecution({
     conversationId,
     owner: { entrypoint: 'scheduler', ownerId: task.id },
     policy: 'wait',
     signal
   })
+  let durableRunId: string | null
   try {
     // A conversation can be deleted while this task is queued behind another
     // owner. Re-check after acquiring the shared lease so a stale binding can
     // never reach Agent Runtime/model/tool execution.
-    const conversation = getConversation(conversationId)
+    const conversation = await getConversation(conversationId)
     if (!conversation) {
       throw new Error(`任务绑定的会话 ${conversationId} 不存在，已停止执行`)
     }
-    return await runTaskInConversation(
-      task,
-      execution.signal,
-      conversationId,
-      createdNow,
-      conversation,
-      payload
-    )
+    durableRunId = await beginConversationOperation(conversationId, 'scheduler')
+    try {
+      const result = await runTaskInConversation(
+        task,
+        execution.signal,
+        conversationId,
+        createdNow,
+        conversation,
+        payload
+      )
+      const finished = await finishConversationOperation(
+        conversationId,
+        durableRunId,
+        'completed'
+      )
+      if (!finished && durableRunId && !(createdNow && result.silent)) {
+        throw new Error(`会话 ${conversationId} 的运行完成状态未能保存`)
+      }
+      return result
+    } catch (error) {
+      try {
+        await finishConversationOperation(
+          conversationId,
+          durableRunId,
+          execution.signal.aborted ? 'aborted' : 'failed',
+          execution.signal.aborted
+            ? undefined
+            : {
+                code: 'scheduler_runtime_error',
+                message: error instanceof Error ? error.message : String(error),
+              }
+        )
+      } catch (finishError) {
+        console.error(`[Task] 会话 ${conversationId} 的失败状态未能保存:`, finishError)
+      }
+      throw error
+    }
   } finally {
     execution.release()
   }
@@ -376,7 +414,7 @@ async function runTaskInConversation(
   signal: AbortSignal,
   conversationId: string,
   createdNow: boolean,
-  conversation: NonNullable<ReturnType<typeof getConversation>>,
+  conversation: NonNullable<Awaited<ReturnType<typeof getConversation>>>,
   payload?: WebhookPayload
 ): Promise<RunResult> {
 

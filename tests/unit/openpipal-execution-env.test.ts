@@ -128,8 +128,13 @@ describe('OpenPipalNodeExecutionEnv execution bounds', () => {
     const env = createEnv({
       // Leave enough startup headroom under the full parallel suite for the
       // child PID to be observed before the timeout still terminates it.
-      defaultTimeoutSeconds: 0.5,
-      maxTimeoutSeconds: 2
+      // 0.5s was not enough: on 2026-08-25 the full suite failed here in 2 of 3
+      // baseline runs — two `node` spawns simply do not finish that fast under
+      // load, so the PID never arrived. What this test asserts is that the
+      // default timeout is *finite* and takes the whole process group with it;
+      // the exact number is irrelevant, so buy headroom.
+      defaultTimeoutSeconds: 2,
+      maxTimeoutSeconds: 4
     })
     let grandchildPid: number | undefined
     const source = [

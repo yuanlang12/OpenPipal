@@ -37,3 +37,22 @@ export function parseSubagentMaxTurnsNotice(text: string): number | null {
   const maxTurns = Number(trimmed.slice(SUBAGENT_MAX_TURNS_MARKER_PREFIX.length))
   return Number.isFinite(maxTurns) && maxTurns >= 0 ? maxTurns : null
 }
+
+const STREAM_RETRY_MARKER_PREFIX = 'openpipal:stream-retry:'
+
+/** Runtime 侧：把"上游断流，正在第 N/M 次重连"写成语言中立的哨兵 */
+export function formatStreamRetryNotice(attempt: number, maxRetries: number): string {
+  return `${STREAM_RETRY_MARKER_PREFIX}${Math.max(1, Math.round(attempt))}/${Math.max(1, Math.round(maxRetries))}`
+}
+
+/** 渲染层：识别哨兵并取出第几次/共几次；不是哨兵返回 null，按原样展示 */
+export function parseStreamRetryNotice(text: string): { attempt: number; maxRetries: number } | null {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith(STREAM_RETRY_MARKER_PREFIX)) return null
+  const [rawAttempt, rawMax] = trimmed.slice(STREAM_RETRY_MARKER_PREFIX.length).split('/')
+  const attempt = Number(rawAttempt)
+  const maxRetries = Number(rawMax)
+  if (!Number.isFinite(attempt) || !Number.isFinite(maxRetries)) return null
+  if (attempt < 1 || maxRetries < 1) return null
+  return { attempt, maxRetries }
+}

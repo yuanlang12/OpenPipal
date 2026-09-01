@@ -21,8 +21,8 @@ import {
   listConversations, createConversation, getConversationMessages, getConversationMessagesSerialized, getConversation,
   appendMessages, deleteConversation, updateConversationTitle, updateConversationRole, updateConversationConfig, replaceMessages,
   shouldReplayStoredMessage, StoredMessage, ConversationConfig, updateConversationWorkspace,
-  mutateConversationConfig
-} from './conversation-store'
+  mutateConversationConfig, beginConversationOperation, finishConversationOperation
+} from './conversation-service'
 import {
   getEffectiveModelConfigForDisplay, saveModelConfig, getProviders, testConnection, hasApiKey, isUserCustomConfig, clearModelConfig,
   ModelConfig
@@ -91,7 +91,16 @@ import { isLocalePreference } from '../shared/i18n/contract'
 // Agent Runtime 全栈懒加载（同 ipc-handlers.ts），由 router 统一缓存与失败重试。
 const agentService = getAgentRuntime
 
-const PORT = 3031
+/**
+ * 3031 是插件与 ACP 适配器写死认的端口，正常运行**不要动**。
+ *
+ * `OPENPIPAL_HTTP_PORT` 只给"同一台机器上再起一个隔离实例"用（E2E / benchmark harness）：
+ * 端口被占时 `startHttpServer` 只会打一行日志然后跳过（见文件末尾的 EADDRINUSE 分支），
+ * 于是第二个实例根本没有 HTTP 面 —— 想把编码助手当成可编程 agent 无头驱动就无从下手，
+ * 除非去抢用户那个正在跑的 App（还会把插件已绑定的 origin 顶掉）。
+ * 不设这个变量时行为逐字节不变。
+ */
+const PORT = Number(process.env.OPENPIPAL_HTTP_PORT) || 3031
 const RENDERER_DIR = join(__dirname, '../renderer')
 const LOCALE_REQUEST_BODY_MAX_BYTES = 256
 const APP_FOLLOWING_REQUEST_BODY_MAX_BYTES = 256
@@ -528,18 +537,19 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
 
     // ---- 对话管理 API ----
     if (url === '/api/conversations' && req.method === 'GET') {
-      json(res, 200, listConversations())
+      json(res, 200, await listConversations())
       return
     }
     if (url === '/api/conversations' && req.method === 'POST') {
       try {
         const body = JSON.parse(await readBody(req))
         // Stage 8: 接受 agentId / workspaceId,让 openpipal-acp 等外部 client 能创建关联自定义 Agent 的会话
-        const conv = createConversation(
+        const conv = await createConversation(
           body.role || getCurrentRole().name,
           body.title,
           body.agentId,
-          body.workspaceId
+          body.workspaceId,
+          'acp'
         )
         json(res, 200, conv)
       } catch (err: any) {
@@ -556,7 +566,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
         return
       }
       if (req.method === 'GET') {
-        const conv = getConversation(id)
+        const conv = await getConversation(id)
         if (conv) json(res, 200, conv)
         else json(res, 404, { error: 'Not found' })
         return
@@ -570,7 +580,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       if (req.method === 'PATCH') {
         try {
           const body = JSON.parse(await readBody(req))
-          if (!getConversation(id)) {
+          if (!await getConversation(id)) {
             json(res, 404, { error: 'Conversation not found' })
             return
           }
@@ -637,7 +647,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
         json(res, 400, { error: 'Invalid conversation id' })
         return
       }
-      if (!getConversation(id)) {
+      if (!await getConversation(id)) {
         json(res, 404, { error: 'Conversation not found' })
         return
       }
@@ -894,6 +904,9 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       let lockedConversationId: string | undefined
       let execution: ConversationExecutionLease | undefined
       let heartbeat: ReturnType<typeof setInterval> | undefined
+      let durableRunId: string | null = null
+      let turnFailure: Error | undefined
+      let turnCompleted = false
 
       const cleanupTransport = (): void => {
         if (heartbeat) {
@@ -968,7 +981,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
 
         // 单次读盘同时服务 ACP 历史重建与 Stage 8 overrides——此前各读一次，
         // 热路径上对同一份线性增长的会话 JSON 每轮同步读两遍
-        const conv = conversationId ? getConversation(conversationId) : null
+        const conv = conversationId ? await getConversation(conversationId) : null
         if (conversationId && !conv) {
           // A caller may only opt into durable history, memory, permissions,
           // and role state by naming a conversation that already exists in the
@@ -1044,6 +1057,13 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
           })
         }
 
+        // ACP has no renderer persistence layer. Record the durable start only
+        // after validation but before Runtime/tool execution; extension turns
+        // keep their existing client-owned persistence contract.
+        if (isAcp && conversationId) {
+          durableRunId = await beginConversationOperation(conversationId, 'acp')
+        }
+
         const { agentChat } = await agentService()
         // ACP 落盘用与 scheduler 同一个收集器（text_flush 分段 + 包含式去重——
         // Pi 会发 streaming delta + fallback 全文两份 text 事件，朴素 += 会记双份；
@@ -1055,6 +1075,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
           // 原样向 SSE 发送一次后立即结束：不把失败轮伪装成 ACP 成功 transcript，
           // 也不再追加 done。abort 让 Runtime 里仍在跑的工具/子任务同步收敛。
           if (event.type === 'error') {
+            turnFailure = new Error(event.content)
             abort.abort()
             if (!res.destroyed) {
               res.write(`data: ${JSON.stringify({ ...event, conversationId: conversationId || '' })}\n\n`)
@@ -1071,7 +1092,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
               conversationId,
               (config) => ({ ...config, goal: event.goal })
             )
-            if (!persisted && getConversation(conversationId)) {
+            if (!persisted && await getConversation(conversationId)) {
               throw new Error('Failed to persist conversation goal update')
             }
           }
@@ -1128,6 +1149,8 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
           }
         }
 
+        turnCompleted = true
+
         if (!res.destroyed) {
           res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`)
           res.end()
@@ -1144,6 +1167,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
           }
         }
       } catch (err: any) {
+        turnFailure = err instanceof Error ? err : new Error(String(err))
         console.error('[HTTP] SSE streaming 错误:', err.message)
         if (!res.headersSent) {
           json(res, requestErrorStatus(err, 500), { error: err.message })
@@ -1158,6 +1182,27 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
         }
       } finally {
         cleanupTransport()
+        if (lockedConversationId && durableRunId) {
+          const outcome = turnFailure
+            ? 'failed'
+            : (abort.signal.aborted ? 'aborted' : (turnCompleted ? 'completed' : 'failed'))
+          try {
+            const finished = await finishConversationOperation(
+              lockedConversationId,
+              durableRunId,
+              outcome,
+              outcome === 'failed'
+                ? {
+                    code: 'acp_runtime_error',
+                    message: turnFailure?.message || 'ACP turn ended before durable completion',
+                  }
+                : undefined
+            )
+            if (!finished) console.error(`[HTTP] failed to close durable operation ${durableRunId}`)
+          } catch (error) {
+            console.error(`[HTTP] failed to close durable operation ${durableRunId}:`, error)
+          }
+        }
         execution?.release()
       }
       return
@@ -1345,7 +1390,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
         const params = new URL(req.url!, 'http://x').searchParams
         const role = params.get('role') || undefined
         const limit = Number(params.get('limit')) || undefined
-        json(res, 200, { items: listArtifactHistory({ role, limit }) })
+        json(res, 200, { items: await listArtifactHistory({ role, limit }) })
       } catch (err: any) {
         json(res, requestErrorStatus(err, 500), { items: [], error: err?.message })
       }

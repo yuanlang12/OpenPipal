@@ -51,7 +51,9 @@ export interface AgentOverrides {
   }>
   projectName?: string
   thinkingEnabled?: boolean
-  thinkingLevel?: 'low' | 'medium' | 'high'
+  thinkingLevel?: 'low' | 'medium' | 'high' | 'max'
+  /** 会话级权限档位（编码助手专属）。undefined = 'auto'。 */
+  permissionTier?: 'readonly' | 'auto' | 'full'
   modelPresetId?: string
   goal?: ConversationGoal
 }

@@ -130,6 +130,11 @@ const api = {
     ipcRenderer.on('chat:thinking-end', handler)
     return () => ipcRenderer.removeListener('chat:thinking-end', handler)
   },
+  onStreamRetry: (callback: (conversationId: string, attempt: number, maxRetries: number) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, cid: string, attempt: number, maxRetries: number): void => callback(cid, attempt, maxRetries)
+    ipcRenderer.on('chat:stream-retry', handler)
+    return () => ipcRenderer.removeListener('chat:stream-retry', handler)
+  },
   onToolProgress: (callback: (conversationId: string, name: string, chars: number, path?: string) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, cid: string, name: string, chars: number, path?: string): void => callback(cid, name, chars, path)
     ipcRenderer.on('chat:tool-progress', handler)
@@ -275,7 +280,7 @@ const api = {
   testThinkingSupport: (config: any): Promise<{ detected: boolean; error?: string }> => ipcRenderer.invoke('config:test-thinking', config),
   getProviders: (): Promise<any> => ipcRenderer.invoke('config:get-providers'),
   hasApiKey: (): Promise<{ hasKey: boolean }> => ipcRenderer.invoke('config:has-key'),
-  getAvailableModels: (): Promise<Array<{ id: string; name: string; model: string; active: boolean; supportsThinking: boolean; supportsEffortDial: boolean }>> => ipcRenderer.invoke('config:available-models'),
+  getAvailableModels: (): Promise<Array<{ id: string; name: string; model: string; active: boolean; supportsThinking: boolean; supportsEffortDial: boolean; thinkingAlwaysOn: boolean; thinkingLevels: Array<'low' | 'medium' | 'high' | 'max'> }>> => ipcRenderer.invoke('config:available-models'),
   /** 主进程读剪贴板图片（NSPasteboard 原生 flavor，覆盖 TIFF-only 等 DOM 剪贴板看不见的来源）；无图返回 null */
   readClipboardImage: (): Promise<string | null> => ipcRenderer.invoke('clipboard:read-image'),
   /** 随消息图片落盘到本会话 artifacts/uploads/（官方形状），返回相对路径列表 */
@@ -383,7 +388,17 @@ const api = {
   // 工作目录
   selectDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:select-directory'),
   getWorkingDir: (): Promise<string> => ipcRenderer.invoke('config:get-working-dir'),
-  setWorkingDir: (dir: string): Promise<void> => ipcRenderer.invoke('config:set-working-dir', dir),
+  setWorkingDir: (dir: string): Promise<{ ok: boolean; code?: string; error?: string; resolved?: string }> =>
+    ipcRenderer.invoke('config:set-working-dir', dir),
+  validateWorkingDir: (dir: string): Promise<{ ok: boolean; code?: string; reason?: string; resolved?: string }> =>
+    ipcRenderer.invoke('config:validate-working-dir', dir),
+  describeProjectContext: (
+    dir: string
+  ): Promise<{
+    repoRoot: string | null
+    files: Array<{ path: string; truncated: boolean }>
+    droppedForBudget: string[]
+  }> => ipcRenderer.invoke('config:describe-project-context', dir),
   // 权限审批（预留给 UI 弹窗组件使用）
   onPermissionRequest: (
     callback: (request: { requestId: string; tool: string; args: any; risk: string; reason: string }) => void

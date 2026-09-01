@@ -7,8 +7,12 @@ import {
   PI_CORE_NODE_ENGINE
 } from '../../src/main/agent-runtime/pi-core-compatibility'
 
+// 三个包必须同一个精确版本：混版会让 AgentTool 之类的类型对不上（0.84.1 的 pi-agent-core
+// 配 0.84.2 的 pi-coding-agent 会直接把 tsc 打红）。升级时只改这一行。
+const PI_RUNTIME_VERSION = '0.84.4'
+
 describe('pi-core Node compatibility gate', () => {
-  it('keeps the official Pi runtime packages on one exact 0.84.1 contract', () => {
+  it(`keeps the official Pi runtime packages on one exact ${PI_RUNTIME_VERSION} contract`, () => {
     const versions = [
       '@earendil-works/pi-agent-core',
       '@earendil-works/pi-ai',
@@ -18,7 +22,7 @@ describe('pi-core Node compatibility gate', () => {
       'utf8'
     )).version)
 
-    expect(versions).toEqual(['0.84.1', '0.84.1', '0.84.1'])
+    expect(versions).toEqual([PI_RUNTIME_VERSION, PI_RUNTIME_VERSION, PI_RUNTIME_VERSION])
   })
 
   it('resolves no nested 0.83 copy of the three Pi runtime packages', () => {
@@ -29,7 +33,7 @@ describe('pi-core Node compatibility gate', () => {
       .map(([packagePath, value]) => ({ packagePath, version: value.version }))
 
     expect(resolved.length).toBeGreaterThanOrEqual(3)
-    expect(resolved.every(({ version }) => version === '0.84.1')).toBe(true)
+    expect(resolved.every(({ version }) => version === PI_RUNTIME_VERSION)).toBe(true)
     expect(resolved.some(({ version }) => version?.startsWith('0.83.'))).toBe(false)
   })
 

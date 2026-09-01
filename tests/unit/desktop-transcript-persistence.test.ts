@@ -171,7 +171,7 @@ describe('desktop transcript persistence barrier', () => {
       'executionRoleName = overrides?.roleName || getCurrentRole().name'
     )
     expect(source).toContain(
-      "const roleName = capturedRoleName || (conversationId ? getConversation(conversationId)?.role : undefined) || getCurrentRole().name"
+      "const roleName = capturedRoleName || (conversationId ? peekConversation(conversationId)?.role : undefined) || getCurrentRole().name"
     )
     expect(source).toContain('executeExtraction(messages, conversationId || null, executionRoleName!')
     expect(source).not.toMatch(/executeExtraction\(messages, conversationId \|\| null, getCurrentRole\(\)\.name/)

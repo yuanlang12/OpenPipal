@@ -33,6 +33,14 @@ const WORKER_STACK_MB = 4
 const MAX_ACTIVE_SEARCH_WORKERS = 2
 const MAX_QUEUED_SEARCH_WORKERS = 8
 
+// grep 和 find 的 includeIgnored 说的是同一件事，两边逐字相同——这是模型读的提示词，
+// 手工同步两份 400 字的说明迟早会漂，而漂了之后两个工具会对同一个开关说两种话。
+const INCLUDE_IGNORED_DESCRIPTION =
+  'Also search files excluded by .gitignore — dependencies (node_modules), build output (dist/out), '
+  + 'generated code. Use it when the answer lives upstream: how a dependency actually behaves, '
+  + 'what default a package ships, what a generated file contains. Off by default because these trees '
+  + 'are huge; narrow with `path` when you turn it on. `.git` and credential files stay excluded either way.'
+
 // Resolve once from the product's declared dependency. The worker receives the
 // exact file path, so it never searches user-controlled cwd/node_modules paths.
 const ignoreModulePath = createRequire(
@@ -64,6 +72,9 @@ const grepSchema = Type.Object({
   ),
   limit: Type.Optional(
     Type.Number({ description: `Maximum matches to return (default: ${GREP_DEFAULT_LIMIT}, max: ${GREP_MAX_LIMIT})` })
+  ),
+  includeIgnored: Type.Optional(
+    Type.Boolean({ description: INCLUDE_IGNORED_DESCRIPTION })
   )
 })
 
@@ -77,6 +88,9 @@ const findSchema = Type.Object({
   ),
   limit: Type.Optional(
     Type.Number({ description: `Maximum results (default: ${FIND_DEFAULT_LIMIT}, max: ${FIND_MAX_LIMIT})` })
+  ),
+  includeIgnored: Type.Optional(
+    Type.Boolean({ description: INCLUDE_IGNORED_DESCRIPTION })
   )
 })
 
@@ -171,6 +185,8 @@ interface SearchWorkerRequest {
   literal?: boolean
   contextLines?: number
   limit: number
+  /** 放开 .gitignore（见 grep 工具描述）。`.git` 与凭据的排除不受影响——那两条在 walk 里硬编码。 */
+  includeIgnored?: boolean
   maxTraversedEntries: number
   maxGrepFileBytes: number
   maxLineLength: number
@@ -844,7 +860,14 @@ async function runGrep(rootPath, rootStat, request) {
     const ignoreFactory = ignoreFactoryModule.default || ignoreFactoryModule
     const matcher = ignoreFactory()
     const ignoreRoot = await findIgnoreRoot(rootPath)
-    await preloadAncestorIgnoreRules(matcher, ignoreRoot, rootPath, GREP_IGNORE_FILE_NAMES)
+    // includeIgnored 时不加载任何忽略文件——空规则集的 matcher 对谁都返回 false，
+    // 不必在 walk 里再开一条分支。**.git 与 .env* 的排除不在这一层**：
+    // 它们在 walkDescendants 里硬编码跳过（entry.name === '.git' 那一行），
+    // 所以放开 .gitignore 动不到它们。
+    // ignoreRoot 仍要算——walkDescendants 里的 ignoreRelativePath 依赖它。
+    // 注意这一整块住在 worker 的模板字符串里，注释里**不能出现反引号**（会截断字符串）。
+    const ignoreNames = request.includeIgnored ? [] : GREP_IGNORE_FILE_NAMES
+    await preloadAncestorIgnoreRules(matcher, ignoreRoot, rootPath, ignoreNames)
     for await (const entry of walkDescendants(
       rootPath,
       ignoreRoot,
@@ -852,7 +875,7 @@ async function runGrep(rootPath, rootStat, request) {
       state,
       rootPath,
       true,
-      GREP_IGNORE_FILE_NAMES
+      ignoreNames
     )) {
       if (entry.kind !== 'file') continue
       if (globMatcher && !globMatcher(entry.relativePath, entry.name)) continue
@@ -894,7 +917,12 @@ async function runFind(rootPath, rootStat, request) {
   const ignoreFactory = ignoreFactoryModule.default || ignoreFactoryModule
   const matcher = ignoreFactory()
   const ignoreRoot = await findIgnoreRoot(rootPath)
-  await preloadAncestorIgnoreRules(matcher, ignoreRoot, rootPath, FIND_IGNORE_FILE_NAMES)
+  // includeIgnored 时不加载任何忽略文件——空规则集的 matcher 对谁都返回 false，
+  // 不必在 walk 里再开一条分支。**.git 与 .env* 的排除不在这一层**：
+  // 它们在 walkDescendants 里硬编码跳过（entry.name === '.git' 那一行），
+  // 所以放开 .gitignore 动不到它们。
+  const ignoreNames = request.includeIgnored ? [] : FIND_IGNORE_FILE_NAMES
+  await preloadAncestorIgnoreRules(matcher, ignoreRoot, rootPath, ignoreNames)
   const state = {
     traversedEntries: 0,
     maxTraversedEntries: request.maxTraversedEntries,
@@ -909,7 +937,7 @@ async function runFind(rootPath, rootStat, request) {
     state,
     rootPath,
     true,
-    FIND_IGNORE_FILE_NAMES
+    ignoreNames
   )) {
     if (!matchesGlob(entry.relativePath, entry.name)) continue
     matchCount = Math.min(request.limit + 1, matchCount + 1)
@@ -1118,7 +1146,7 @@ export function createOpenPipalGrepTool<
   return {
     name: 'grep',
     label: 'grep',
-    description: `Search file contents in an isolated, bounded worker. Respects .gitignore, .ignore, and .rgignore. Output is truncated to ${GREP_DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB. Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
+    description: `Search file contents in an isolated, bounded worker. Respects .gitignore, .ignore, and .rgignore by default — set includeIgnored to also search dependencies and build output. Output is truncated to ${GREP_DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB. Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
     parameters: grepSchema,
     async execute(
       _toolCallId,
@@ -1129,7 +1157,8 @@ export function createOpenPipalGrepTool<
         ignoreCase = false,
         literal = false,
         context: requestedContext,
-        limit: requestedLimit
+        limit: requestedLimit,
+        includeIgnored = false
       },
       signal,
       _onUpdate,
@@ -1154,6 +1183,7 @@ export function createOpenPipalGrepTool<
         literal,
         contextLines,
         limit: effectiveLimit,
+        includeIgnored,
         maxTraversedEntries: resolvedLimits.maxTraversedEntries,
         maxGrepFileBytes: resolvedLimits.maxGrepFileBytes,
         maxLineLength: GREP_MAX_LINE_LENGTH,
@@ -1228,11 +1258,11 @@ export function createOpenPipalFindTool<
   return {
     name: 'find',
     label: 'find',
-    description: `Search file names in an isolated, bounded worker. Respects .gitignore, .ignore, and .fdignore. Output is truncated to ${FIND_DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB.`,
+    description: `Search file names in an isolated, bounded worker. Respects .gitignore, .ignore, and .fdignore by default — set includeIgnored to also search dependencies and build output. Output is truncated to ${FIND_DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB.`,
     parameters: findSchema,
     async execute(
       _toolCallId,
-      { pattern, path: requestedPath, limit: requestedLimit },
+      { pattern, path: requestedPath, limit: requestedLimit, includeIgnored = false },
       signal,
       _onUpdate,
       context
@@ -1250,6 +1280,7 @@ export function createOpenPipalFindTool<
         rootDisplayName: searchRoot.displayName,
         pattern,
         limit: effectiveLimit,
+        includeIgnored,
         maxTraversedEntries: resolvedLimits.maxTraversedEntries,
         maxGrepFileBytes: resolvedLimits.maxGrepFileBytes,
         maxLineLength: GREP_MAX_LINE_LENGTH,

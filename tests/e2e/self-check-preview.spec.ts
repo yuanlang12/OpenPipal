@@ -226,6 +226,38 @@ test.describe('自检实时画面卡', () => {
     await expect(card.getByTestId('self-check-stale-icon')).toBeVisible()
   })
 
+  test('T2f 修稿后复检通过 → 最新结论覆盖旧问题（即使开始/结束落在同一批）', async ({ page }) => {
+    await setup(page)
+    await startSelfCheck(page)
+    await endSelfCheck(page, '渲染发现 1 个问题（修完再交）：\n- TypeError: x is not a function')
+
+    const card = page.locator('[data-testid="self-check-preview"]')
+    await expect(card).toContainText('发现 1 个问题')
+
+    await page.evaluate(() => {
+      const store = (window as any).__artifactStore.getState()
+      const cur = store.artifacts.find((a: any) => a.id === 'art-1')
+      store.addArtifact({ ...cur, content: `${cur.content}<!-- fixed -->` })
+    })
+    await expect(card).toContainText('已过时')
+
+    // 生产 IPC 可以在同一帧内连续到达；组件不能只靠 toolStatus 的中间字符串态刷新。
+    await page.evaluate(() => {
+      ;(window as any).__mockBus.emit('tool-start', '', 'render_artifact', 'call-check-2')
+      ;(window as any).__mockBus.emit(
+        'tool-end', '', 'render_artifact', undefined, undefined,
+        '渲染干净：无 console 错误、无未解析空穴。',
+        undefined, undefined, 'call-check-2'
+      )
+    })
+
+    await expect(card).toContainText('渲染干净')
+    await expect(card.getByTestId('self-check-success-icon')).toBeVisible()
+    await expect(card.getByTestId('self-check-issues-icon')).toHaveCount(0)
+    await expect(card.getByTestId('self-check-stale-icon')).toHaveCount(0)
+    await page.screenshot({ path: `${ARTIFACTS_DIR}/t2f-latest-result.png`, fullPage: true })
+  })
+
   test('T2c 结论文本缺失（旧后端/插件端没带）→ 中性完成态，不误报通过或失败', async ({ page }) => {
     await setup(page)
     await startSelfCheck(page)

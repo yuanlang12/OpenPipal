@@ -8,6 +8,7 @@ import { shouldDismissTodosArtifact } from '../utils/todosArtifactLifecycle'
 import { stripDcSuffix } from '../utils/format'
 import { rendererI18n } from '../i18n'
 import { mergeSyntheticStreamError } from '../chat/syntheticStreamError'
+import { formatStreamRetryNotice } from '../../../shared/runtime-notice'
 import {
   hasAnsweredQuestion,
   QUESTIONS_V2_PERSISTENCE_VERSION,
@@ -53,6 +54,7 @@ import {
   createUserMessage,
   createVoiceMessage,
   failUnfinishedToolMessages,
+  dropStreamRetryNotices,
   getMessageKind,
   isRenderableToolMessage,
   isSilentReply,
@@ -690,9 +692,14 @@ interface ChatState {
      */
     thinkingEnabled?: boolean
     /** 思考档位（low/medium/high），undefined = 'low'；仅支持档位的模型采纳 */
-    thinkingLevel?: 'low' | 'medium' | 'high'
+    thinkingLevel?: 'low' | 'medium' | 'high' | 'max'
     /** 会话专属模型预设 id。undefined = 跟随全局默认。 */
     modelPresetId?: string
+    /**
+     * 权限档位（只读 / 自动审核 / 完全允许）。undefined = 'auto' = 今天的行为。
+     * 只有编码助手会读它（main 侧 agent-overrides.ts 上有角色门）。
+     */
+    permissionTier?: 'readonly' | 'auto' | 'full'
     /** questions_v2 的待答状态；由会话切换/重启恢复。 */
     pendingQuestion?: PersistedPendingQuestion
     [key: string]: any
@@ -711,9 +718,9 @@ interface ChatState {
   thinkingContent: string // deprecated — thinking 直接作为消息存在，此字段仅用于兼容
   isThinking: boolean
   /** 哪些会话的模型服务**真的通了** —— 收到第一个模型事件(文字/思考/工具)就登记,发起新一轮时注销。
-   *  分割线拿它决定写「连接模型…」还是「处理中 N 秒」:按下回车到模型吐第一个字节之间可能
-   *  隔着连接、排队、429 换端点重试,那段时间报秒数就是在替模型认领它没干过的活
-   *  (2026-08-18 用户实锤:"发了消息就计时,其实模型还没通")。
+   *  分割线拿它决定写「等待模型响应 N 秒」还是「处理中 N 秒」：按下回车到模型吐第一个
+   *  字节之间可能隔着连接、排队、429 换端点重试。两段使用不同文案，但等待秒数也从 0
+   *  连续展示，避免首个事件到达时计时突然跳到数秒、让人误以为客户端攒了一批内容。
    *  **按会话记**而不是一个全局布尔:流式本来就是按会话的(见 streamingConvIds),
    *  全局布尔会让"在 A 收到第一个 token 后切到还没开口的后台会话 B"读成 B 已经通了。 */
   modelRespondedConvIds: Record<string, boolean>
@@ -743,9 +750,11 @@ interface ChatActions {
    * 仅在当前模型 supportsThinking 时才会被后端采用。
    */
   setConversationThinking: (enabled: boolean) => void
-  setConversationThinkingLevel: (level: 'low' | 'medium' | 'high') => void
+  setConversationThinkingLevel: (level: 'low' | 'medium' | 'high' | 'max') => void
   /** 设置会话专属模型预设；undefined = 清除、跟随全局默认 */
   setConversationModelPreset: (presetId: string | undefined) => void
+  /** 设置本会话的权限档位（仅编码助手的界面暴露；主进程再按角色过一道门） */
+  setConversationPermissionTier: (tier: 'readonly' | 'auto' | 'full') => void
   /**
    * 通用前置信息提交入口 — 任意角色 preflow 提交完后调用
    * 把 projectName / roleBrief[roleName] / initialAssets 合并进 conversationConfig
@@ -1707,6 +1716,16 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
     set(s => ({ conversations: s.conversations.map(c => c.id === id ? { ...c, config } : c) }))
   },
 
+  setConversationPermissionTier: (tier) => {
+    // 跟着这条会话走，不写全局、不跨会话继承——换个话题重新从"自动审核"开始，
+    // 免得几天前为某段活开的"完全允许"在别处静悄悄生效。
+    const config = { ...get().conversationConfig, permissionTier: tier }
+    set({ conversationConfig: config })
+    const id = get().activeConversationId
+    if (id) window.api.updateConversationConfig(id, config)
+    set(s => ({ conversations: s.conversations.map(c => c.id === id ? { ...c, config } : c) }))
+  },
+
   /**
    * 用户提交 questions_v2 答案 — 清空 pending 状态 + 把答案作为 user message 发出去
    */
@@ -2082,6 +2101,45 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
         thinkBuf = ''
       }),
 
+      // 上游断流后正在重连。重连是整轮重发（HTTP 流没有断点续传，服务端也不留半截思考），
+      // 所以本次尝试已经上屏的思考/正文必须丢掉——不丢就会把两次尝试的内容拼成一条。
+      window.api.onStreamRetry?.((cid: string, attempt: number, maxRetries: number) => {
+        if (isBackgroundConversation(cid)) {
+          // 后台会话没有上屏内容，但缓冲区照样会把两次尝试的正文拼起来。
+          bgStreamBufs.set(cid, '')
+          return
+        }
+        markModelResponded(cid)
+        const discardedThinkingId = activeThinkingId
+        resetThinkingState()
+        streamBuf = ''
+        liveStream.setText('')
+        set(s => {
+          let messages = s.messages
+          if (discardedThinkingId) {
+            const idx = messages.findIndex(m => m.id === discardedThinkingId)
+            if (idx !== -1) {
+              // 这条可能已经越过落盘水位线，删除必须让下次保存走整份重写，
+              // 否则磁盘上会留下一段"被丢弃的思考"（与 onThinkingEnd 同一个坑）。
+              markDirtyIfPersisted(idx)
+              messages = messages.filter((_, i) => i !== idx)
+            }
+          }
+          const notice: ChatMessage = {
+            id: `stream-retry-${Date.now()}-${attempt}`,
+            role: 'assistant',
+            // 与其余运行时提示同一口径：内容写语言中立哨兵，渲染层翻译（见 shared/runtime-notice.ts）
+            content: formatStreamRetryNotice(attempt, maxRetries),
+            messageKind: 'inject-notice',
+            messageSubtype: 'stream-retry',
+            timestamp: Date.now()
+          }
+          return { messages: [...messages, notice], isThinking: false }
+        })
+        // 这次落盘是为了把上面删掉的半截思考同步到磁盘；提示本身进不了记录（isLiveOnlyNotice）。
+        debouncedSave(get)
+      }),
+
       window.api.onStreamEnd((cid: string, error?: string) => {
         const endedCid = cid || get().activeConversationId || ''
         const endWasAbort = endedCid
@@ -2137,6 +2195,20 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
             set({ messages: finalized })
           }
         }
+        // 重连救回来了就把本轮的"连接中断"提示撤掉：它的价值只在解释"为什么等了这么久还失败"，
+        // 这一轮既然成了，留着就只是噪音。失败/用户中止时留在屏幕上——那几分钟得有个交代；
+        // 它本来就不落盘（conversation-store 的 isLiveOnlyNotice 挡着），所以"留"只留到本次会话结束。
+        if (!error && !endWasAbort) {
+          const before = get().messages
+          const kept = dropStreamRetryNotices(before)
+          if (kept !== before) {
+            // 水位线数的是内存数组下标：中间删一条，后面所有消息的下标都往前挪一格，
+            // 再走 slice(persistedCount) 的尾部追加就会漏掉一条真消息。必须整份重写。
+            markDirty()
+            set({ messages: kept })
+          }
+        }
+
         const remaining = streamBuf
         const mergedError = error ? mergeSyntheticStreamError(remaining, error) : null
         const terminalContent = mergedError?.content || remaining

@@ -10,10 +10,11 @@ import type { ChatMessage, RunningAgentHandle } from './agent-runtime/contracts'
 import {
   listConversations, createConversation, getConversation, getConversationMessages, getConversationMessagesSerialized,
   appendMessages, deleteConversation, updateConversationTitle, updateConversationRole, replaceMessages,
-  updateConversationConfig, setTitleUpdateCallback, StoredMessage
-} from './conversation-store'
-import type { ConversationConfig } from './conversation-store'
-import { mutateConversationConfig } from './conversation-store'
+  updateConversationConfig, setTitleUpdateCallback, peekConversation, StoredMessage,
+  beginConversationOperation, finishConversationOperation
+} from './conversation-service'
+import type { ConversationConfig } from './conversation-service'
+import { mutateConversationConfig } from './conversation-service'
 import type { AcpPendingPermission } from '../shared/acp-status-contract'
 import { buildAcpStatus } from './acp-status'
 import { clearConversationGoal, readConversationGoal, setConversationGoal } from './conversation-goal'
@@ -22,7 +23,7 @@ import { readTodayUsageByModel } from './usage-log'
 import { saveConversationAttachment, loadConversationAttachment, type AttachmentKind } from './attachment-store'
 import type { ConversationGoal } from './goal-checker'
 import {
-  getEffectiveModelConfig, saveModelConfig, getProviders, testConnection, hasApiKey, isUserCustomConfig, clearModelConfig, supportsEffortDial,
+  getEffectiveModelConfig, saveModelConfig, getProviders, testConnection, hasApiKey, isUserCustomConfig, clearModelConfig, supportsEffortDial, thinkingCannotBeDisabled, resolveThinkingLevels,
   ModelConfig, getWorkingDir, setWorkingDir,
   getAvailableModels, listModelPresets, saveModelPreset, deleteModelPreset, switchToPreset,
   listModelProviders, updateModelProvider, getModelProviderFull,
@@ -33,9 +34,14 @@ import {
 } from './config-manager'
 import { testSearchConnection } from './web-search'
 import {
-  setRealtimeWindowRef, getRealtimeConfig, startRealtimeSession, stopRealtimeSession, sendRealtimeEvent,
+  setRealtimeWindowRef, getRealtimeConfig, sendRealtimeEvent,
   testRealtimeConnection, previewVoice, stopVoicePreview
 } from './realtime-session'
+import {
+  initializeDurableVoiceSession,
+  startDurableVoiceSession,
+  stopDurableVoiceSession,
+} from './durable-voice-session'
 import { saveVoiceAudio, readVoiceAudio } from './voice-audio'
 import { getEffectiveVoiceConfig, saveVoiceConfig, getDoubaoVoiceConfig, setInterpretTargetLanguage } from './config-manager'
 import type { VoiceConfig } from './config-manager'
@@ -54,10 +60,17 @@ import {
   approveToolForSession,
   clearSessionApprovals,
   pendingPermissionResolvers,
-  setPermissionRequestSettlementHandler
+  setPermissionRequestSettlementHandler,
+  assessWorkspaceRoot,
+  replaceGlobalWorkspaceRoot,
+  invalidateWorkspaceRootCache
 } from './pi-security'
+import { syncSandboxWorkspaceRoots } from './sandbox-manager'
+import { invalidateProjectContextSnapshots, loadProjectContext } from './agent-runtime/project-context'
 import type { PermissionHandler, PermissionRequest, SessionApprovalScope } from './pi-security'
 import { isBrowserWriteTool, targetHostForCommand, grantSessionHost } from './browser-policy-store'
+import { detectGitRemoteUse } from './git-policy'
+import { grantAlwaysProject } from './git-policy-store'
 import { writePermissionToStream } from './http-server'
 import { listAgentTemplates, getAgentTemplate, createAgentTemplate, updateAgentTemplate, deleteAgentTemplate } from './agent-template-manager'
 import { resolveAgentOverrides, resolveExecutionRoleName } from './agent-overrides'
@@ -129,6 +142,14 @@ const pendingBrowserGrant = new Map<string, {
   executionId?: string
   host: string
 }>()
+// git 远端命令的权限请求 ID → {对话, 项目目录}（"本次会话允许"时按项目持久授权,而非按工具）
+// 按工具授权对 git 没意义:下一条 `git fetch` 与这条 `git push` 参数不同,
+// 而 bash 是 argumentScoped 的,等于每条 git 命令都要重问一遍。
+const pendingGitGrant = new Map<string, {
+  conversationId?: string
+  executionId?: string
+  workingDir: string
+}>()
 
 // 工作区文件面板 fs.watch 推送——取代 FilesSection/FilesPanel 原来的定时轮询。
 // key = dirKey（'outputs:<workspaceId>' / 'tree:<workspaceId>'，workspaceId 空串=全局），模块级幂等管理。
@@ -170,7 +191,7 @@ function shouldSkipMemoryExtraction(
   // A running turn owns the role snapshot captured when its lease started.
   // UI edits made while it is running apply to the next turn; mixing the new
   // policy flag with the old turn's extraction target would cross role bounds.
-  const roleName = capturedRoleName || (conversationId ? getConversation(conversationId)?.role : undefined) || getCurrentRole().name
+  const roleName = capturedRoleName || (conversationId ? peekConversation(conversationId)?.role : undefined) || getCurrentRole().name
   const roleCfg = getRoleConfig(roleName)
   if (roleCfg?.memoryEnabled === false) {
     console.log(`[Memory] 角色 ${roleName} 已关闭记忆抽取（memory: off），跳过本次 executeExtraction`)
@@ -190,6 +211,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   setPermissionRequestSettlementHandler(({ requestId }) => {
     pendingPermissionTools.delete(requestId)
     pendingBrowserGrant.delete(requestId)
+    pendingGitGrant.delete(requestId)
     // 这里是唯一一条"权限请求结束了"的汇合点（应答 / 中止 / 超时 / 发送失败都经过）。
     // 通知放在别处就必然漏：此前只有应答那条路推了，中止和超时不推，设置页那块
     // 琥珀色"等你确认 (N)"于是一直挂着，直到用户重新进一次设置页才消失。
@@ -339,6 +361,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     let execution: ConversationExecutionLease | undefined
     let executionRoleName: string | undefined
     let terminalFailure = false
+    let durableRunId: string | null = null
 
     try {
       execution = await acquireConversationExecution({
@@ -349,6 +372,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
         policy: 'supersede',
         signal: abort.signal
       })
+      // Persist "started" before the model or any tool can produce side effects.
+      durableRunId = await beginConversationOperation(cid, 'desktop')
       // Role alignment and override resolution touch process-global product
       // state, so they run only after this entrypoint owns the conversation.
       const overrides = resolveAgentOverrides({ agentId, workspaceId, conversationConfig, conversationId })
@@ -374,6 +399,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
             break
           case 'thinking_end':
             mainWindow.webContents.send('chat:thinking-end', cid)
+            break
+          case 'stream_retry':
+            mainWindow.webContents.send('chat:stream-retry', cid, event.attempt, event.maxRetries)
             break
           case 'tool_progress':
             mainWindow.webContents.send('chat:tool-progress', cid, event.name, event.chars, event.path)
@@ -485,6 +513,23 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
                 `[chat:send] transcript persistence barrier ${persistence.status} ` +
                 `(conversation=${conversationId}, execution=${execution.executionId}): ${persistence.error || 'unknown failure'}`
               )
+            }
+            const outcome = execution.signal.aborted
+              ? 'aborted'
+              : (terminalFailure || persistence.status !== 'acknowledged' ? 'failed' : 'completed')
+            const finished = await finishConversationOperation(
+              conversationId,
+              durableRunId,
+              outcome,
+              outcome === 'failed'
+                ? {
+                    code: persistence.status !== 'acknowledged' ? 'transcript_not_persisted' : 'runtime_error',
+                    message: streamError || persistence.error || 'Conversation turn failed before durable completion',
+                  }
+                : undefined
+            )
+            if (!finished && durableRunId) {
+              console.error(`[chat:send] failed to close durable operation ${durableRunId}`)
             }
           }
         } finally {
@@ -691,7 +736,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   // （能力位仍按真实配置推导，遮蔽只作用于展示字段）
   ipcMain.handle('config:get-model-full', () => ({
     ...getEffectiveModelConfigForDisplay(),
-    supportsEffortDial: supportsEffortDial(getEffectiveModelConfig())
+    supportsEffortDial: supportsEffortDial(getEffectiveModelConfig()),
+    thinkingAlwaysOn: thinkingCannotBeDisabled(getEffectiveModelConfig()),
+    thinkingLevels: resolveThinkingLevels(getEffectiveModelConfig())
   }))
   ipcMain.handle('config:save-model', (_event, config: ModelConfig) => {
     saveModelConfig(config)
@@ -849,8 +896,39 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return getWorkingDir()
   })
 
-  ipcMain.handle('config:set-working-dir', (_event, dir: string) => {
+  // 选目录与"能不能在这个目录里干活"是两件事：选择器只管选，能不能用由安全层判。
+  // 分开一个只读校验入口，让 UI 在写进配置之前就能把原因显示出来——历史行为是
+  // 选完照常显示成功，然后每个文件工具都被硬拒且无声。
+  ipcMain.handle('config:validate-working-dir', (_event, dir: string) => {
+    const verdict = assessWorkspaceRoot(dir)
+    return { ok: verdict.ok, code: verdict.code, reason: verdict.reason, resolved: verdict.resolved }
+  })
+
+  // 工作目录条要能告诉用户"这个项目的规矩我读到了没有"。不给信号的话，AGENTS.md
+  // 生效与否对用户完全不可见——模型表现变了，用户不知道为什么。
+  ipcMain.handle('config:describe-project-context', (_event, dir: string) => {
+    const ctx = loadProjectContext(dir)
+    if (!ctx) return { files: [], repoRoot: null, droppedForBudget: [] }
+    return {
+      repoRoot: ctx.repoRoot,
+      droppedForBudget: ctx.droppedForBudget,
+      files: ctx.files.map(f => ({ path: f.path, truncated: f.truncated }))
+    }
+  })
+
+  ipcMain.handle('config:set-working-dir', async (_event, dir: string) => {
+    // 主进程侧再判一次：渲染层可能没走校验入口，也可能目录在两次调用之间被移走。
+    const verdict = assessWorkspaceRoot(dir)
+    if (!verdict.ok) return { ok: false, code: verdict.code, error: verdict.reason, resolved: verdict.resolved }
     setWorkingDir(dir)
+    invalidateWorkspaceRootCache()
+    // 换全局工作目录 = 用户说"我不干那个项目了"，整表重置而不是累积：
+    // 旧根留在沙箱 allowWrite 里等于对 bash 一直可写（bash 分支不做路径判定）。
+    replaceGlobalWorkspaceRoot(dir)
+    // 入口文档是按会话快照的（prompt cache 稳定性）；换了目录，旧快照指的是另一个项目。
+    invalidateProjectContextSnapshots()
+    // 沙箱是进程级的，换目录后要把新根同步进 allowWrite，否则分类器放行了 OS 还拦着。
+    await syncSandboxWorkspaceRoots()
     return { ok: true }
   })
 
@@ -1182,11 +1260,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   })
 
   ipcMain.handle('workspace:create-from-conversation', async (_event, conversationId: string) => {
-    const messages = getConversationMessages(conversationId)
+    const messages = await getConversationMessages(conversationId)
     if (!messages || messages.length < 2) {
       throw new Error('对话内容不足，至少需要 2 条消息')
     }
-    const conv = getConversation(conversationId)
+    const conv = await getConversation(conversationId)
     const roleName = conv?.role || 'learner'
 
     // Evolver only receives tasks with exact conversation provenance. A broad
@@ -1407,7 +1485,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   // 历史产物枚举（preflow 首屏产物列表）——只读 artifactRef 元数据，不读 content
   ipcMain.handle('artifact:list-history', async (_event, role?: string, limit?: number) => {
     try {
-      const items = listArtifactHistory({ role, limit })
+      const items = await listArtifactHistory({ role, limit })
       if (process.env.OPENPIPAL_TRACE_IPC === '1') {
         console.log(`[QA IPC] artifact:list-history home=${homedir()} items=${items.length}`)
       }
@@ -1615,10 +1693,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
 
   // ---- Realtime Voice IPC ----
   setRealtimeWindowRef(getWindow)
+  initializeDurableVoiceSession()
 
   ipcMain.handle('realtime:config', () => getRealtimeConfig())
-  ipcMain.handle('realtime:start', (_event, ctx?: any) => startRealtimeSession(ctx))
-  ipcMain.on('realtime:stop', () => stopRealtimeSession())
+  ipcMain.handle('realtime:start', (event, ctx?: any) =>
+    startDurableVoiceSession(ctx, event.sender))
+  ipcMain.on('realtime:stop', () => {
+    void stopDurableVoiceSession().catch((error) => {
+      console.error('[Voice] 挂断后的保存收口失败:', error)
+    })
+  })
   ipcMain.on('realtime:send-event', (_event, data: any) => sendRealtimeEvent(data))
 
   // Voice (Realtime) 配置 IPC
@@ -1732,6 +1816,7 @@ export function resolveInlinePermission(
   trustedDesktopResponse = false
 ): boolean {
   const grant = pendingBrowserGrant.get(requestId)
+  const gitGrant = pendingGitGrant.get(requestId)
   const entry = pendingPermissionTools.get(requestId)
   const owner = grant || entry
   if (!owner) return false
@@ -1739,6 +1824,7 @@ export function resolveInlinePermission(
     // 早退也在摘条目，同样要让设置页的计数跟上（这条不经过结算回调）
     pendingPermissionTools.delete(requestId)
     pendingBrowserGrant.delete(requestId)
+    pendingGitGrant.delete(requestId)
     notifyAcpStatusChanged()
     return false
   }
@@ -1762,6 +1848,7 @@ export function resolveInlinePermission(
     // it cannot linger, but never transfer approval to the next owner.
     pendingPermissionTools.delete(requestId)
     pendingBrowserGrant.delete(requestId)
+    pendingGitGrant.delete(requestId)
     resolvePermissionRequest(requestId, false)
     console.warn(`[Security] 忽略已结束或已被替换执行的权限响应: ${requestId}`)
     return false
@@ -1771,12 +1858,17 @@ export function resolveInlinePermission(
   // single-use even if a client retries the same HTTP/IPC response.
   pendingPermissionTools.delete(requestId)
   pendingBrowserGrant.delete(requestId)
+  pendingGitGrant.delete(requestId)
   // 通知由结算回调统一发（resolvePermissionRequest → settlement handler），这里不重复
   resolvePermissionRequest(requestId, approved)
   if (approved && sessionApprove) {
     if (grant && grant.host) {
       // 浏览器:按站点授权（本对话内该 host 的写操作此后放行 —— 站点轴丝滑）
       if (grant.conversationId) grantSessionHost(grant.conversationId, grant.host)
+    } else if (gitGrant) {
+      // git:按项目持久授权。「允许」已经在 pi-security 里记了本对话授权,
+      // 这个按钮的增量就是「以后这个仓库都不用再问」——所以它落盘。
+      grantAlwaysProject(gitGrant.workingDir)
     } else {
       if (entry?.tool) approveToolForSession(entry.tool, entry.conversationId, entry.args, entry.approvalScope)
     }
@@ -1798,7 +1890,7 @@ export function listPendingPermissionRequests(): AcpPendingPermission[] {
 }
 
 // ---- 内联权限请求发送（供 pi-security 使用）----
-export function sendInlinePermissionRequest(getWindow: () => BrowserWindow | null, request: { requestId: string; tool: string; args: Record<string, any>; risk: string; reason: string; conversationId?: string; approvalScope?: SessionApprovalScope }): void {
+export function sendInlinePermissionRequest(getWindow: () => BrowserWindow | null, request: { requestId: string; tool: string; args: Record<string, any>; risk: string; reason: string; conversationId?: string; approvalScope?: SessionApprovalScope; workingDir?: string }): void {
   const execution = request.conversationId
     ? getConversationExecution(request.conversationId)
     : undefined
@@ -1825,6 +1917,19 @@ export function sendInlinePermissionRequest(getWindow: () => BrowserWindow | nul
       conversationId: request.conversationId,
       executionId: execution?.executionId,
       host: targetHostForCommand(request.tool, request.args)
+    })
+  }
+  // git 远端命令:记下项目目录,"本次会话允许"时把这个项目写进持久授权
+  const gitCommand = String(
+    (request.tool === 'execute_code' ? request.args?.code : request.args?.command) || ''
+  )
+  if (gitCommand && detectGitRemoteUse(gitCommand)) {
+    pendingGitGrant.set(request.requestId, {
+      conversationId: request.conversationId,
+      executionId: execution?.executionId,
+      // 必须用请求自带的目录：getWorkingDir() 是全局值，而每条会话可以有自己的
+      // 工作目录——拿错了就把授权记到别的仓库上。
+      workingDir: request.workingDir || getWorkingDir()
     })
   }
   // ⚠️ 历史教训(present_to_user 同款):某字段不是纯数据(pi-agent 把参数包成 Proxy/带
@@ -1875,6 +1980,7 @@ export function sendInlinePermissionRequest(getWindow: () => BrowserWindow | nul
     console.warn('[Security] HTTP 权限流已不可用，自动拒绝:', request.tool)
     pendingPermissionTools.delete(request.requestId)
     pendingBrowserGrant.delete(request.requestId)
+    pendingGitGrant.delete(request.requestId)
     resolvePermissionRequest(request.requestId, false)
     return
   }
@@ -1884,6 +1990,7 @@ export function sendInlinePermissionRequest(getWindow: () => BrowserWindow | nul
     console.warn('[Security] 无法发送内联权限请求：窗口不可用')
     pendingPermissionTools.delete(request.requestId)
     pendingBrowserGrant.delete(request.requestId)
+    pendingGitGrant.delete(request.requestId)
     resolvePermissionRequest(request.requestId, false)
     return
   }

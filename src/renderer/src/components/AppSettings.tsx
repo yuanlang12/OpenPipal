@@ -20,6 +20,7 @@ export function AppSettings() {
   const [saving, setSaving] = useState(false)
   const [followingError, setFollowingError] = useState<'load' | 'save' | null>(null)
   const [workingDir, setWorkingDirState] = useState<string>('')
+  const [workingDirError, setWorkingDirError] = useState<string | null>(null)
   const settingsEpoch = useRef(0)
 
   useEffect(() => {
@@ -51,10 +52,21 @@ export function AppSettings() {
 
   const handleSelectDir = async () => {
     const dir = await window.api.selectDirectory?.()
-    if (dir) {
-      setWorkingDirState(dir)
-      await window.api.setWorkingDir?.(dir)
+    if (!dir) return
+    // 先问能不能用，再落盘。反过来会得到"显示成功、一动手全拒"——
+    // 安全层对白名单外的路径是硬拒（没有弹窗也没有会话放行），UI 必须当场说清楚。
+    const result = await window.api.setWorkingDir?.(dir)
+    if (result && !result.ok) {
+      setWorkingDirError(
+        t(`settings.apps.workingDirectory.rejected.${result.code || 'unknown'}`, {
+          path: result.resolved || dir,
+          defaultValue: result.error || ''
+        })
+      )
+      return
     }
+    setWorkingDirError(null)
+    setWorkingDirState(dir)
   }
 
   const toggleApp = async (app: string) => {
@@ -138,6 +150,12 @@ export function AppSettings() {
             {t('settings.apps.workingDirectory.choose')}
           </button>
         </div>
+        {workingDirError && (
+          <p role="alert" data-testid="working-dir-error" className="mt-2 text-[11px] text-red-500 break-words">
+
+            {workingDirError}
+          </p>
+        )}
       </div>
 
       {/* 应用跟随 */}

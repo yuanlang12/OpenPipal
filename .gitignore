@@ -41,6 +41,17 @@ outputs/
 # 根目录临时验证脚本
 verify-*.js
 
-# 开发期 UI 验证截图（按 ws-*/ux-review/ 命名约定）
-tests/artifacts/ws-*
-tests/artifacts/ux-review/
+# 开发期 UI 验证截图：只写不读（没有任何用例做基线比对），每跑一次 E2E 就整批重写，
+# 跟着仓库走只是把 13M 的过程物变成永久历史。文件留在本地供目视验收，不再进版本。
+tests/artifacts/**/*.png
+tests/artifacts/*.png
+__pycache__/
+
+# 掉在仓库根的过程物。三个都没被上面任何一条盖住，`git add -A` 会把它们永久写进历史：
+#   index.js —— 6 万行的 esbuild 打包产物（不是源码入口，本仓 main 指向 out/main/index.js）
+#   output/  —— playwright 的输出目录
+#   *-brand-assets.zip —— 二进制素材包
+# 和上面 tests/artifacts 那条同一个理由：跟着仓库走只是把过程物变成永久历史。
+/index.js
+/output/
+*-brand-assets.zip

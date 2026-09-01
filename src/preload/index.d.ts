@@ -99,6 +99,17 @@ interface RoleInfo {
   mark?: MarkManifest
 }
 
+/** 设工作目录的结果：被拒时 code 供渲染层取 i18n 文案，resolved 是参与判定的规范化路径 */
+interface WorkingDirResult { ok: boolean; code?: string; error?: string; resolved?: string }
+/** 只校验、不落盘的结果（目录条用它，选完先问能不能用） */
+interface WorkingDirVerdict { ok: boolean; code?: string; reason?: string; resolved?: string }
+/** 工作目录里被识别为项目入口文档的 AGENTS.md / CLAUDE.md —— 工作目录条据此告诉用户"这个项目的规矩已经读到了" */
+interface ProjectContextSummary {
+  repoRoot: string | null
+  files: Array<{ path: string; truncated: boolean }>
+  droppedForBudget: string[]
+}
+
 interface OpenPipalAPI {
   sendChat: (messages: ChatMessage[], agentId?: string, conversationConfig?: { workingDir?: string }) => void
   abortChat: (conversationId?: string) => void
@@ -111,6 +122,8 @@ interface OpenPipalAPI {
     callback: (conversationId: string, executionId: string) => Promise<void>
   ) => () => void
   onTextFlush: (callback: (conversationId: string) => void) => () => void
+  /** 上游断流后正在重连；渲染层据此丢弃本次已流出的半截内容并提示次数。 */
+  onStreamRetry?: (callback: (conversationId: string, attempt: number, maxRetries: number) => void) => () => void
   onToolStart: (callback: (conversationId: string, name: string, toolCallId?: string) => void) => () => void
   onToolEnd: (
     callback: (
@@ -180,7 +193,7 @@ interface OpenPipalAPI {
   updateConversationConfig: (id: string, config: { workingDir?: string; thinkingEnabled?: boolean; [k: string]: any }) => Promise<any>
   // 模型配置
   getModelConfig: () => Promise<ModelConfigShape & { builtin?: boolean }>
-  getModelConfigFull: () => Promise<ModelConfigShape & { builtin?: boolean; supportsEffortDial?: boolean }>
+  getModelConfigFull: () => Promise<ModelConfigShape & { builtin?: boolean; supportsEffortDial?: boolean; thinkingAlwaysOn?: boolean; thinkingLevels?: Array<'low' | 'medium' | 'high' | 'max'> }>
   saveModelConfig: (config: Partial<ModelConfigShape>) => Promise<any>
   testConnection: (config: Partial<ModelConfigShape>) => Promise<{ ok: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string>; model?: string; correctedBaseUrl?: string }>
   testThinkingSupport: (config: Partial<ModelConfigShape>) => Promise<{ detected: boolean; error?: string }>
@@ -198,6 +211,8 @@ interface OpenPipalAPI {
     active: boolean
     supportsThinking: boolean
     supportsEffortDial: boolean
+    thinkingAlwaysOn: boolean
+    thinkingLevels: Array<'low' | 'medium' | 'high' | 'max'>
     providerId?: string
     providerName?: string
     builtin?: boolean
@@ -279,7 +294,9 @@ interface OpenPipalAPI {
   // 工作目录
   selectDirectory: () => Promise<string | null>
   getWorkingDir: () => Promise<string>
-  setWorkingDir: (dir: string) => Promise<void>
+  setWorkingDir: (dir: string) => Promise<WorkingDirResult>
+  validateWorkingDir: (dir: string) => Promise<WorkingDirVerdict>
+  describeProjectContext: (dir: string) => Promise<ProjectContextSummary>
   // 权限审批
   onPermissionRequest: (callback: (request: { requestId: string; tool: string; args: any; risk: string; reason: string }) => void) => () => void
   respondPermission: (requestId: string, approved: boolean) => void

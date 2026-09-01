@@ -72,6 +72,8 @@ export interface RealtimeSessionConfig extends RealtimeProviderConfig {
 let activeSession: {
   ws: WebSocket
   config: RealtimeSessionConfig
+  /** Present only while the initial connection promise is still pending. */
+  cancelStart?: () => void
 } | null = null
 
 // 豆包同传会话(interpreter 角色 + 已配 voiceConfigDoubao 时启用)。与 activeSession 互斥:
@@ -116,9 +118,18 @@ let activeVoiceOverrides: AgentOverrides | undefined
 const pendingFunctionCalls = new Map<string, string>()
 
 let windowRef: (() => BrowserWindow | null) | null = null
+export type RealtimeLifecycleState = 'idle' | 'error'
+let lifecycleListener: ((state: RealtimeLifecycleState) => void) | null = null
 
 export function setRealtimeWindowRef(getWindow: () => BrowserWindow | null): void {
   windowRef = getWindow
+}
+
+/** Main-process owner hook used to release the durable voice lease on transport loss. */
+export function setRealtimeLifecycleListener(
+  listener: ((state: RealtimeLifecycleState) => void) | null
+): void {
+  lifecycleListener = listener
 }
 
 /**
@@ -333,16 +344,39 @@ export async function startRealtimeSession(ctx?: VoiceSessionContext | string): 
 
     try {
       const ws = new WebSocket(wsUrl, { headers })
+      let startSettled = false
+      let opened = false
+      const finishStart = (result: { success: boolean; error?: string; sampleRate?: number }): void => {
+        if (startSettled) return
+        startSettled = true
+        resolve(result)
+      }
+      const ownedSession: NonNullable<typeof activeSession> = {
+        ws,
+        config,
+        cancelStart: () => finishStart({ success: false, error: 'Voice connection cancelled' })
+      }
+      // Own the connecting socket immediately. Previously it became active
+      // only after `open`, so hanging up during connection left an orphan that
+      // could connect later and start listening after the UI had closed.
+      activeSession = ownedSession
 
       ws.on('open', () => {
+        if (activeSession?.ws !== ws) {
+          try { ws.close() } catch { /* best-effort stale socket cleanup */ }
+          finishStart({ success: false, error: 'Voice connection was superseded' })
+          return
+        }
+        opened = true
+        ownedSession.cancelStart = undefined
         console.log('[RealtimeSession] Connected, waiting for session.created...')
-        activeSession = { ws, config }
         sendStateToRenderer('connected')
         // 不在这里发 session.update，等 session.created 事件后再发
-        resolve({ success: true, sampleRate: 24000 })
+        finishStart({ success: true, sampleRate: 24000 })
       })
 
       ws.on('message', (data: WebSocket.Data) => {
+        if (activeSession?.ws !== ws) return
         const str = typeof data === 'string' ? data : data.toString()
         try {
           const event = JSON.parse(str)
@@ -438,23 +472,28 @@ export async function startRealtimeSession(ctx?: VoiceSessionContext | string): 
 
       ws.on('error', (err) => {
         console.error('[RealtimeSession] WebSocket error:', err.message)
-        sendStateToRenderer('error')
-        if (!activeSession) {
-          resolve({ success: false, error: err.message })
-        }
+        if (activeSession?.ws === ws) sendStateToRenderer('error')
+        if (!opened) finishStart({ success: false, error: err.message })
       })
 
       ws.on('close', (code, reason) => {
         console.log(`[RealtimeSession] Disconnected: code=${code} reason=${reason?.toString() || 'none'}`)
-        activeSession = null
-        sendStateToRenderer('idle')
+        if (activeSession?.ws === ws) {
+          activeSession = null
+          activeVoiceCid = null
+          activeVoiceCtx = {}
+          activeVoiceOverrides = undefined
+          sendStateToRenderer('idle')
+        }
+        if (!opened) finishStart({ success: false, error: `Voice connection closed (${code})` })
       })
 
       // 连接超时
       setTimeout(() => {
-        if (!activeSession) {
+        if (!opened && !startSettled) {
+          if (activeSession?.ws === ws) activeSession = null
           ws.close()
-          resolve({ success: false, error: 'Connection timeout (10s)' })
+          finishStart({ success: false, error: 'Connection timeout (10s)' })
         }
       }, 10000)
 
@@ -700,10 +739,12 @@ export function stopRealtimeSession(): void {
   }
   if (activeSession) {
     console.log('[RealtimeSession] Stopping')
-    try {
-      activeSession.ws.close()
-    } catch {}
+    const session = activeSession
     activeSession = null
+    session.cancelStart?.()
+    try {
+      session.ws.close()
+    } catch { /* best-effort stop during teardown */ }
     clearExecutionContext()
     sendStateToRenderer('idle')
     return
@@ -852,5 +893,12 @@ function sendStateToRenderer(state: string): void {
   const win = windowRef?.()
   if (win && !win.isDestroyed()) {
     win.webContents.send('realtime:state', state)
+  }
+  if (state === 'idle' || state === 'error') {
+    try {
+      lifecycleListener?.(state)
+    } catch (error) {
+      console.error('[RealtimeSession] lifecycle listener failed:', error)
+    }
   }
 }

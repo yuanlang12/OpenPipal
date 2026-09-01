@@ -67,6 +67,7 @@ export type RuntimeTurnPhase =
   | 'stream_opened'
   | 'first_stream_next'
   | 'first_model_event'
+  | 'stream_retry'
   | 'external_abort'
   | 'watchdog'
   | 'settled'

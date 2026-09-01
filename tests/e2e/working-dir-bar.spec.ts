@@ -24,6 +24,8 @@ window.api = {
   onTargetStatus: () => () => {},
   onAppChanged: () => () => {},
   selectDirectory: async () => { window.__mockCalls.push(['selectDirectory']); return '/Users/x/Documents/my-project'; },
+  validateWorkingDir: async () => ({ ok: true }),
+  describeProjectContext: async (dir) => window.__projectRules ?? { repoRoot: dir, files: [], droppedForBudget: [] },
   updateConversationConfig: async (...a) => { window.__mockCalls.push(['updateConversationConfig', a]); return { ok: true }; },
   getRoleInitState: async () => ({ hasRole: true, role: { name: 'learner', displayName: '学习助手', icon: '📖' } }),
   getAllRoles: async () => [{ name: 'learner', displayName: '学习助手', icon: '📖' }],
@@ -111,6 +113,51 @@ test.describe('工作目录条 · 欢迎页贴输入框底', () => {
     await page.getByTestId('working-dir-clear').click()
     await expect(bar).toContainText('选择工作目录')
     await expect(page.getByTestId('working-dir-clear')).toHaveCount(0)
+  })
+})
+
+test.describe('工作目录条 · 项目规矩徽标', () => {
+  test.use({ viewport: { width: 900, height: 820 } })
+
+  /**
+   * 选中的目录里有 AGENTS.md / CLAUDE.md 时，条子上要多一枚"已读"徽标。
+   * 没有这个信号，助手读没读到项目规矩对用户完全不可见——它表现变了，用户不知道为什么。
+   */
+  test('目录里有 AGENTS.md 时显示"已读"，没有时不显示', async ({ page }) => {
+    await page.addInitScript({
+      content: `window.__projectRules = { repoRoot: '/Users/x/Documents/my-project', files: [{ path: '/Users/x/Documents/my-project/AGENTS.md', truncated: false }], droppedForBudget: [] };`
+    })
+    await boot(page)
+    await enterChat(page)
+
+    const bar = page.getByTestId('working-dir-bar')
+    // 还没选目录：不查、也不显示
+    await expect(page.getByTestId('working-dir-project-rules')).toHaveCount(0)
+
+    await bar.getByRole('button').first().click()
+    const badge = page.getByTestId('working-dir-project-rules')
+    await expect(badge).toBeVisible()
+    await expect(badge).toContainText('AGENTS.md')
+    // 徽标不能把目录名挤没：两者同处一行且都可见
+    await expect(bar).toContainText('my-project')
+    await page.screenshot({ path: `${ARTIFACTS_DIR}/chat-project-rules.png` })
+
+    await page.evaluate(() => (window as any).__appStore.getState().setTheme('dark'))
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${ARTIFACTS_DIR}/chat-project-rules-dark.png` })
+    await page.evaluate(() => (window as any).__appStore.getState().setTheme('light'))
+
+    // 清掉目录，徽标跟着消失（否则会指着一个已经不生效的文件）
+    await page.getByTestId('working-dir-clear').click()
+    await expect(page.getByTestId('working-dir-project-rules')).toHaveCount(0)
+  })
+
+  test('目录里没有入口文档时条子保持原样', async ({ page }) => {
+    await boot(page)
+    await enterChat(page)
+    await page.getByTestId('working-dir-bar').getByRole('button').first().click()
+    await expect(page.getByTestId('working-dir-bar')).toContainText('my-project')
+    await expect(page.getByTestId('working-dir-project-rules')).toHaveCount(0)
   })
 })
 

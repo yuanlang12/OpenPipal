@@ -5,6 +5,7 @@ export const BUILTIN_ROLE_NAME_KEYS = {
   learner: 'roles.learner.name',
   teacher: 'roles.teacher.name',
   design: 'roles.design.name',
+  coding: 'roles.coding.name',
   office: 'roles.office.name',
   interpreter: 'roles.interpreter.name',
 } as const
@@ -952,6 +953,15 @@ export const ZH_CN_MESSAGES = {
         iteration: '持续编辑和打磨',
       },
     },
+    coding: {
+      name: '编码助手',
+      tagline: '在你的仓库里干活',
+      abilities: {
+        repoRules: '先认项目规矩，再动代码',
+        verify: '改完跑项目自己的测试与构建',
+        minimalDiff: '精确改动，不重写整文件',
+      },
+    },
     office: {
       name: '办公助手',
       abilities: {
@@ -1161,6 +1171,17 @@ export const ZH_CN_MESSAGES = {
         title: '工作目录',
         description: 'AI 助手的文件操作和命令执行范围',
         choose: '选择',
+        // 选了不能用的目录时当场说清楚为什么——历史行为是照常显示成功，
+        // 然后每个文件工具都被硬拒且无声（见 pi-security assessWorkspaceRoot）
+        rejected: {
+          empty: '没有选择目录',
+          not_found: '这个目录不存在了：{{path}}',
+          not_dir: '这是一个文件，不是目录：{{path}}',
+          too_broad: '这个目录太宽，会把整台电脑都放进 AI 的操作范围。请选到具体的项目文件夹',
+          system: '系统目录不能当工作目录：{{path}}',
+          sensitive: '这个目录里有密钥或凭证文件，不能当工作目录：{{path}}',
+          unknown: '这个目录不能用作工作目录：{{path}}',
+        },
       },
       following: {
         title: '应用跟随',
@@ -1525,6 +1546,11 @@ export const ZH_CN_MESSAGES = {
       selectedElement: '已选中元素',
       placeholder: '输入问题...（/ 唤起技能）',
       chooseWorkingDirectory: '选择工作目录',
+      projectRulesLoaded: '已读 {{name}}',
+      projectRulesLoadedHint: '这个项目的 {{names}} 已经进了助手的上下文，不用再让它去读',
+      projectRulesTruncated: '{{name}} 太长，只带了开头和结尾',
+      recentWorkingDirs: '最近',
+      recentWorkingDirsHint: '最近在这些目录里对话过，点一下直接用',
       uploadFileOrImage: '上传文件 / 图片',
       commands: {
         goal: '给这条会话定个目标，每轮自动判定，没达成就接着跑',
@@ -1554,6 +1580,24 @@ export const ZH_CN_MESSAGES = {
         low: '低',
         medium: '中',
         high: '高',
+        max: '最高',
+      },
+    },
+    permissionTier: {
+      title: '这条会话能动什么',
+      tiers: {
+        readonly: {
+          label: '只读',
+          desc: '只看不改。能读代码、搜索、看网页；不写文件、不跑命令。',
+        },
+        auto: {
+          label: '自动审核',
+          desc: '默认。要改文件或跑命令时问你一次。',
+        },
+        full: {
+          label: '完全允许',
+          desc: '改文件、跑命令不再一次次问。删除、回滚、强推这类仍会问一次。',
+        },
       },
     },
     voiceInline: {
@@ -1668,11 +1712,14 @@ export const ZH_CN_MESSAGES = {
       answerForm_other: '请在下方表单中回答（共 {{count}} 项）',
       regenerate: '重新生成',
       saveAsAgent: '保存为 Agent',
+      runtimeInterruptedTitle: '上次任务已中断',
+      runtimeInterruptedBody: '应用关闭时，这个任务还没有完成。为避免重复操作，OpenPipal 没有自动继续。请先检查已有结果，再告诉 Agent 继续。',
       imageAlt: '图片 {{index}}',
       analyzeFile: '请分析这个文件',
       analyzeFiles: '请分析这些文件',
       injectSteered: '↳ 已引导对话',
       injectQueued: '↳ 已加入跟单队列',
+      streamRetry: '↳ 连接中断，正在重试 ({{attempt}}/{{max}})',
       questionsAnswered: '已回答问题',
       questionsAnsweredWithTitle: '已回答问题卡「{{title}}」',
       errorPrefix: '错误',
@@ -1907,6 +1954,8 @@ export const ZH_CN_MESSAGES = {
       processingWithDuration: '处理中 {{duration}}',
       completedWithDuration2: '处理完成 {{duration}}',
       completedNoDuration: '处理完成',
+      interruptedWithDuration: '处理已中断 {{duration}}',
+      interruptedNoDuration: '处理已中断',
       thought: '思考过程',
       thoughtDuration: '已思考 {{duration}}',
       explore: '探索',
@@ -1915,6 +1964,7 @@ export const ZH_CN_MESSAGES = {
       exploreSearches_one: '{{count}} 搜索',
       exploreSearches_other: '{{count}} 搜索',
       connecting: '连接模型…',
+      waitingForModelWithDuration: '等待模型响应 {{duration}}',
       working: '生成中…',
       duration: {
         seconds: '{{value}} 秒',
@@ -3266,6 +3316,15 @@ export const EN_MESSAGES = {
         iteration: 'Keep editing and refining',
       },
     },
+    coding: {
+      name: 'Coding Assistant',
+      tagline: 'Works inside your repository',
+      abilities: {
+        repoRules: "Reads the project's own rules before touching code",
+        verify: "Runs the project's own tests and build after each change",
+        minimalDiff: 'Precise edits — never rewrites whole files',
+      },
+    },
     office: {
       name: 'Office Assistant',
       abilities: {
@@ -3475,6 +3534,15 @@ export const EN_MESSAGES = {
         title: 'Working folder',
         description: 'The scope for Agent file operations and command execution',
         choose: 'Choose',
+        rejected: {
+          empty: 'No folder selected',
+          not_found: 'That folder no longer exists: {{path}}',
+          not_dir: 'That is a file, not a folder: {{path}}',
+          too_broad: 'That folder is too broad — it would put your whole computer in the assistant\u2019s reach. Pick the specific project folder',
+          system: 'System folders cannot be a working folder: {{path}}',
+          sensitive: 'That folder holds keys or credentials and cannot be a working folder: {{path}}',
+          unknown: 'That folder cannot be used as a working folder: {{path}}',
+        },
       },
       following: {
         title: 'App following',
@@ -3839,6 +3907,11 @@ export const EN_MESSAGES = {
       selectedElement: 'Selected element',
       placeholder: 'Ask a question... (/ for skills)',
       chooseWorkingDirectory: 'Choose working folder',
+      projectRulesLoaded: 'Read {{name}}',
+      projectRulesLoadedHint: "This project's {{names}} is already in the assistant's context — no need to ask it to read the file",
+      projectRulesTruncated: '{{name}} is long; only its beginning and end were included',
+      recentWorkingDirs: 'Recent',
+      recentWorkingDirsHint: 'Folders you have worked in recently — click one to use it',
       uploadFileOrImage: 'Upload files or images',
       commands: {
         goal: 'Set a goal for this chat — it keeps going until the goal is met',
@@ -3868,6 +3941,24 @@ export const EN_MESSAGES = {
         low: 'Low',
         medium: 'Medium',
         high: 'High',
+        max: 'Max',
+      },
+    },
+    permissionTier: {
+      title: 'What this conversation can touch',
+      tiers: {
+        readonly: {
+          label: 'Read only',
+          desc: 'Looks, never changes. Reads code, searches, browses — no writing files, no running commands.',
+        },
+        auto: {
+          label: 'Ask when needed',
+          desc: 'Default. Asks once before changing a file or running a command.',
+        },
+        full: {
+          label: 'Allow all',
+          desc: 'Stops asking for edits and commands. Deleting, resetting, and force-pushing still ask once.',
+        },
       },
     },
     voiceInline: {
@@ -3982,11 +4073,14 @@ export const EN_MESSAGES = {
       answerForm_other: 'Please answer the {{count}} fields in the form below',
       regenerate: 'Regenerate',
       saveAsAgent: 'Save as Agent',
+      runtimeInterruptedTitle: 'Previous task interrupted',
+      runtimeInterruptedBody: 'The app closed before this task finished. OpenPipal did not resume automatically, avoiding repeated actions. Check the existing result, then tell the Agent to continue.',
       imageAlt: 'Image {{index}}',
       analyzeFile: 'Please analyze this file',
       analyzeFiles: 'Please analyze these files',
       injectSteered: '↳ Conversation steered',
       injectQueued: '↳ Added to the follow-up queue',
+      streamRetry: '↳ Connection dropped, retrying ({{attempt}}/{{max}})',
       questionsAnswered: 'Questions answered',
       questionsAnsweredWithTitle: 'Questions answered: “{{title}}”',
       errorPrefix: 'Error',
@@ -4220,6 +4314,8 @@ export const EN_MESSAGES = {
       processingWithDuration: 'Processing · {{duration}}',
       completedWithDuration2: 'Completed in {{duration}}',
       completedNoDuration: 'Completed',
+      interruptedWithDuration: 'Interrupted after {{duration}}',
+      interruptedNoDuration: 'Interrupted',
       thought: 'Thought process',
       thoughtDuration: 'Thought for {{duration}}',
       explore: 'Explore',
@@ -4229,6 +4325,7 @@ export const EN_MESSAGES = {
       exploreSearches_other: '{{count}} searches',
       processing: 'Processing…',
       connecting: 'Connecting…',
+      waitingForModelWithDuration: 'Waiting for model · {{duration}}',
       working: 'Generating…',
       duration: {
         seconds: '{{value}}s',

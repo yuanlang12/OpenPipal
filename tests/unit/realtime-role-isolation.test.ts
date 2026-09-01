@@ -106,7 +106,7 @@ vi.mock('../../src/main/pi-security', () => ({
   requestUserConfirmation: async () => true
 }))
 
-const { startRealtimeSession, stopRealtimeSession } = await import('../../src/main/realtime-session')
+const { startRealtimeSession, stopRealtimeSession, sendRealtimeEvent } = await import('../../src/main/realtime-session')
 
 describe('Realtime voice role isolation', () => {
   beforeEach(() => {
@@ -162,5 +162,28 @@ describe('Realtime voice role isolation', () => {
       transcriptionLanguage: null,
       instructions: 'PROMPT:interpreter'
     })
+  })
+
+  it('cancels a connecting socket so it cannot become active after hangup', async () => {
+    const starting = startRealtimeSession({ conversationId: 'voice-cancelled' })
+    await vi.waitFor(() => expect(state.sockets).toHaveLength(1))
+    const abandoned = state.sockets[0] as MockWebSocket
+
+    stopRealtimeSession()
+    await expect(starting).resolves.toMatchObject({ success: false })
+    abandoned.emit('open')
+
+    const nextStarting = startRealtimeSession({ conversationId: 'voice-next' })
+    await vi.waitFor(() => expect(state.sockets).toHaveLength(2))
+    const next = state.sockets[1] as MockWebSocket
+    next.emit('open')
+    await expect(nextStarting).resolves.toMatchObject({ success: true })
+
+    // A late close/error from the abandoned socket must not clear the newer
+    // active connection. Sending a client event still targets only `next`.
+    abandoned.emit('close', 1000, '')
+    sendRealtimeEvent({ type: 'response.cancel' })
+    expect(next.sent).toHaveLength(1)
+    expect(abandoned.sent).toHaveLength(0)
   })
 })

@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
 import { Square, ArrowUp, X, FileText } from 'lucide-react'
-import { ModelControl } from './shared/ModelControl'
+import { ModelControl, type ThinkingLevel } from './shared/ModelControl'
+import { PermissionTierControl } from './shared/PermissionTierControl'
 import { useAppStore } from '../stores/appStore'
 import { useChatStore, type ContextUsageEntry, type ContextCumulativeStats } from '../stores/chatStore'
 import { extractPastedImages } from '../utils/pasteImages'
@@ -277,7 +278,9 @@ export function InputBar({
   const [modelIsBuiltin, setModelIsBuiltin] = useState(false)
   const [modelSupportsThinking, setModelSupportsThinking] = useState(false)
   const [modelSupportsDial, setModelSupportsDial] = useState(false)
-  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; model: string; active: boolean; supportsThinking?: boolean; supportsEffortDial?: boolean; providerName?: string; builtin?: boolean }>>([])
+  const [modelThinkingAlwaysOn, setModelThinkingAlwaysOn] = useState(false)
+  const [modelThinkingLevels, setModelThinkingLevels] = useState<ThinkingLevel[] | undefined>(undefined)
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; model: string; active: boolean; supportsThinking?: boolean; supportsEffortDial?: boolean; thinkingAlwaysOn?: boolean; thinkingLevels?: ThinkingLevel[]; providerName?: string; builtin?: boolean }>>([])
 
   // 会话专属模型（ConversationConfig.modelPresetId）：设置了就用它，否则跟随全局默认。
   // 预设被删（记忆里的 id 查无此预设）→ 视同跟随全局，picker 里给出标注。
@@ -291,6 +294,8 @@ export function InputBar({
     : (modelIsBuiltin ? t('chat.modelControl.builtinModel') : modelName)
   const effectiveSupportsThinking = sessionPreset ? !!sessionPreset.supportsThinking : modelSupportsThinking
   const effectiveSupportsDial = sessionPreset ? !!sessionPreset.supportsEffortDial : modelSupportsDial
+  const effectiveThinkingAlwaysOn = sessionPreset ? !!sessionPreset.thinkingAlwaysOn : modelThinkingAlwaysOn
+  const effectiveThinkingLevels = (sessionPreset ? sessionPreset.thinkingLevels : modelThinkingLevels) || undefined
 
   // 读当前激活模型的完整配置（含 supportsThinking）
   const refreshActiveModel = useCallback(async () => {
@@ -300,6 +305,8 @@ export function InputBar({
       setModelIsBuiltin(!!mc.builtin)
       setModelSupportsThinking(!!mc.supportsThinking)
       setModelSupportsDial(!!mc.supportsEffortDial)
+      setModelThinkingAlwaysOn(!!mc.thinkingAlwaysOn)
+      setModelThinkingLevels(mc.thinkingLevels?.length ? mc.thinkingLevels : undefined)
     }
   }, [])
 
@@ -588,6 +595,10 @@ export function InputBar({
           {/* 右侧：思考开关 + 模型 + 发送/停止 */}
           <div className="flex-1" />
 
+          {/* 权限档位：只给编码助手。别的角色不该被迫理解"工具风险分级"这个概念，
+              而且主进程那侧也有同一道角色门（agent-overrides.ts），界面藏起来不等于关掉 */}
+          {roleName === 'coding' && <PermissionTierControl />}
+
           {/* 模型+思考深度合一控件；会话内选模型=会话专属，重置行=跟随全局 */}
           {effectiveModelName && (
             <ModelControl
@@ -595,6 +606,8 @@ export function InputBar({
               displayModel={effectiveModelName}
               supportsThinking={effectiveSupportsThinking}
               supportsDial={effectiveSupportsDial}
+              alwaysOn={effectiveThinkingAlwaysOn}
+              levels={effectiveThinkingLevels}
               selectedId={sessionPresetId}
               resetRow={{
                 label: modelName

@@ -68,9 +68,11 @@ function createOpenPipalBashTool(): ReturnType<typeof createBashTool> {
 /** Build one conversation-scoped public pi-core execution environment. */
 export function buildPiCoreExecutionTools(
   workingDir: string,
-  executionPolicy: Partial<OpenPipalExecutionPolicy> = {}
+  executionPolicy: Partial<OpenPipalExecutionPolicy> = {},
+  /** 只用于 git 项目授权的「本次对话」那一半；不传 = 只认持久授权。 */
+  conversationId?: string
 ): PiCoreExecutionToolBundle {
-  const env = new OpenPipalNodeExecutionEnv(workingDir, executionPolicy)
+  const env = new OpenPipalNodeExecutionEnv(workingDir, executionPolicy, conversationId)
   const tools: AgentHarnessTool<ExecutionToolContext>[] = [
     createReadTool({ imageProcessor: processPiCoreReadImage }),
     createOpenPipalBashTool(),

@@ -204,6 +204,9 @@ export function ChatPanel({ appName }: ChatPanelProps) {
   const { turns, lastAssistantId } = useMemo(() => {
     let lastAssistantIdx = -1
     for (let i = messages.length - 1; i >= 0; i--) {
+      // 只在最后一个用户回合里找可重新生成的回答。系统恢复提示不是 AI 回答，
+      // 若当前回合只有这条提示，不能把上一轮的回答错误地挂上“重新生成”。
+      if (messages[i].role === 'user' && messages[i].messageKind !== 'runtime-context') break
       if (isRegeneratableAssistantMessage(messages[i])) {
         lastAssistantIdx = i
         break
@@ -347,10 +350,14 @@ export function ChatPanel({ appName }: ChatPanelProps) {
         // 「处理中 N 秒」就是从按下回车到第一步落地之间唯一的反馈,不能等到有产出才出现。
         // 已完成又什么都没回来的空转轮次不画 —— 那才是无中生有。
         const bareDivider = processSegCount === 0 && (turn.hasAiOutput || turnActive)
-        // 按下回车了,但模型一个事件都还没吐 —— 这一行只写「连接模型…」,不报秒数。
+        // 按下回车了,但模型一个事件都还没吐 —— 这一行写「等待模型响应 N 秒」。
+        // 等待与生成仍是两个状态，但秒数从 0 连续可见，首字节到达时不会凭空跳数。
         // hasAiOutput 是第二重保险:本轮已经落下过消息(重开会话续流、注入历史)时,
         // 模型显然早就开过口了,不该因为内存里的标志位是初值就退回"连接中"。
         const awaitingModel = turnActive && !modelResponded && !turn.hasAiOutput
+        const turnInterrupted = turn.finalMsgs.some(
+          message => message.messageSubtype === 'runtime-interrupted'
+        )
         return (
           <div key={turn.id}>
             {/* 用户消息(turn 开头) */}
@@ -371,6 +378,7 @@ export function ChatPanel({ appName }: ChatPanelProps) {
                 turnStartTs={turn.agentStartTs ?? turn.userMsg?.timestamp}
                 turnEndTs={turnEndTs}
                 awaitingModel={awaitingModel}
+                interrupted={turnInterrupted}
               />
             )}
             {/* 按真实顺序渲染片段:每轮 process 段收敛为一条计时分割线,final 独立显示。
@@ -392,6 +400,7 @@ export function ChatPanel({ appName }: ChatPanelProps) {
                     turnEndTs={turnEndTs}
                     defaultExpanded={!focusStream && !turnActive}
                     awaitingModel={awaitingModel}
+                    interrupted={turnInterrupted}
                   />
                 )
               }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-export type ConversationExecutionEntrypoint = 'desktop' | 'http' | 'scheduler'
+export type ConversationExecutionEntrypoint = 'desktop' | 'http' | 'scheduler' | 'voice'
 export type ConversationExecutionPolicy = 'reject' | 'wait' | 'supersede'
 
 export interface ConversationExecutionOwner {

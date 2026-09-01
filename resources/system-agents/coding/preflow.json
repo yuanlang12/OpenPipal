@@ -1,0 +1,29 @@
+{
+  "title": "在哪个仓库里干活？",
+  "inputPlaceholder": "说说要做什么，比如：登录页刷新后会闪一下白屏，帮我看看",
+  "projectName": { "enabled": false },
+  "dsSelector": { "enabled": false },
+  "workingDir": { "enabled": true },
+  "fields": [],
+  "contextButtons": [
+    { "kind": "screenshot", "label": "报错截图", "subtitle": "IDE / 终端 / 浏览器里的报错" },
+    { "kind": "codebase", "label": "参考目录", "subtitle": "另一个只读参考的文件夹，不作为工作目录" }
+  ],
+  "allowSkip": true,
+  "localeOverlays": {
+    "en": {
+      "title": "Which repository are we working in?",
+      "inputPlaceholder": "Describe the task — for example: the login page flashes white on refresh",
+      "contextButtons": {
+        "screenshot": {
+          "label": "Error screenshot",
+          "subtitle": "From your IDE, terminal, or browser"
+        },
+        "codebase": {
+          "label": "Reference folder",
+          "subtitle": "Another folder to read for reference — not the working directory"
+        }
+      }
+    }
+  }
+}

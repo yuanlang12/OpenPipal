@@ -27,7 +27,7 @@ import { isDcHtml, inlineDcRuntime, inlineDcArtifactSiblings, inlineKnownScriptS
 import { stripDcSuffix } from '../utils/format'
 import {
   SELF_CHECK_TOOL, FRAME_SPEC, FrameKind,
-  pickFrame, parseSelfCheckVerdict, resolveSelfCheckTarget, latestSelfCheckResult, isVisualArtifactType,
+  pickFrame, parseSelfCheckVerdict, resolveSelfCheckTarget, latestSelfCheckResultMessage, isVisualArtifactType,
   renderInputsFingerprint,
   type SelfCheckVerdict,
 } from '../chat/selfCheck'
@@ -119,9 +119,13 @@ export function SelfCheckPreview(): JSX.Element | null {
   const toolStatus = useLiveStreamStore(s => s.toolStatus)
   const conversationId = useChatStore(s => s.activeConversationId)
   const artifacts = useArtifactStore(s => s.artifacts)
+  const latestResultMessage = useChatStore(s => latestSelfCheckResultMessage(s.messages))
   const { open, collapsed, artifactId, phase, verdict, verdictFp } = useSelfCheckStore()
   const [doc, setDoc] = useState<string | null>(null)
   const runningRef = useRef(false)
+  const handledResultRef = useRef<string | null>(
+    latestResultMessage ? `${latestResultMessage.id}\u0000${latestResultMessage.content}` : null
+  )
 
   // 自检开始/结束。toolStatus 存的就是工具名（liveStreamStore.setToolStatus(name)）
   useEffect(() => {
@@ -129,6 +133,11 @@ export function SelfCheckPreview(): JSX.Element | null {
     if (toolStatus === SELF_CHECK_TOOL) {
       if (runningRef.current) return
       runningRef.current = true
+      // 记住开始前的旧结论。若工具结束时没有带回新结果，绝不能拿旧结果冒充本次复检。
+      const previousResult = latestSelfCheckResultMessage(useChatStore.getState().messages)
+      handledResultRef.current = previousResult
+        ? `${previousResult.id}\u0000${previousResult.content}`
+        : null
       const list = useArtifactStore.getState().artifacts
       const id = resolveSelfCheckTarget(useChatStore.getState().messages, list)
       // path 模式自检（设计系统 specimen/ui_kit）本轮没产出会话产物 → 这一版不弹卡
@@ -137,18 +146,35 @@ export function SelfCheckPreview(): JSX.Element | null {
     }
     if (runningRef.current) {
       runningRef.current = false
-      const text = latestSelfCheckResult(useChatStore.getState().messages)
-      // 指纹取"结论落下这一刻"的整套渲染输入（薄壳 + 它引用的场景 jsx）——之后 AI 再改任一份，
-      // 组件里比对不一致即降级"已过时"
-      const targetId = useSelfCheckStore.getState().artifactId
+      // 兼容旧后端/插件没有返回结论文本的情况：工具确实结束了，就先落到中性完成态。
+      // 若同一事件随后写入新的工具结果，下面以消息为准的 effect 会立即覆盖它。
+      const targetId = store.artifactId
       const list = useArtifactStore.getState().artifacts
-      const target = targetId ? list.find(a => a.id === targetId) : null
-      store.finish(
-        text ? parseSelfCheckVerdict(text) : null,
-        renderInputsFingerprint(target, list)
-      )
+      const target = targetId ? list.find(a => a.id === targetId) || null : null
+      store.finish(null, renderInputsFingerprint(target, list))
     }
   }, [toolStatus])
+
+  // 工具结果消息才是自检结论的权威来源。不能只靠 toolStatus 的字符串边沿：连续两个工具事件
+  // 可能在同一渲染批次内从 render_artifact → null，组件看不到中间态，旧的“1 个问题”就会
+  // 永远留在卡上。只要有一条新的 render_artifact 结果落进消息历史，就用它覆盖旧结论。
+  useEffect(() => {
+    if (!latestResultMessage || toolStatus === SELF_CHECK_TOOL) return
+    const signature = `${latestResultMessage.id}\u0000${latestResultMessage.content}`
+    if (handledResultRef.current === signature) return
+    const store = useSelfCheckStore.getState()
+    if (!store.open || !store.artifactId) {
+      handledResultRef.current = signature
+      return
+    }
+    const list = useArtifactStore.getState().artifacts
+    const target = list.find(a => a.id === store.artifactId) || null
+    store.finish(
+      parseSelfCheckVerdict(latestResultMessage.content || ''),
+      renderInputsFingerprint(target, list)
+    )
+    handledResultRef.current = signature
+  }, [latestResultMessage, toolStatus])
 
   // 切会话 = 上一份稿子的自检结果失效，直接收起
   useEffect(() => {

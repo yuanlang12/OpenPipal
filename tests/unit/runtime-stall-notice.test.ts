@@ -11,8 +11,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createRendererI18n } from '../../src/renderer/src/i18n'
-import { formatMessageContentForDisplay } from '../../src/renderer/src/chat/messageDisplay'
-import { formatModelStallNotice, parseModelStallNotice } from '../../src/shared/runtime-notice'
+import { formatMessageContentForDisplay, injectNoticeContentForDisplay } from '../../src/renderer/src/chat/messageDisplay'
+import { formatModelStallNotice, parseModelStallNotice, formatStreamRetryNotice, parseStreamRetryNotice } from '../../src/shared/runtime-notice'
 
 const read = (path: string): string => readFileSync(resolve(path), 'utf8')
 
@@ -78,6 +78,42 @@ describe('模型停滞哨兵', () => {
       expect(source).toContain('formatModelStallNotice(MODEL_STALL_TIMEOUT_MS / 1000)')
       expect(source).not.toContain('main-i18n')
       expect(source).not.toContain('tMain(')
+    }
+  })
+})
+
+const retryNotice = (attempt: number, maxRetries: number) => ({
+  role: 'assistant' as const,
+  content: formatStreamRetryNotice(attempt, maxRetries),
+  messageKind: 'inject-notice' as const,
+  messageSubtype: 'stream-retry' as const
+})
+
+describe('断流重连哨兵', () => {
+  it('哨兵可往返，非哨兵文本返回 null', () => {
+    expect(parseStreamRetryNotice(formatStreamRetryNotice(2, 5))).toEqual({ attempt: 2, maxRetries: 5 })
+    expect(parseStreamRetryNotice('连接中断，正在重试 (2/5)')).toBeNull()
+    expect(parseStreamRetryNotice('openpipal:stream-retry:x/5')).toBeNull()
+  })
+
+  it('两种界面语言都翻译成人话，记录里始终是同一串哨兵', async () => {
+    const i18n = await createRendererI18n('zh-CN')
+    const chinese = injectNoticeContentForDisplay(retryNotice(2, 5), i18n.t)
+    expect(chinese).toContain('2/5')
+    expect(chinese).not.toContain('openpipal:stream-retry')
+
+    await i18n.changeLanguage('en')
+    const english = injectNoticeContentForDisplay(retryNotice(2, 5), i18n.t)
+    expect(english).toContain('2/5')
+    expect(english).not.toContain('openpipal:stream-retry')
+    // 界面语言变了，落盘的那串没变
+    expect(retryNotice(2, 5).content).toBe('openpipal:stream-retry:2/5')
+  })
+
+  it('两个 Runtime 都只推事件，不在主进程里翻译提示文案', () => {
+    for (const path of ['src/main/agent-runtime/pi-core-runtime.ts', 'src/main/pi-agent-service.ts']) {
+      const source = read(path)
+      expect(source).toContain("eventQueue.push({ type: 'stream_retry'")
     }
   })
 })
