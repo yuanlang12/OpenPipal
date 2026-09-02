@@ -1,6 +1,6 @@
 # OpenPipal
 
-> 一个会自动贴到你正在用的那个 App 旁边的 AI 助手 —— macOS 原生应用 + 浏览器侧栏。
+> 开源可视化 macOS Agent App · 无需命令行 · 连接模型即可开始
 
 <p align="center">
   <a href="https://github.com/yuanlang12/OpenPipal/releases/latest">
@@ -13,10 +13,11 @@
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
 <p align="center">
-  <img src="docs/readme/hero-zh-CN.png" width="900" alt="OpenPipal 停靠在 VS Code 旁边，显示欢迎页" />
+  <img src="docs/readme/hero-zh-CN.png" width="900" alt="OpenPipal 首次启动的窗口：侧栏是我的 Agents、插件、自动化、作品，中间是欢迎页" />
 </p>
 
-你切到哪个应用，OpenPipal 就跟到哪儿，停在屏幕侧边——对话待在活儿旁边，而不是另开一个窗口。
+为每一项工作，定制一个 Agent。把一件活儿该怎么做教给 OpenPipal 一次，它就成了一个有自己
+指令、记忆、技能和任务的 Agent——下次直接用，或者按计划在你不在的时候自己跑。
 
 **它不自带任何模型。** 每一次请求都从你的 Mac 直接发往你自己配置的 OpenAI 兼容端点：
 你的密钥、你的服务商、你的账单。中间没有 OpenPipal 的服务器，因为根本就没有。
@@ -51,11 +52,11 @@ Agent、技能、MCP、记忆和浏览器扩展都不受影响。
    xattr -dr com.apple.quarantine /Applications/OpenPipal.app
    ```
 
-3. **把它贴边和读窗口要用的权限给上。** 还是在 **系统设置 → 隐私与安全性** 里，把
-   OpenPipal 加进这几项：
+3. **权限只在功能用到时才会问你。** macOS 第一次用到时会弹窗，你也可以自己去
+   **系统设置 → 隐私与安全性** 里把 OpenPipal 加进去：
 
-   - **辅助功能** —— 跟住最前面那个窗口，面板才知道该贴在哪
-   - **屏幕录制** —— 你让它看目标窗口时才用
+   - **辅助功能** —— 只有打开应用跟随（设置 → 应用）才需要，面板靠它知道该贴在哪
+   - **屏幕录制** —— 你让它看某个窗口时才用
    - **自动化** —— 聚焦、粘贴到你指定的那个应用
    - **麦克风** —— 只有用语音输入时才需要
 
@@ -94,21 +95,29 @@ Agent、技能、MCP、记忆和浏览器扩展都不受影响。
 
 ## 它能做什么
 
-- **跟随前台应用**——切窗口，OpenPipal 自己重新停靠；不想让它跟某个应用、或者全都别跟，
-  在 **设置 → 应用** 里关
-- **捏一个自己的 Agent**——教它一次你的做事方式，这摊活儿以后就归它；长相也随你捏，头像编辑器里
-  配饰随便换。从「我的 Agents」页开始，或者在任意对话里点**保存为 Agent**
-- **在你的编辑器里用它**——支持开放的 [Agent Client Protocol](https://agentclientprotocol.com)
-  的编辑器，把 OpenPipal 配成它的 agent server 就行。适配器随包带，启动命令在 **设置 → 连接** 里，
-  旁边还有给其他程序用的本机 HTTP 接口
-- **Visualizer**——模型实时渲染卡片、图表、白板和 Mermaid 图
-- **技能**——输入框里打 `/` 就能用。内置文档、PDF、幻灯片、表格处理，外加技能创建器和工具安装器；
-  也能从本地文件夹或 GitHub 仓库导入你自己的
-- **长期记忆**——按 Agent 分开，默认关闭，存成你能直接读能改的 Markdown
-- **MCP**——接任意 Model Context Protocol 服务器，Context7 和 DeepWiki 是内置预设
-- **浏览器侧栏**——同一个助手，在浏览器里也能用
-- **设计助手**——一句需求，直接做出海报、幻灯片这样的成品，再陪你一轮轮改
-- **编码助手**——在你的仓库里干活的内置 Agent（见下）
+- **专属 Agent**——任意对话点**保存为 Agent**，或者在「我的 Agents」页里新建：有自己的指令、
+  长相、记忆和任务。一项工作，一个 Agent。
+- **插件、技能、MCP 和命令行工具**——用标准插件（`plugin.json` + 技能 + MCP 服务器）扩展
+  Agent；内置技能覆盖文档、PDF、幻灯片、表格，外加技能创建器和工具安装器，输入框里打 `/`
+  就能用；任意 Model Context Protocol 服务器都能接，Context7 和 DeepWiki 是内置预设；你
+  Mac 上已经装好的命令行工具，比如 `gh`、`node`、`npm`，也能当工具用。
+- **自动化**——运行一次，或让它持续工作：Cron 式定时或 Webhook 触发，每次新建会话或持续
+  累积到同一会话。
+- **子 Agent**——一项任务可以拆给多个子 Agent 去做，每个子 Agent 的完整对话都能展开查看。
+- **作品**——Agent 产出的东西都收在一处；Visualizer 会在模型写的同时实时渲染卡片、图表、
+  白板和 Mermaid 图。
+- **长期记忆**——按 Agent 分开，默认关闭，存成你能直接读能改的 Markdown。
+- **设计一次，在每个流程里复用**——支持开放的 [Agent Client Protocol](https://agentclientprotocol.com)
+  的编辑器，把 OpenPipal 配成它的 agent server 就行（适配器随包带，启动命令在 **设置 → 连接**）；
+  其他程序走本机 HTTP 接口。
+- **浏览器侧栏**——同一个助手，在 Chrome / Edge / Brave 里也能用。
+- **设计助手**——一句需求，直接做出海报、幻灯片这样的成品，再陪你一轮轮改。
+- **编码助手**——在你的仓库里干活的内置 Agent（见下）。
+- **应用跟随，想要再开**——默认关闭。在 **设置 → 应用** 里打开后，你切到哪个应用，OpenPipal
+  就贴到它旁边；不想跟的应用可以单独关掉。
+
+让模型成为核心，复杂按需出现。OpenPipal 是基于开源 Pi 框架的极简 Agent 核心：可控的上下文、
+只带这项工作真正需要的工具；它接入的一切都是开放标准——ACP、MCP、Agent Skills、Agent Plugins。
 
 ### 编码助手
 
@@ -191,11 +200,13 @@ npx playwright test                      # 端到端
 **能换界面语言吗？** 能。**设置 → 外观 → 语言** 可以在简体中文和 English 之间切换，默认跟随系统，
 改完立刻生效。
 
+**它会一直跟着我的应用跑吗？** 不会。应用跟随默认关闭，想要的话在 **设置 → 应用** 里打开。
+
 **免费吗？** 应用免费。模型用量由服务商直接向你计费，OpenPipal 既不经手钱也不经手密钥。
 
 **能跑本地模型吗？** 能。Base URL 填 `http://localhost:11434/v1` 接 Ollama，模型名填你拉过的。
 
-**Windows / Linux？** 暂无计划。停靠行为依赖 macOS 的窗口 API。
+**Windows / Linux？** 暂无计划。App 依赖 macOS 的窗口、权限和沙箱 API。
 
 **扩展没反应。** 确认桌面端在运行，扩展需要它监听 `localhost:3031`。
 

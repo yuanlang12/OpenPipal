@@ -7,7 +7,8 @@ let cachedDetectedApps: Set<string> | null = null
 function ensureSettingsCache(): void {
   if (cachedFollowingEnabled !== null && cachedDisabledApps && cachedDetectedApps) return
   const config = loadConfig()
-  cachedFollowingEnabled = config.appFollowingEnabled !== false
+  // 默认关闭：只有用户在「设置 → 应用」里打开过才跟随（2026-09-02 所有者决定，产品不再主打贴边跟随）
+  cachedFollowingEnabled = config.appFollowingEnabled === true
   cachedDisabledApps = new Set(config.disabledApps || [])
   cachedDetectedApps = new Set(config.detectedApps || [])
 }

@@ -1,6 +1,6 @@
 # OpenPipal
 
-> An AI companion that docks itself beside whatever app you're using — native on macOS, plus a browser side panel.
+> Open-source visual Agent app for macOS. No terminal required — connect a model and start.
 
 <p align="center">
   <a href="https://github.com/yuanlang12/OpenPipal/releases/latest">
@@ -13,11 +13,12 @@
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a></p>
 
 <p align="center">
-  <img src="docs/readme/hero-en.png" width="900" alt="OpenPipal docked beside VS Code, showing its welcome screen" />
+  <img src="docs/readme/hero-en.png" width="900" alt="The OpenPipal window on first launch: My Agents, Plugins, Automation and Works in the sidebar, the welcome screen in the middle" />
 </p>
 
-Switch to any application and OpenPipal follows, docking to the side of your screen so the
-conversation stays next to the work instead of in another window.
+For every job, a dedicated Agent. Tell OpenPipal once how a piece of work should be done and
+it becomes an Agent with its own instructions, memory, skills and tasks — ready the next time
+you need it, or running on a schedule while you're not there.
 
 **It ships no model of its own.** Every request goes straight from your Mac to an
 OpenAI-compatible endpoint that you configure — your key, your provider, your bill.
@@ -56,11 +57,12 @@ listed in `OPEN-SOURCE-CUT.json` — the cut is reproducible, not hand-curated.
    xattr -dr com.apple.quarantine /Applications/OpenPipal.app
    ```
 
-3. **Grant the permissions it needs to dock and read windows.** Still in **System Settings →
-   Privacy & Security**, add OpenPipal under:
+3. **Permissions come up only when a feature needs them.** macOS asks the first time, or you
+   can add OpenPipal yourself under **System Settings → Privacy & Security**:
 
-   - **Accessibility** — follow the frontmost window so the panel can dock beside it
-   - **Screen Recording** — look at the target window when you ask it to
+   - **Accessibility** — only if you turn on app following (Settings → Apps), so the panel
+     can dock beside the frontmost window
+   - **Screen Recording** — look at a window when you ask it to
    - **Automation** — focus and paste into the application you picked
    - **Microphone** — only if you use voice input
 
@@ -103,25 +105,37 @@ Anything that speaks the OpenAI-compatible protocol works. Presets included:
 
 ## What it does
 
-- **Follows the foreground app** — switch windows and OpenPipal re-docks itself; switch it off
-  for one app or for all of them under **Settings → Apps**
-- **Mold an agent of your own** — tell it once how you like things done and that work is its
-  from then on; give it a face with the avatar editor. Start from the **My Agents** page, or
-  turn any conversation into one with **Save as Agent**
-- **Use it from your editor** — any editor that speaks the open
+- **Dedicated Agents** — save any conversation as an Agent with **Save as Agent**, or build
+  one on the **My Agents** page: its own instructions, look, memory and tasks. One job, one
+  Agent.
+- **Plugins, Skills, MCP and CLI tools** — extend an Agent with standard plugins
+  (`plugin.json` + Skills + MCP servers); the bundled Skills cover documents, PDFs, slides and
+  spreadsheets, plus a skill creator and a tool installer (type `/` in the composer to use
+  one); any Model Context Protocol server connects, with Context7 and DeepWiki as presets; and
+  the command-line tools already on your Mac, such as `gh`, `node` and `npm`, are available
+  as tools.
+- **Automation** — run a task once, or keep it running on a cron-style schedule or a webhook,
+  each run in a fresh conversation or accumulating in one.
+- **Subagents** — an Agent can split a job across Subagents, and each Subagent's conversation
+  can be expanded to see exactly what it did.
+- **Works** — everything Agents produce, collected in one place; the Visualizer renders cards,
+  charts, whiteboards and Mermaid diagrams live as the model writes them.
+- **Long-term memory** — per-agent, opt-in, stored as plain Markdown you can read and edit.
+- **Design it once, reuse it everywhere** — any editor that speaks the open
   [Agent Client Protocol](https://agentclientprotocol.com) can point at OpenPipal as its agent
-  server. The adapter ships inside the app; the launch command is under **Settings →
-  Connections**, next to a local HTTP interface for any other program
-- **Visualizer** — the model renders cards, charts, whiteboards and Mermaid diagrams live
-- **Skills** — type `/` in the composer to use one. Bundled: documents, PDFs, slides and
-  spreadsheets, plus a skill creator and a tool installer; import your own from a folder or a
-  GitHub repo
-- **Long-term memory** — per-agent, opt-in, stored as plain Markdown you can read and edit
-- **MCP** — connect any Model Context Protocol server; Context7 and DeepWiki ship as presets
-- **Browser side panel** — the same assistant, inside the browser
+  server (the adapter ships inside the app; the launch command is under **Settings →
+  Connections**), and any other program gets a local HTTP interface.
+- **Browser side panel** — the same assistant, inside Chrome, Edge or Brave.
 - **Design Assistant** — turns a brief into finished posters, slides and other visual
-  deliverables, then keeps editing them with you
-- **Coding Assistant** — the built-in agent that works inside your repository (below)
+  deliverables, then keeps editing them with you.
+- **Coding Assistant** — the built-in agent that works inside your repository (below).
+- **App following, if you want it** — off by default. Turn it on under **Settings → Apps** and
+  OpenPipal docks itself beside whatever app you switch to; you can leave individual apps out.
+
+Keep the model at the center; add complexity only when needed. OpenPipal is a minimal Agent
+core built on the open-source Pi agent framework, with controlled context and only the tools
+the work actually needs — and everything it plugs into is an open standard: ACP, MCP, Agent
+Skills and Agent Plugins.
 
 ### Coding Assistant
 
@@ -215,13 +229,17 @@ the install steps. Once per install.
 between English and Simplified Chinese, or follows the system (the default). It takes effect
 immediately.
 
+**Does it follow my apps around?** Only if you ask it to. App following is off by default and
+lives under **Settings → Apps**.
+
 **Is it free?** The app is. Model usage is billed by your provider directly to you; OpenPipal
 never sees the money or the key.
 
 **Can I run a local model?** Yes — point the Base URL at `http://localhost:11434/v1` for
 Ollama and use whatever model you've pulled.
 
-**Windows or Linux?** Not planned. The docking behaviour leans on macOS window APIs.
+**Windows or Linux?** Not planned for now. The app leans on macOS window, permission and
+sandbox APIs.
 
 **The extension does nothing.** Make sure the desktop app is running; the extension needs it
 on `localhost:3031`.

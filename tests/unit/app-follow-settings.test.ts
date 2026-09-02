@@ -28,7 +28,10 @@ beforeEach(() => {
 })
 
 describe('app following settings', () => {
-  it('defaults legacy configs to enabled', () => {
+  it('stays off until the user turns it on', () => {
+    expect(isAppFollowingEnabled()).toBe(false)
+    state.config = { appFollowingEnabled: true }
+    resetAppFollowSettingsCacheForTests()
     expect(isAppFollowingEnabled()).toBe(true)
   })
 

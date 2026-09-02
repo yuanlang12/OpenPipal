@@ -1185,11 +1185,11 @@ export const ZH_CN_MESSAGES = {
       },
       following: {
         title: '应用跟随',
-        description: '总开关控制所有应用；逐应用设置会在暂停期间保留',
+        description: '默认关闭。总开关控制所有应用；逐应用设置会在关闭期间保留',
         master: {
           title: '允许 OpenPipal 跟随应用',
           on: '已开启：切换应用时 OpenPipal 会自动跟随',
-          off: '已暂停：OpenPipal 不会跟随任何应用',
+          off: '已关闭：OpenPipal 不会跟随任何应用',
           toggleAria: '切换所有应用的跟随状态',
         },
         errors: {
@@ -3546,11 +3546,11 @@ export const EN_MESSAGES = {
       },
       following: {
         title: 'App following',
-        description: 'The master switch controls all apps; per-app choices stay saved while paused',
+        description: 'Off by default. The master switch controls all apps; per-app choices stay saved while it is off',
         master: {
           title: 'Allow OpenPipal to follow apps',
           on: 'On: OpenPipal follows as you switch apps',
-          off: 'Paused: OpenPipal will not follow any app',
+          off: 'Off: OpenPipal will not follow any app',
           toggleAria: 'Toggle following for all apps',
         },
         errors: {
