@@ -1,8 +1,9 @@
 # Security Policy
 
-OpenPipal is still preparing its source for possible public release. The current
-security review is frozen and has not been sealed, so this policy must not be
-read as a claim that the repository is release-ready.
+OpenPipal is a small open-source project maintained in the open. This page says how to
+report a vulnerability privately and what to expect. The security model itself is described
+in [docs/security/security-model.md](docs/security/security-model.md) and
+[the local HTTP boundary](docs/security/local-http-boundary.md).
 
 ## Report a vulnerability privately
 
@@ -12,13 +13,10 @@ Use GitHub's private vulnerability reporting flow:
 2. Select **Report a vulnerability** under private vulnerability reporting.
 3. Submit the report without opening a public issue or discussion.
 
-If GitHub does not show that option, use a private contact channel published on
-the repository owner or maintainer's verified GitHub profile. This repository
-does not publish a security email address yet; do not guess one. If neither a
-GitHub private report nor a verified private maintainer channel is available,
-the repository does not currently have a safe reporting route. Keep the report
-private until the maintainers enable one; do not include secrets, personal data,
-or an active exploit in a public request for contact.
+If GitHub does not show that option, use a private contact channel published on the
+repository owner's verified GitHub profile. This repository does not publish a security
+email address; do not guess one. Keep the report private until a route is available, and do
+not include secrets, personal data, or an active exploit in a public request for contact.
 
 Include, when available:
 
@@ -36,16 +34,12 @@ authorized to test. Do not access another user's OpenPipal data, provider accoun
 browser profile, or local services. Avoid destructive proofs of concept when a
 non-destructive reproduction demonstrates the issue.
 
-The maintainers will coordinate validation and disclosure through the private
-GitHub report. No response or remediation deadline is promised while the public
-release and support policy remain undecided.
+The maintainers coordinate validation and disclosure through the private GitHub report.
+Reports are acknowledged, but this is a volunteer-maintained project and no fixed
+remediation deadline is promised.
 
 ## What belongs elsewhere
 
-General bugs, feature requests, and documentation corrections are not security
-reports. Use the repository issue workflow when it is publicly enabled and the
-report contains no sensitive information.
-
-For implementation-level security architecture, see
-[docs/SECURITY.md](docs/SECURITY.md) and
-[the local HTTP boundary](docs/security/local-http-boundary.md).
+General bugs, feature requests, and documentation corrections are not security reports.
+Use [Issues](https://github.com/yuanlang12/OpenPipal/issues) when the report contains no
+sensitive information.

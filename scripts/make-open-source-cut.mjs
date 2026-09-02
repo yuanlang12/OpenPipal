@@ -167,6 +167,27 @@ for (const [source, target] of [
 }
 
 // 5) 打包清单里指向已裁目录的条目要一起去掉，否则 electron-builder 报 ENOENT
+// 公开树里的策略只留机器要读的字段：rules[].note / classificationNote / ledgerBindingNote 是内部
+// 决策叙事，裁剪时剥掉（所有者 2026-09-02 决定）。id/scope/action/patterns/overrides/ledgerExceptions
+// 一字不改，校验器语义不变。
+const publicPolicyPath = join(args.outDir, 'config', 'open-source-policy.json')
+if (existsSync(publicPolicyPath)) {
+  const pub = JSON.parse(readFileSync(publicPolicyPath, 'utf8'))
+  delete pub.classificationNote
+  delete pub.ledgerBindingNote
+  pub.rules = pub.rules.map(({ note: _note, ...rest }) => rest)
+  writeFileSync(publicPolicyPath, JSON.stringify(pub, null, 2) + '\n')
+}
+
+// 仓库根的 mcp-servers.json 只在 dev 模式被读；classin 预设属于未发行的教学助手（见
+// exclude-non-default-agents），公开树里去掉，让 dev 模式与随包的 resources/mcp-servers.json 一致。
+const publicRootMcp = join(args.outDir, 'mcp-servers.json')
+if (existsSync(publicRootMcp)) {
+  const servers = JSON.parse(readFileSync(publicRootMcp, 'utf8'))
+  delete servers.classin
+  writeFileSync(publicRootMcp, JSON.stringify(servers, null, 2) + '\n')
+}
+
 const builderPath = join(args.outDir, 'electron-builder.yml')
 if (existsSync(builderPath)) {
   const lines = readFileSync(builderPath, 'utf8').split('\n')

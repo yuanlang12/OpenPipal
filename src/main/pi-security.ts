@@ -15,7 +15,7 @@
  *   → 符号链接追踪
  *
  * 参考：Claude Code auto mode（分类器 + 升级）、LobsterAI（纵深防御）
- * 详细文档：docs/SECURITY.md
+ * 详细文档：docs/security/security-model.md
  */
 
 import fs from 'fs'

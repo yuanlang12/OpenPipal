@@ -1,18 +1,16 @@
 {
-  "classin": {
-    "command": "npx",
-    "args": ["-y", "classin-mcp-server"],
-    "env": {
-      "CLASSIN_SID": "",
-      "CLASSIN_SECRET": ""
-    }
-  },
   "context7": {
     "command": "npx",
-    "args": ["-y", "@upstash/context7-mcp"]
+    "args": [
+      "-y",
+      "@upstash/context7-mcp"
+    ]
   },
   "deepwiki": {
     "command": "npx",
-    "args": ["-y", "mcp-deepwiki@latest"]
+    "args": [
+      "-y",
+      "mcp-deepwiki@latest"
+    ]
   }
 }

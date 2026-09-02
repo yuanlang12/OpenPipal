@@ -211,7 +211,7 @@ unsigned and unnotarized.
 | `src/shared/` | Contracts and the i18n catalogue used by both sides |
 | `openpipal-extension/` | Chrome extension |
 | `resources/skills/` | Bundled skills |
-| `docs/` | Architecture notes and development records |
+| `docs/` | Architecture and security notes |
 
 The renderer talks to the main process over preload IPC on the desktop, and over an
 HTTP/SSE shim on `:3031` when it runs inside the browser extension — one renderer, two

@@ -185,7 +185,7 @@ npx playwright test                      # 端到端
 | `src/shared/` | 双方共用的契约与多语言词条 |
 | `openpipal-extension/` | Chrome 扩展 |
 | `resources/skills/` | 内置技能 |
-| `docs/` | 架构说明与开发记录 |
+| `docs/` | 架构与安全说明 |
 
 渲染层在桌面端走 preload IPC，在浏览器扩展里走 `:3031` 的 HTTP/SSE 垫片——
 一套渲染层，两种传输。

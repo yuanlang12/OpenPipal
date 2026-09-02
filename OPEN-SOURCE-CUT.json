@@ -1,9 +1,10 @@
 {
-  "generatedFrom": "308600fde08b574436df28ee33d2955a276538c1",
+  "generatedFrom": "b2434e53bd0e7edd8513287c72866c7a1b2aba3e",
   "policyId": "openpipal-open-source-candidate-v1",
   "trackedInPrivateRepo": 1020,
-  "publishedFiles": 907,
+  "publishedFiles": 879,
   "droppedByRule": {
+    "exclude-internal-collaboration-material": 28,
     "exclude-brand-exploration-and-internal-process-docs": 3,
     "remove-private-history-and-qa": 37,
     "exclude-non-default-agents": 20,
