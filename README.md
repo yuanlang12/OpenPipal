@@ -12,6 +12,10 @@
 
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a></p>
 
+<p align="center">
+  <img src="docs/readme/hero-en.png" width="900" alt="OpenPipal docked beside VS Code, showing its welcome screen" />
+</p>
+
 Switch to any application and OpenPipal follows, docking to the side of your screen so the
 conversation stays next to the work instead of in another window.
 
@@ -23,7 +27,7 @@ Nothing is proxied through an OpenPipal server, because there isn't one.
 
 ## What's in this release
 
-This repository carries three built-in agents: the **default OpenPipal Agent**, the **Design Agent** and the **Coding Assistant**.
+This repository carries three built-in agents: the **default OpenPipal Agent**, the **Design Assistant** and the **Coding Assistant**.
 
 Four further built-in agents (Learner, Teacher, Office, Interpreter) are not part of this
 open-source release. Custom agents, skills, MCP servers, memory and the browser extension are
@@ -58,13 +62,19 @@ listed in `OPEN-SOURCE-CUT.json` — the cut is reproducible, not hand-curated.
    - **Accessibility** — follow the frontmost window so the panel can dock beside it
    - **Screen Recording** — look at the target window when you ask it to
    - **Automation** — focus and paste into the application you picked
-   - **Microphone** — only if you use voice input or live interpretation
+   - **Microphone** — only if you use voice input
 
    macOS ties these grants to an application's code signature, and an ad-hoc signature
    changes with every build. So after installing a new version you may find the old entry
    stale and have to remove it and grant again. A notarized build removes that chore.
 
-4. Open **Settings → Model**, add a preset with your Base URL, API key and model name.
+4. Open **Settings → Models**, click **Add provider** and fill in the Base URL and API key, then
+   **Add model** under it with the model name. **Test connection** tells you on the spot whether
+   the two work together.
+
+The first launch opens a short tour — three screens, skippable, and replayable any time from
+**Settings → About**. It shows what OpenPipal can do but configures nothing, so the model still
+has to be added as in step 4.
 
 ### Browser extension (optional)
 
@@ -93,14 +103,25 @@ Anything that speaks the OpenAI-compatible protocol works. Presets included:
 
 ## What it does
 
-- **Follows the foreground app** — switch windows and OpenPipal re-docks itself
+- **Follows the foreground app** — switch windows and OpenPipal re-docks itself; switch it off
+  for one app or for all of them under **Settings → Apps**
+- **Mold an agent of your own** — tell it once how you like things done and that work is its
+  from then on; give it a face with the avatar editor. Start from the **My Agents** page, or
+  turn any conversation into one with **Save as Agent**
+- **Use it from your editor** — any editor that speaks the open
+  [Agent Client Protocol](https://agentclientprotocol.com) can point at OpenPipal as its agent
+  server. The adapter ships inside the app; the launch command is under **Settings →
+  Connections**, next to a local HTTP interface for any other program
 - **Visualizer** — the model renders cards, charts, whiteboards and Mermaid diagrams live
-- **Skills** — bundled capabilities for documents, PDFs, slides and spreadsheets, plus
-  a skill creator and a tool installer; import your own from a folder or a GitHub repo
+- **Skills** — type `/` in the composer to use one. Bundled: documents, PDFs, slides and
+  spreadsheets, plus a skill creator and a tool installer; import your own from a folder or a
+  GitHub repo
 - **Long-term memory** — per-agent, opt-in, stored as plain Markdown you can read and edit
 - **MCP** — connect any Model Context Protocol server; Context7 and DeepWiki ship as presets
 - **Browser side panel** — the same assistant, inside the browser
-- **Coding Assistant** — a second built-in agent that works inside your repository (below)
+- **Design Assistant** — turns a brief into finished posters, slides and other visual
+  deliverables, then keeps editing them with you
+- **Coding Assistant** — the built-in agent that works inside your repository (below)
 
 ### Coding Assistant
 
@@ -186,8 +207,13 @@ transports.
 
 ## FAQ
 
-**macOS says it can't verify the developer.** Right-click → Open instead of double-clicking,
-then confirm. Once per install.
+**macOS says it can't verify the developer.** Since macOS 15, right-click → Open no longer
+helps. Use **System Settings → Privacy & Security → Open Anyway**, or the `xattr` command from
+the install steps. Once per install.
+
+**Can I change the interface language?** Yes — **Settings → Appearance → Language** switches
+between English and Simplified Chinese, or follows the system (the default). It takes effect
+immediately.
 
 **Is it free?** The app is. Model usage is billed by your provider directly to you; OpenPipal
 never sees the money or the key.

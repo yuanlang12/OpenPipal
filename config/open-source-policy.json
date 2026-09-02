@@ -665,6 +665,18 @@
         "reviewed-baseline-default"
       ],
       "note": "编码助手评测台，随发行（所有者 2026-09-01 决定）：tests/bench/** 是 SWE-bench 与影子运行两套评测的脚本（题库准备、标准答案闸门、泄题体检、判分、跑批、报表），tests/e2e 里的 shadow-run / swebench-* / bench-arms 是它们的 Playwright 驱动，docs/claude/bench-handoff.md 是交接文档（三轮 24 次运行的逐题实数与「判据绑作者实现选择」的实证）。与已发行的 scripts/qa/**、docs/claude/** 同一性质：过程物里可复现的那一部分。已核查这 24 份：无密钥；无内置端点（出现的 URL 只有 github / registry.npmjs.org / huggingface 数据集接口 / pi.dev）；无个人路径（数据目录一律写成 `~/openpipal-bench`）；shadow_leakcheck.py 里的品牌词表是泄题体检的白名单，bench-handoff.md 里提到的模型名是评测结果的事实记录。脚本只依赖系统 python3 与仓库自身的单测，无第三方依赖；评测数据（题面、结果）本身不在仓库里。"
+    },
+    {
+      "id": "publish-readme-screenshots",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "docs/readme/**"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ],
+      "note": "公开 README 的首图（中英各一张）：公开构建在隔离配置下停靠在演示用 VS Code 旁的欢迎页截图，2026-09-02 拍。画面只有 express 开源仓库和欢迎页，不含任何密钥、内置模型名或私有数据；README.public*.md 引用它们，所以随发行走。"
     }
   ],
   "classificationOnly": true,
