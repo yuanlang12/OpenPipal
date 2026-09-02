@@ -30,14 +30,12 @@ Nothing is proxied through an OpenPipal server, because there isn't one.
 
 This repository carries three built-in agents: the **default OpenPipal Agent**, the **Design Assistant** and the **Coding Assistant**.
 
-The published tree is cut from our working repository by
-[`scripts/make-open-source-cut.mjs`](scripts/make-open-source-cut.mjs), driven by
-[`config/open-source-policy.json`](config/open-source-policy.json). Every excluded path is
-listed in `OPEN-SOURCE-CUT.json` — the cut is reproducible, not hand-curated.
-
 ---
 
 ## Install
+
+**macOS only for now.** Windows support is planned; until then, forking and adapting the code
+yourself is welcome.
 
 ### Desktop
 
@@ -234,8 +232,8 @@ never sees the money or the key.
 **Can I run a local model?** Yes — point the Base URL at `http://localhost:11434/v1` for
 Ollama and use whatever model you've pulled.
 
-**Windows or Linux?** Not planned for now. The app leans on macOS window, permission and
-sandbox APIs.
+**Windows or Linux?** macOS only for now. Windows support is on the roadmap; the code is
+Apache-2.0, so forking and adapting it yourself is welcome too.
 
 **The extension does nothing.** Make sure the desktop app is running; the extension needs it
 on `localhost:3031`.

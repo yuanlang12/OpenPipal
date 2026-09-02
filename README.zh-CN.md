@@ -28,13 +28,11 @@
 
 本仓库附带三个内置 Agent：**默认 OpenPipal Agent**、**设计助手**和**编码助手**。
 
-公开树由 [`scripts/make-open-source-cut.mjs`](scripts/make-open-source-cut.mjs) 依据
-[`config/open-source-policy.json`](config/open-source-policy.json) 从我们的工作仓库裁出。
-被裁掉的每一条路径都列在 `OPEN-SOURCE-CUT.json` 里——这份裁剪是可复现的，不是手工挑的。
-
 ---
 
 ## 安装
+
+**目前只有 macOS 客户端。** Windows 后续支持，等不及的也可以 fork 后自行适配。
 
 ### 桌面端
 
@@ -203,7 +201,7 @@ npx playwright test                      # 端到端
 
 **能跑本地模型吗？** 能。Base URL 填 `http://localhost:11434/v1` 接 Ollama，模型名填你拉过的。
 
-**Windows / Linux？** 暂无计划。App 依赖 macOS 的窗口、权限和沙箱 API。
+**Windows / Linux？** 目前只有 macOS 客户端，Windows 在后续计划里；代码是 Apache-2.0，等不及的可以 fork 后自行适配。
 
 **扩展没反应。** 确认桌面端在运行，扩展需要它监听 `localhost:3031`。
 

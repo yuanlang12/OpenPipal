@@ -85,7 +85,7 @@ for (const mod of roleModules) {
     ` * 本发行版不含${mod.what}。`,
     ' *',
     ' * 发行裁剪脚本（scripts/make-open-source-cut.mjs）把本文件换成空实现，',
-    ' * role-manager 的组合处因此一行不用改。裁掉的理由见同树 OPEN-SOURCE-CUT.json',
+    ' * role-manager 的组合处因此一行不用改。',
     ' * 与 config/open-source-policy.json 里对应的规则。',
     ' */',
     "import type { RoleConfig } from '../role-manager'",
@@ -112,7 +112,7 @@ if (existsSync(dcRuntimePath)) {
   const stubbed = src.replace(importRe, (line, name, rel) => {
     if (existsSync(join(args.outDir, rel))) return line
     stubbedNames.push(name)
-    return `const ${name} = '' // 本发行版不含 ${rel.replace('resources/dc-runtime/', '')}，见 OPEN-SOURCE-CUT.json`
+    return `const ${name} = '' // 本发行版不含 ${rel.replace('resources/dc-runtime/', '')}`
   })
   writeFileSync(dcRuntimePath, stubbed, 'utf8')
   seams.push(stubbedNames.length
@@ -220,7 +220,8 @@ const manifest = {
   droppedByRule: Object.fromEntries([...dropped].map(([k, v]) => [k, v.length])),
   seams
 }
-writeFileSync(join(args.outDir, 'OPEN-SOURCE-CUT.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8')
+// 裁剪清单是内部记录（所有者 2026-09-02 决定不随公开树发行），写在公开树旁边而不是里面。
+writeFileSync(join(dirname(args.outDir), 'OPEN-SOURCE-CUT.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8')
 
 console.log(JSON.stringify(manifest, null, 2))
 console.log('\n公开树: ' + args.outDir)
