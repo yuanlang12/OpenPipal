@@ -30,10 +30,6 @@ Nothing is proxied through an OpenPipal server, because there isn't one.
 
 This repository carries three built-in agents: the **default OpenPipal Agent**, the **Design Assistant** and the **Coding Assistant**.
 
-Four further built-in agents (Learner, Teacher, Office, Interpreter) are not part of this
-open-source release. Custom agents, skills, MCP servers, memory and the browser extension are
-all unaffected.
-
 The published tree is cut from our working repository by
 [`scripts/make-open-source-cut.mjs`](scripts/make-open-source-cut.mjs), driven by
 [`config/open-source-policy.json`](config/open-source-policy.json). Every excluded path is
@@ -251,6 +247,8 @@ on `localhost:3031`.
 Bug reports and ideas are welcome in [Issues](https://github.com/yuanlang12/OpenPipal/issues).
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and
 [SECURITY.md](SECURITY.md) for how to report a vulnerability privately.
+
+We're also on the [LINUX DO](https://linux.do) community — come say hello there.
 
 ---
 

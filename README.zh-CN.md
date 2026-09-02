@@ -28,9 +28,6 @@
 
 本仓库附带三个内置 Agent：**默认 OpenPipal Agent**、**设计助手**和**编码助手**。
 
-另外四个内置 Agent（学习助手、教学助手、办公、同传）不在本次开源发行内。自定义
-Agent、技能、MCP、记忆和浏览器扩展都不受影响。
-
 公开树由 [`scripts/make-open-source-cut.mjs`](scripts/make-open-source-cut.mjs) 依据
 [`config/open-source-policy.json`](config/open-source-policy.json) 从我们的工作仓库裁出。
 被裁掉的每一条路径都列在 `OPEN-SOURCE-CUT.json` 里——这份裁剪是可复现的，不是手工挑的。
@@ -217,6 +214,8 @@ npx playwright test                      # 端到端
 Bug 和想法欢迎提到 [Issues](https://github.com/yuanlang12/OpenPipal/issues)。
 提 PR 前请看 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题的私下报告方式见
 [SECURITY.md](SECURITY.md)。
+
+我们也在 [LINUX DO](https://linux.do) 社区，欢迎过去聊。
 
 ---
 
