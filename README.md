@@ -1,12 +1,12 @@
 # OpenPipal
 
-> Open-source visual Agent app for macOS. No terminal required — connect a model and start.
+> Open-source visual Agent client built on the [Pi](https://github.com/earendil-works/pi) agent framework. No terminal required — connect a model and start.
 
 <p align="center">
   <a href="https://github.com/yuanlang12/OpenPipal/releases/latest">
     <img src="https://img.shields.io/github/v/release/yuanlang12/OpenPipal?label=download&color=14b8a6" alt="Download" />
   </a>
-  <img src="https://img.shields.io/badge/platform-macOS-1c1917" alt="macOS" />
+  <a href="https://github.com/earendil-works/pi"><img src="https://img.shields.io/badge/built%20on-Pi%20agent%20framework-1c1917" alt="Built on the Pi agent framework" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-14b8a6" alt="Apache-2.0" /></a>
 </p>
 
@@ -20,7 +20,13 @@ For every job, a dedicated Agent. Tell OpenPipal once how a piece of work should
 it becomes an Agent with its own instructions, memory, skills and tasks — ready the next time
 you need it, or running on a schedule while you're not there.
 
-**It ships no model of its own.** Every request goes straight from your Mac to an
+Under the hood, OpenPipal is a minimal Agent client built on the open-source
+[Pi](https://github.com/earendil-works/pi) agent framework. Pi runs the agent loop; OpenPipal
+gives it a visual home — saved Agents, plugins, automation, memory and a browser side panel —
+and everything it plugs into is an open standard: Agent Client Protocol, MCP, Agent Skills and
+Agent Plugins.
+
+**It ships no model of its own.** Every request goes straight from your machine to an
 OpenAI-compatible endpoint that you configure — your key, your provider, your bill.
 Nothing is proxied through an OpenPipal server, because there isn't one.
 
@@ -106,7 +112,7 @@ Anything that speaks the OpenAI-compatible protocol works. Presets included:
   (`plugin.json` + Skills + MCP servers); the bundled Skills cover documents, PDFs, slides and
   spreadsheets, plus a skill creator and a tool installer (type `/` in the composer to use
   one); any Model Context Protocol server connects, with Context7 and DeepWiki as presets; and
-  the command-line tools already on your Mac, such as `gh`, `node` and `npm`, are available
+  the command-line tools already on your machine, such as `gh`, `node` and `npm`, are available
   as tools.
 - **Automation** — run a task once, or keep it running on a cron-style schedule or a webhook,
   each run in a fresh conversation or accumulating in one.
@@ -126,10 +132,8 @@ Anything that speaks the OpenAI-compatible protocol works. Presets included:
 - **App following, if you want it** — off by default. Turn it on under **Settings → Apps** and
   OpenPipal docks itself beside whatever app you switch to; you can leave individual apps out.
 
-Keep the model at the center; add complexity only when needed. OpenPipal is a minimal Agent
-core built on the open-source Pi agent framework, with controlled context and only the tools
-the work actually needs — and everything it plugs into is an open standard: ACP, MCP, Agent
-Skills and Agent Plugins.
+Keep the model at the center; add complexity only when needed — a controlled context, and only
+the tools the work actually needs.
 
 ### Coding Assistant
 

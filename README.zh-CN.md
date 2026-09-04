@@ -1,12 +1,12 @@
 # OpenPipal
 
-> 开源可视化 macOS Agent App · 无需命令行 · 连接模型即可开始
+> 基于 [Pi](https://github.com/earendil-works/pi) 框架的开源可视化 Agent 客户端 · 无需命令行 · 连接模型即可开始
 
 <p align="center">
   <a href="https://github.com/yuanlang12/OpenPipal/releases/latest">
     <img src="https://img.shields.io/github/v/release/yuanlang12/OpenPipal?label=download&color=14b8a6" alt="Download" />
   </a>
-  <img src="https://img.shields.io/badge/platform-macOS-1c1917" alt="macOS" />
+  <a href="https://github.com/earendil-works/pi"><img src="https://img.shields.io/badge/built%20on-Pi%20agent%20framework-1c1917" alt="Built on the Pi agent framework" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-14b8a6" alt="Apache-2.0" /></a>
 </p>
 
@@ -19,7 +19,11 @@
 为每一项工作，定制一个 Agent。把一件活儿该怎么做教给 OpenPipal 一次，它就成了一个有自己
 指令、记忆、技能和任务的 Agent——下次直接用，或者按计划在你不在的时候自己跑。
 
-**它不自带任何模型。** 每一次请求都从你的 Mac 直接发往你自己配置的 OpenAI 兼容端点：
+底层上，OpenPipal 是基于开源 [Pi](https://github.com/earendil-works/pi) Agent 框架的极简 Agent
+客户端：Pi 负责跑 Agent 循环，OpenPipal 给它一个可视化的家——可保存复用的 Agent、插件、自动化、
+记忆和浏览器侧栏；它接入的一切都是开放标准：Agent Client Protocol、MCP、Agent Skills、Agent Plugins。
+
+**它不自带任何模型。** 每一次请求都从你自己的电脑直接发往你自己配置的 OpenAI 兼容端点：
 你的密钥、你的服务商、你的账单。中间没有 OpenPipal 的服务器，因为根本就没有。
 
 ---
@@ -95,7 +99,7 @@
 - **插件、技能、MCP 和命令行工具**——用标准插件（`plugin.json` + 技能 + MCP 服务器）扩展
   Agent；内置技能覆盖文档、PDF、幻灯片、表格，外加技能创建器和工具安装器，输入框里打 `/`
   就能用；任意 Model Context Protocol 服务器都能接，Context7 和 DeepWiki 是内置预设；你
-  Mac 上已经装好的命令行工具，比如 `gh`、`node`、`npm`，也能当工具用。
+  电脑上已经装好的命令行工具，比如 `gh`、`node`、`npm`，也能当工具用。
 - **自动化**——运行一次，或让它持续工作：Cron 式定时或 Webhook 触发，每次新建会话或持续
   累积到同一会话。
 - **子 Agent**——一项任务可以拆给多个子 Agent 去做，每个子 Agent 的完整对话都能展开查看。
@@ -111,8 +115,7 @@
 - **应用跟随，想要再开**——默认关闭。在 **设置 → 应用** 里打开后，你切到哪个应用，OpenPipal
   就贴到它旁边；不想跟的应用可以单独关掉。
 
-让模型成为核心，复杂按需出现。OpenPipal 是基于开源 Pi 框架的极简 Agent 核心：可控的上下文、
-只带这项工作真正需要的工具；它接入的一切都是开放标准——ACP、MCP、Agent Skills、Agent Plugins。
+让模型成为核心，复杂按需出现：可控的上下文，只带这项工作真正需要的工具。
 
 ### 编码助手
 
