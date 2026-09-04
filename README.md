@@ -38,6 +38,62 @@ This repository carries three built-in agents: the **default OpenPipal Agent**, 
 
 ---
 
+## What it does
+
+- **Dedicated Agents** — save any conversation as an Agent with **Save as Agent**, or build
+  one on the **My Agents** page: its own instructions, look, memory and tasks. One job, one
+  Agent.
+- **Plugins, Skills, MCP and CLI tools** — extend an Agent with standard plugins
+  (`plugin.json` + Skills + MCP servers); the bundled Skills cover documents, PDFs, slides and
+  spreadsheets, plus a skill creator and a tool installer (type `/` in the composer to use
+  one); any Model Context Protocol server connects, with Context7 and DeepWiki as presets; and
+  the command-line tools already on your machine, such as `gh`, `node` and `npm`, are available
+  as tools.
+- **Automation** — run a task once, or keep it running on a cron-style schedule or a webhook,
+  each run in a fresh conversation or accumulating in one.
+- **Subagents** — an Agent can split a job across Subagents, and each Subagent's conversation
+  can be expanded to see exactly what it did.
+- **Works** — everything Agents produce, collected in one place; the Visualizer renders cards,
+  charts, whiteboards and Mermaid diagrams live as the model writes them.
+- **Long-term memory** — per-agent, opt-in, stored as plain Markdown you can read and edit.
+- **Design it once, reuse it everywhere** — any editor that speaks the open
+  [Agent Client Protocol](https://agentclientprotocol.com) can point at OpenPipal as its agent
+  server (the adapter ships inside the app; the launch command is under **Settings →
+  Connections**), and any other program gets a local HTTP interface.
+- **Browser side panel** — the same assistant, inside Chrome, Edge or Brave.
+- **Design Assistant** — turns a brief into finished posters, slides and other visual
+  deliverables, then keeps editing them with you.
+- **Coding Assistant** — the built-in agent that works inside your repository (below).
+- **App following, if you want it** — off by default. Turn it on under **Settings → Apps** and
+  OpenPipal docks itself beside whatever app you switch to; you can leave individual apps out.
+
+Keep the model at the center; add complexity only when needed — a controlled context, and only
+the tools the work actually needs.
+
+### Coding Assistant
+
+Switch to **Coding Assistant** in the agent picker and it asks one question first: which
+repository are we working in? From there it behaves like a careful new hire rather than a
+know-it-all:
+
+- **Reads the project's own rules before touching code.** `AGENTS.md` (the open standard that
+  Codex, Cursor, Amp and Jules read too), `AGENTS.override.md` or `CLAUDE.md` in the working
+  directory goes straight into its context. A repository with none gets an `AGENTS.md` drafted
+  from commands it has actually run — shown to you before anything is written.
+- **Precise edits, then the project's own tests and build** — never a whole-file rewrite.
+- **You decide how much it may do, per conversation.** *Read only* looks and never changes
+  (reads code, searches, browses — no writing files, no running commands). *Ask when needed*
+  is the default and asks once before changing a file or running a command. *Allow all* stops
+  asking for edits and commands; deleting, resetting and force-pushing still ask once.
+- **Commands run inside a macOS sandbox** (Seatbelt, via `@anthropic-ai/sandbox-runtime`)
+  confined to the working directory, with credential files unreadable. Before it uses your git
+  credentials against a remote it asks once per project; inside the sandbox remotes are reached
+  over HTTPS.
+- **An error screenshot and a reference folder** can be attached up front — the stack trace
+  from your terminal, or a second repository it may read but not modify.
+
+---
+
 ## Install
 
 **macOS only for now.** Windows support is planned; until then, forking and adapting the code
@@ -100,62 +156,6 @@ Anything that speaks the OpenAI-compatible protocol works. Presets included:
 | OpenRouter | `https://openrouter.ai/api/v1` | `anthropic/claude-sonnet-4` |
 | SiliconFlow | `https://api.siliconflow.cn/v1` | `Qwen/Qwen2.5-72B-Instruct` |
 | Ollama (local) | `http://localhost:11434/v1` | whatever you've pulled |
-
----
-
-## What it does
-
-- **Dedicated Agents** — save any conversation as an Agent with **Save as Agent**, or build
-  one on the **My Agents** page: its own instructions, look, memory and tasks. One job, one
-  Agent.
-- **Plugins, Skills, MCP and CLI tools** — extend an Agent with standard plugins
-  (`plugin.json` + Skills + MCP servers); the bundled Skills cover documents, PDFs, slides and
-  spreadsheets, plus a skill creator and a tool installer (type `/` in the composer to use
-  one); any Model Context Protocol server connects, with Context7 and DeepWiki as presets; and
-  the command-line tools already on your machine, such as `gh`, `node` and `npm`, are available
-  as tools.
-- **Automation** — run a task once, or keep it running on a cron-style schedule or a webhook,
-  each run in a fresh conversation or accumulating in one.
-- **Subagents** — an Agent can split a job across Subagents, and each Subagent's conversation
-  can be expanded to see exactly what it did.
-- **Works** — everything Agents produce, collected in one place; the Visualizer renders cards,
-  charts, whiteboards and Mermaid diagrams live as the model writes them.
-- **Long-term memory** — per-agent, opt-in, stored as plain Markdown you can read and edit.
-- **Design it once, reuse it everywhere** — any editor that speaks the open
-  [Agent Client Protocol](https://agentclientprotocol.com) can point at OpenPipal as its agent
-  server (the adapter ships inside the app; the launch command is under **Settings →
-  Connections**), and any other program gets a local HTTP interface.
-- **Browser side panel** — the same assistant, inside Chrome, Edge or Brave.
-- **Design Assistant** — turns a brief into finished posters, slides and other visual
-  deliverables, then keeps editing them with you.
-- **Coding Assistant** — the built-in agent that works inside your repository (below).
-- **App following, if you want it** — off by default. Turn it on under **Settings → Apps** and
-  OpenPipal docks itself beside whatever app you switch to; you can leave individual apps out.
-
-Keep the model at the center; add complexity only when needed — a controlled context, and only
-the tools the work actually needs.
-
-### Coding Assistant
-
-Switch to **Coding Assistant** in the agent picker and it asks one question first: which
-repository are we working in? From there it behaves like a careful new hire rather than a
-know-it-all:
-
-- **Reads the project's own rules before touching code.** `AGENTS.md` (the open standard that
-  Codex, Cursor, Amp and Jules read too), `AGENTS.override.md` or `CLAUDE.md` in the working
-  directory goes straight into its context. A repository with none gets an `AGENTS.md` drafted
-  from commands it has actually run — shown to you before anything is written.
-- **Precise edits, then the project's own tests and build** — never a whole-file rewrite.
-- **You decide how much it may do, per conversation.** *Read only* looks and never changes
-  (reads code, searches, browses — no writing files, no running commands). *Ask when needed*
-  is the default and asks once before changing a file or running a command. *Allow all* stops
-  asking for edits and commands; deleting, resetting and force-pushing still ask once.
-- **Commands run inside a macOS sandbox** (Seatbelt, via `@anthropic-ai/sandbox-runtime`)
-  confined to the working directory, with credential files unreadable. Before it uses your git
-  credentials against a remote it asks once per project; inside the sandbox remotes are reached
-  over HTTPS.
-- **An error screenshot and a reference folder** can be attached up front — the stack trace
-  from your terminal, or a second repository it may read but not modify.
 
 ---
 
