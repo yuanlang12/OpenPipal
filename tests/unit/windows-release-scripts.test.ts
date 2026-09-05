@@ -129,4 +129,12 @@ describe('evaluateWindowsPackage', () => {
     pkg.asarEntries = pkg.asarEntries.filter(entry => entry !== '/out/main/index.js')
     expect(evaluateWindowsPackage(pkg).findings.some(f => f.code === 'APP_ENTRY_MISSING')).toBe(true)
   })
+
+  it('Windows 上 listPackage 给的是反斜杠路径（\\out\\main\\index.js）：一样认，不许判成"缺一切"', () => {
+    const pkg = goodPackage('x64')
+    pkg.asarEntries = pkg.asarEntries.map(entry => entry.slice(1).split('/').join('\\'))
+    const report = evaluateWindowsPackage(pkg)
+    expect(report.verdict).toBe('PASS')
+    expect(report.findings.filter(f => f.level === 'error')).toEqual([])
+  })
 })

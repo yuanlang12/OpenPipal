@@ -96,7 +96,12 @@ export function evaluateWindowsPackage({ arch, version, asarEntries, resourcesEn
   const findings = []
   const error = (code, detail) => findings.push({ level: 'error', code, detail })
   const warn = (code, detail) => findings.push({ level: 'warn', code, detail })
-  const asar = new Set(asarEntries.map(entry => (entry.startsWith('/') ? entry : `/${entry}`)))
+  // @electron/asar 的 listPackage 用 path.join 拼路径：在 Windows 上给的是 \out\main\index.js，
+  // 在 Mac 上是 /out/main/index.js。统一成 posix 再比（2026-09-05 CI 首跑：Windows 上判"asar 缺一切"）。
+  const asar = new Set(asarEntries.map(entry => {
+    const posix = entry.split('\\').join('/')
+    return posix.startsWith('/') ? posix : `/${posix}`
+  }))
   const resources = new Set(resourcesEntries)
   const has = entry => asar.has(entry)
 
