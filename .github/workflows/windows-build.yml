@@ -1,0 +1,75 @@
+# Windows 安装包在 Windows 机器上原生打（x64 与 arm64 各一台）。
+#
+# 为什么不在 Mac 上交叉打正式包：node_modules 里只有当前平台的原生二进制，esbuild / sharp /
+# @napi-rs/canvas 的 win32 变体要靠 `npm ci` 在 Windows 上现场装。scripts/build-windows.mjs 能在
+# Mac 上把这些包临时塞进去应急，但发布物以这里为准。
+#
+# 首发不签名：electron-builder 找不到证书就跳过签名（CSC_IDENTITY_AUTO_DISCOVERY=false 明确说不找）。
+# 用户第一次运行会看到 SmartScreen 的提示，README 里写了怎么过。
+name: Windows build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: win32-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+          - os: windows-11-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix openpipal-acp ci
+
+      - name: Type-check
+        run: |
+          npx tsc --noEmit -p tsconfig.node.json
+          npx tsc --noEmit -p tsconfig.web.json
+
+      # 单测在 Windows 运行时跑一遍，是 Windows 分支第一份真机证据。套件里还有按 POSIX 写死的用例，
+      # 在套件对 Windows 干净之前先不拦发布——报告照样上传，红了要看。
+      - name: Unit tests on Windows (informational)
+        run: npx vitest run --reporter=default --reporter=junit --outputFile=dist/vitest-windows-${{ matrix.arch }}.xml
+        continue-on-error: true
+
+      # 显式传架构：electron-builder.yml 的 win.target 不写 arch，CLI 说打哪个就打哪个
+      # （node_modules 里只有本 runner 架构的 win32 原生包，打另一个架构就是坏包）。
+      - name: Build installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run build:win -- --${{ matrix.arch }}
+
+      - name: Factory check
+        run: node scripts/verify-windows-release.mjs --dist dist --arch ${{ matrix.arch }} --json dist/windows-release-report-${{ matrix.arch }}.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openpipal-windows-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/windows-release-report-*.json
+            dist/vitest-windows-*.xml

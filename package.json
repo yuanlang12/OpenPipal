@@ -19,6 +19,9 @@
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && npm run build:acp && electron-builder --dir",
     "build:mac": "npm run build && npm run build:acp && electron-builder --mac",
+    "build:win": "npm run build && npm run build:acp && electron-builder --win",
+    "build:win:cross": "node scripts/build-windows.mjs",
+    "release:verify-windows": "node scripts/verify-windows-release.mjs",
     "lint": "eslint src",
     "pretest:unit": "npm run electron:install",
     "test:unit": "vitest run",
@@ -40,7 +43,7 @@
     "protobufjs": "^8.6.0",
     "quickjs-emscripten": "^0.32.0",
     "react-i18next": "17.0.11",
-    "sharp": "^0.33.5",
+    "sharp": "^0.35.4",
     "typescript": "^5.7.2",
     "ws": "^8.20.0",
     "yaml": "2.9.0"

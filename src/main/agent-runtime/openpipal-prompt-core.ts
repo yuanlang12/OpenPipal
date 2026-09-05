@@ -24,6 +24,16 @@ function escapeXml(value: string): string {
 }
 
 /**
+ * Windows 上把 shell 的形状说清楚：`bash` 是 Git Bash（POSIX 写法、盘符 /c/…），Windows 原生的
+ * cmdlet / 注册表 / 服务走 `powershell`；这台机器没有 OS 沙箱。macOS / Linux 一个字不加——那里的
+ * 提示词与此前逐字节相同。这是事实陈述不是纪律：模型不知道自己跑在哪个系统上，缺的是数据。
+ */
+export function platformShellNote(platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return ''
+  return '\n运行环境：Windows。`bash` 工具跑的是 Git Bash（POSIX 写法，盘符写成 /c/…）；Windows 原生命令（cmdlet、注册表、服务、.ps1）用 `powershell` 工具。这台机器没有系统沙箱，命令以用户的账号权限直接执行——不要碰凭据文件，删除类操作先说明再做。'
+}
+
+/**
  * `workingDir` 必须传**运行时真正会用的那个目录**（resolveOpenPipalWorkingDirectory 的结果），
  * 不是在这里现推的默认值。原来两个分支各自拼默认路径，于是用户在会话里选了仓库之后，
  * 提示词还在说工作目录是 Agent 自己的草稿区——模型照着这句话去找文件，找不到。
@@ -64,7 +74,7 @@ updated: 2025-01-01T00:00:00.000Z
 ## 你的工作空间
 
 位置：\`${agentDir}\`
-工作目录：\`${workspaceDir}\`（你的 bash/代码执行都在这个目录下运行，安装依赖也在这里）
+工作目录：\`${workspaceDir}\`（你的 bash/代码执行都在这个目录下运行，安装依赖也在这里）${platformShellNote()}
 
 \`\`\`
 ${agentDir}
@@ -98,7 +108,7 @@ ${memoryFormat}${meMdSection}
 ## 你的工作空间
 
 位置：\`${home}/.openpipal/\`
-工作目录：\`${workingDir}\`（你的 bash/代码执行都在这个目录下运行，安装依赖也在这里）
+工作目录：\`${workingDir}\`（你的 bash/代码执行都在这个目录下运行，安装依赖也在这里）${platformShellNote()}
 
 \`\`\`
 ${home}/.openpipal/

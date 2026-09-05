@@ -163,6 +163,10 @@ interface OpenPipalAPI {
   getCurrentRole: () => Promise<RoleInfo>
   switchRole: (roleName: string) => Promise<RoleInfo | null>
   // 设置
+  /** Windows 自绘窗口按钮与不透明窗底色对齐；浏览器插件的 shim 没有这三个，调用方用可选调用 */
+  minimizeWindow?: () => Promise<void>
+  hideWindow?: () => Promise<void>
+  setWindowBackground?: (variant: 'light' | 'dark') => Promise<{ ok: true; applied: boolean }>
   getAppSettings: () => Promise<AppSettingsState>
   setAppFollowingEnabled: (enabled: boolean) => Promise<AppFollowingUpdateResult>
   setDisabledApps: (apps: string[]) => Promise<{ ok: true }>

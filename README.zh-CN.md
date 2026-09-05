@@ -79,9 +79,10 @@
 
 ## 安装
 
-**目前只有 macOS 客户端。** Windows 后续支持，等不及的也可以 fork 后自行适配。
+桌面端提供 **macOS**（Apple Silicon 与 Intel）和 **Windows 10/11**（x64 与 ARM64）两个版本。
+Windows 版是后来的那个，还没有代码签名，*Windows* 一节写了这在实际使用里意味着什么。
 
-### 桌面端
+### macOS
 
 1. 到 [Releases](https://github.com/yuanlang12/OpenPipal/releases/latest) 下载对应你 Mac 的
    `.dmg`（Apple Silicon 与 Intel 分开构建），把 `OpenPipal.app` 拖进 `Applications`。
@@ -105,11 +106,29 @@
    macOS 是按代码签名认 App 的，而临时签名每打一次包就变一次。所以装了新版之后，旧的授权
    条目可能失效，得删掉重新勾一遍。等有了公证版本，这道手续就没了。
 
-4. 进 **设置 → 模型**，点**添加服务商**填 Base URL 和 API Key，再在它下面**添加模型**填模型名。
-   **测试连接**当场告诉你这一对通不通。
+### Windows
+
+1. 到 [Releases](https://github.com/yuanlang12/OpenPipal/releases/latest) 下载
+   `openpipal-<版本>-x64-setup.exe`（骁龙 / ARM 电脑下 `-arm64-` 那个），运行。
+2. **SmartScreen 会拦一下。** 安装包没有代码签名，Windows 会提示"Windows 已保护你的电脑"。
+   点**更多信息 → 仍要运行**。每次安装做一次就好。
+3. **想让它跑命令，先装 [Git for Windows](https://git-scm.com/download/win)。** `bash` 工具
+   用的是 Git Bash，和 Pi 命令行在 Windows 上一样。Windows 原生的活（cmdlet、注册表、`.ps1`
+   脚本）走另一个 `powershell` 工具，不需要装任何东西。
+4. **Windows 上没有系统沙箱。** macOS 上每条命令都在 Seatbelt 里跑，Windows 没有对应物，所以
+   OpenPipal 会在每条命令前问你，并明说它将以你的账号权限执行；命令里写明了凭据文件
+   （`.ssh`、`.aws`、`.env`、它自己的 `config.json`……）会被直接拒绝。"完全允许"档不再问普通
+   命令，但删除、改写历史、强推这些照样问。
+5. 应用跟随、窗口截图、粘贴到应用在 Windows 上不需要任何权限弹窗。面板是不透明的，不是磨砂
+   玻璃：Windows 会在窗口失焦的那一刻把半透明窗口变成实色，而贴靠中的面板多数时间是失焦的。
+
+### 接上模型
+
+进 **设置 → 模型**，点**添加服务商**填 Base URL 和 API Key，再在它下面**添加模型**填模型名。
+**测试连接**当场告诉你这一对通不通。
 
 第一次启动会先放一段三屏的新手引导，可以跳过，之后随时能在 **设置 → 关于** 里重看。它只演示
-能做什么，不替你配置任何东西，模型还是得按第 4 步接上。
+能做什么，不替你配置任何东西，模型还是得按上面那步接上。
 
 ### 浏览器扩展（可选）
 
@@ -153,7 +172,7 @@ API Key 存在本机的 `config.json` 里，不会上传。删掉 `~/.openpipal/
 
 ## 从源码构建
 
-需要 macOS、Node.js 22.19+ 和 npm。
+需要 macOS 或 Windows、Node.js 22.19+ 和 npm。Windows 上在 PowerShell 或 Git Bash 里敲这些命令。
 
 ```bash
 npm ci
@@ -170,8 +189,11 @@ npx vitest run                           # 单元测试
 npx playwright test                      # 端到端
 ```
 
-`npm run dev` 是常用的热重载开发模式。打包用
-`npx electron-builder --config electron-builder.yml`——注意这样出来的包未签名、未公证。
+`npm run dev` 是常用的热重载开发模式。打包在 Mac 上用 `npm run build:mac`，在 Windows 上用
+`npm run build:win`——这样出来的包未签名、未公证。Windows 安装包由 GitHub Actions 的
+`Windows build` 工作流在 Windows 机器上原生打（x64 与 ARM64 各一台）；在 Mac 上直接打 Windows 包
+只会带上 Mac 的原生二进制，除非走 `npm run build:win:cross`，它会先把 esbuild、sharp、canvas 的
+`win32` 变体放进去。`npm run release:verify-windows -- --dist dist` 专门检查 Windows 包有没有犯这个错。
 
 ### 目录结构
 
@@ -204,7 +226,13 @@ npx playwright test                      # 端到端
 
 **能跑本地模型吗？** 能。Base URL 填 `http://localhost:11434/v1` 接 Ollama，模型名填你拉过的。
 
-**Windows / Linux？** 目前只有 macOS 客户端，Windows 在后续计划里；代码是 Apache-2.0，等不及的可以 fork 后自行适配。
+**Windows？** 有，见*安装*。和 macOS 是同一个应用，少了系统沙箱（命令改成逐条确认），也少了
+`read_screen`（读别的应用里选中的文字要靠 UI Automation，还没接）。ARM64 版还少一个 PDF 页面
+渲染器——它依赖的原生组件还没有 ARM64 版本——所以那类机器上 PDF 只按文字读。
+
+**SmartScreen 提示"Windows 已保护你的电脑"。** 未签名安装包的正常现象：**更多信息 → 仍要运行**。
+
+**Linux？** 没有构建也没有测过。代码是 Apache-2.0，欢迎 fork 后自行适配。
 
 **扩展没反应。** 确认桌面端在运行，扩展需要它监听 `localhost:3031`。
 

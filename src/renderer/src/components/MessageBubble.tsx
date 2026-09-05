@@ -360,8 +360,8 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
   if (isTool && (message.screenshot || message.screenshotRef)) return withAvatar(<ScreenshotCard message={message} />)
   if (isTool && message.searchResults) return withAvatar(<SearchResultCard message={message} />)
   if (isTool && message.toolName === 'generate_document') return withAvatar(<DocumentCard message={message} appName={appName} />)
-  // Pi 内置工具：bash 终端输出
-  if (isTool && message.toolName === 'bash') return withAvatar(<BashOutputCard message={message} />)
+  // Pi 内置工具：bash / powershell（仅 Windows）终端输出
+  if (isTool && (message.toolName === 'bash' || message.toolName === 'powershell')) return withAvatar(<BashOutputCard message={message} />)
   // 沙箱代码执行
   if (isTool && message.toolName === 'execute_code') return withAvatar(<CodeExecutionCard message={message} />)
   // Pi 内置工具：文件操作

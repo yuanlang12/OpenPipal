@@ -9,6 +9,7 @@ import type { SupportedLocale } from '../shared/i18n/contract'
 import { getLocaleState } from './locale-manager'
 import { renderBrowserNotificationHtml } from './browser-notification-html'
 import { isAppFollowingEnabled } from './app-follow-settings'
+import { disposeWin32ForegroundHelper } from './win32-foreground'
 
 export { renderBrowserNotificationHtml } from './browser-notification-html'
 
@@ -116,6 +117,8 @@ let currentConfig: TargetAppConfig = getTargetConfig(currentProcessName)
 
 // 当前追踪的窗口 bounds（用于截图时匹配）
 let trackedBounds: { x: number; y: number; width: number; height: number } | null = null
+// Windows：当前追踪窗口的句柄与进程（截图按 HWND 找 desktopCapturer 源，粘贴按它提前台）；macOS 为 null
+let trackedWindow: { handle: string; pid: number; title: string } | null = null
 
 // 拔出/独立模式
 let isUndocked = false
@@ -127,6 +130,8 @@ let undockedFromApp: string | null = null  // 脱出时的前台应用，避免�
 // 全屏 Space 之上；平时保持普通窗口行为，否则 app 无法成为前台应用（菜单栏不显示 OpenPipal）。
 let fsAuxOn: boolean | null = null
 function applyFullscreenAux(win: BrowserWindow, on: boolean): void {
+  // Space / FullScreenAuxiliary 是 macOS 概念，其他平台这个调用没有意义
+  if (process.platform !== 'darwin') return
   if (fsAuxOn === on) return
   fsAuxOn = on
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: on })
@@ -135,6 +140,11 @@ function applyFullscreenAux(win: BrowserWindow, on: boolean): void {
 
 export function getTrackedBounds() {
   return trackedBounds
+}
+
+/** Windows 专用：正在跟随的窗口句柄；macOS 或未连上时 null */
+export function getTrackedWindow(): { handle: string; pid: number; title: string } | null {
+  return trackedWindow
 }
 
 export function getCurrentProcessName(): string {
@@ -185,13 +195,14 @@ export function getEnvironmentSnapshot(): {
   }
 }
 
-export function setTargetProcess(processName: string): void {
+export function setTargetProcess(processName: string, displayName?: string): void {
   if (processName === currentProcessName) return
   currentProcessName = processName
-  currentConfig = getTargetConfig(processName)
+  currentConfig = getTargetConfig(processName, displayName)
   // 重置 bounds 追踪状态
   lastBoundsStr = ''
   trackedBounds = null
+  trackedWindow = null
   lastConnected = false
   lastFullscreen = null
 }
@@ -201,6 +212,7 @@ export async function getAppWindowIdByBounds(
   _processName: string,
   targetBounds: { x: number; y: number; width: number; height: number }
 ): Promise<number | null> {
+  if (process.platform !== 'darwin') return null // CGWindowList + swift 只有 macOS 有
   try {
     const { stdout } = await execFileAsync('swift', [
       '-e',
@@ -325,6 +337,12 @@ export function onAppChanged(callback: AppChangedCallback): void {
 
 export function startTracking(aiWindow: BrowserWindow): void {
   if (trackingInterval) return
+  if (process.platform !== 'darwin' && process.platform !== 'win32') {
+    // 前台窗口数据源只有 macOS（osascript）与 Windows（PowerShell 探针，见 win32-foreground.ts）两份。
+    // 别的平台不起轮询，否则每秒一次 ENOENT。
+    console.log('[OpenPipal] 应用跟随在当前平台暂不可用，跳过轮询')
+    return
+  }
 
   let polling = false
   const POLL_INTERVAL = 1000
@@ -400,7 +418,7 @@ export function startTracking(aiWindow: BrowserWindow): void {
           undockedFromApp = null
           lastBoundsStr = ''
           if (frontApp.processName !== currentProcessName) {
-            setTargetProcess(frontApp.processName)
+            setTargetProcess(frontApp.processName, frontApp.appName)
             appChangedCallback?.(frontApp.appName, currentConfig)
           }
           statusCallback?.({ connected: true, appName: currentConfig.displayName, windowTitle: currentConfig.displayName })
@@ -411,7 +429,7 @@ export function startTracking(aiWindow: BrowserWindow): void {
           lastConnected = true
         } else if (frontApp.processName !== currentProcessName) {
           const oldProcess = currentProcessName
-          setTargetProcess(frontApp.processName)
+          setTargetProcess(frontApp.processName, frontApp.appName)
           appChangedCallback?.(frontApp.appName, currentConfig)
           statusCallback?.({ connected: false, appName: currentConfig.displayName })
           console.log(`[OpenPipal] Target switched: ${oldProcess} → ${frontApp.processName}`)
@@ -430,6 +448,7 @@ export function startTracking(aiWindow: BrowserWindow): void {
           lastConnected = false
           lastFullscreen = null
           trackedBounds = null
+          trackedWindow = null
           statusCallback?.({ connected: false, appName: currentConfig.displayName })
           applyFullscreenAux(aiWindow, false)
         }
@@ -437,6 +456,9 @@ export function startTracking(aiWindow: BrowserWindow): void {
       }
 
       trackedBounds = appBounds
+      trackedWindow = frontApp.windowHandle
+        ? { handle: frontApp.windowHandle, pid: frontApp.pid ?? 0, title: frontApp.windowTitle ?? '' }
+        : null
       applyFullscreenAux(aiWindow, appBounds.isFullscreen === true)
       // Orb 模式(前台 app 全屏时主窗口缩成 72×72 圆球)已彻底移除——
       // 始终保持 dock 模式,前台 app 全屏时 openpipal 仍以原 dock 尺寸贴边。
@@ -469,7 +491,7 @@ export function startTracking(aiWindow: BrowserWindow): void {
         // 透明窗的投影是从 alpha mask 推导出来的,macOS 会缓存它;跟随过程中边界不断变,
         // 缓存不失效就会在新位置留下旧形状的残影。Electron 没有 invalidateShadow,
         // 翻一下 hasShadow 是通行的强制重算手法。
-        if (aiWindow.hasShadow()) { aiWindow.setHasShadow(false); aiWindow.setHasShadow(true) }
+        if (process.platform === 'darwin' && aiWindow.hasShadow()) { aiWindow.setHasShadow(false); aiWindow.setHasShadow(true) }
         // 读回实际 bounds，确认 macOS 没有 clamp 到更大尺寸（minWidth/minHeight 常见陷阱）
         const actualBounds = aiWindow.getBounds()
         const clamped =
@@ -492,4 +514,6 @@ export function stopTracking(): void {
     clearInterval(trackingInterval)
     trackingInterval = null
   }
+  // Windows 的探针是长驻子进程，轮询停了它也该收掉；macOS 上从未起过，是 no-op
+  disposeWin32ForegroundHelper()
 }

@@ -14,6 +14,8 @@ export function AppSettings() {
   const { theme, setTheme } = useAppStore()
   const [followingEnabled, setFollowingEnabled] = useState(true)
   const [detected, setDetected] = useState<string[]>([])
+  // 键 → 显示名（Windows：WINWORD → Microsoft Word）；没有条目就显示键
+  const [labels, setLabels] = useState<Record<string, string>>({})
   const [disabled, setDisabled] = useState<string[]>([])
   const [browsers, setBrowsers] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -32,6 +34,7 @@ export function AppSettings() {
         if (settingsEpoch.current !== epoch) return
         setFollowingEnabled(data.enabled)
         setDetected(data.detected)
+        setLabels(data.labels)
         setDisabled(data.disabled)
         setBrowsers(data.browsers)
       })
@@ -189,11 +192,13 @@ export function AppSettings() {
           <div className="space-y-1">
             {normalApps.map(app => (
               <div key={app} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-surface-50">
-                <span className="text-[13px] text-surface-700 min-w-0 break-words">{app}</span>
+                <span className="text-[13px] text-surface-700 min-w-0 break-words" title={labels[app] ? app : undefined}>
+                  {labels[app] ?? app}
+                </span>
                 <button
                   onClick={() => toggleApp(app)}
                   disabled={loading || !followingEnabled || saving}
-                  aria-label={t('settings.apps.following.toggleAria', { app })}
+                  aria-label={t('settings.apps.following.toggleAria', { app: labels[app] ?? app })}
                   aria-pressed={!disabled.includes(app)}
                   className={`w-9 h-5 rounded-full transition-colors relative disabled:cursor-not-allowed disabled:opacity-50 ${
                     disabled.includes(app) ? 'bg-surface-200' : 'bg-brand-500'

@@ -67,7 +67,28 @@ export const TOOL_RULES = `
 - 不编造工具结果、文件、标识符或已完成的操作。
 - 涉及不可逆修改、删除、发送或发布前，向用户确认。`
 
-export function getTargetConfig(processName: string): TargetAppConfig {
+/**
+ * Windows 上 exe 主文件名 → 内置 target 的键。macOS 的进程名就是应用名（"ClassIn"、"wpsoffice"），
+ * Windows 的 WPS 拆成三个 exe（wps 文字 / et 表格 / wpp 演示），都该套 wpsoffice 那份配置。
+ * 小写比较：Windows 文件名不分大小写，Get-Process 报回来的大小写随安装包走。
+ */
+const WINDOWS_PROCESS_ALIASES: Record<string, string> = {
+  wps: 'wpsoffice',
+  et: 'wpsoffice',
+  wpp: 'wpsoffice',
+  wpspdf: 'wpsoffice',
+  classin: 'ClassIn'
+}
+
+export function resolveWindowsTargetKey(exeBaseName: string): string {
+  return WINDOWS_PROCESS_ALIASES[exeBaseName.toLowerCase()] ?? exeBaseName
+}
+
+/**
+ * @param displayName 给人看的名字；只在没有内置配置时生效。macOS 上进程名本身就是应用名，不传即可；
+ *   Windows 上 processName 是 exe 主文件名（WINWORD），显示名另取自版本信息（Microsoft Word）。
+ */
+export function getTargetConfig(processName: string, displayName: string = processName): TargetAppConfig {
   // 精确匹配 key
   if (BUILTIN_TARGETS[processName]) {
     return BUILTIN_TARGETS[processName]
@@ -78,11 +99,12 @@ export function getTargetConfig(processName: string): TargetAppConfig {
       return config
     }
   }
+  const shownName = displayName.trim() || processName
   // fallback: cgOwnerName 默认与 processName 相同
   return {
     processName,
     cgOwnerName: processName,
-    displayName: processName,
-    systemPrompt: FALLBACK_PROMPT_TEMPLATE(processName)
+    displayName: shownName,
+    systemPrompt: FALLBACK_PROMPT_TEMPLATE(shownName)
   }
 }

@@ -29,14 +29,12 @@
 import fs from 'fs'
 import path from 'path'
 import { homedir } from 'os'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { assembleOfflineDc, sanitizeName } from './dc-export'
 import { evalChecked, pollUntil, hideScrollbarsAndOverflow, setDeviceMetricsOverride, clipFromRect } from './dc-capture'
 import { mainError, tMain } from './main-i18n'
 import { dataPath } from './data-root'
+import { zipDirectory } from './zip-archive'
 
-const execFileAsync = promisify(execFile)
 const OUTPUTS_ROOT = dataPath('outputs')
 const EMU_PER_PX = 9525
 
@@ -396,9 +394,8 @@ export async function assemblePptxZip(
     }
   }
 
-  // 对齐 dc-export.ts exportZip 用系统 /usr/bin/zip 的模式——不引入新 npm 依赖。cwd=ooxmlDir，
-  // "." 让 part 落在 zip 根（不是嵌套子文件夹），这是 OOXML 能被解析的硬要求。
-  await execFileAsync('zip', ['-r', '-q', outPath, '.'], { cwd: ooxmlDir, maxBuffer: 64 * 1024 * 1024 })
+  // part 必须落在 zip 根（不是嵌套子文件夹），这是 OOXML 能被解析的硬要求 → flat 布局
+  await zipDirectory(ooxmlDir, outPath, 'flat')
 }
 
 export interface DeckStageFrame {

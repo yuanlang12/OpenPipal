@@ -2411,6 +2411,10 @@ export const ZH_CN_MESSAGES = {
       runningInBackground: 'OpenPipal 在后台运行中',
       quit: '退出 OpenPipal',
     },
+    window: {
+      minimize: '最小化',
+      close: '关闭（OpenPipal 继续在托盘运行）',
+    },
     browserExtension: {
       prompt: '需要我和你一起在 {{browserName}} 上工作吗？安装浏览器扩展，可以帮你阅读网页、分析视频。',
       dismiss: '忽略',
@@ -4771,6 +4775,10 @@ export const EN_MESSAGES = {
       alwaysOnTop: 'Always on top',
       runningInBackground: 'OpenPipal is running in the background',
       quit: 'Quit OpenPipal',
+    },
+    window: {
+      minimize: 'Minimize',
+      close: 'Close (OpenPipal keeps running in the tray)',
     },
     browserExtension: {
       prompt:

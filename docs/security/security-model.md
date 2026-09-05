@@ -232,9 +232,22 @@ objects.githubusercontent.com、raw.githubusercontent.com、pypi.org、files.pyt
 ### Graceful Fallback
 
 如果沙箱在以下情况下不可用，应用自动降级到现有三层安全模型：
-- 非 macOS 平台
+- macOS / Linux 之外的平台（Windows，见下一节）
 - Seatbelt 工具缺失
 - 初始化异常
+
+两种"没沙箱"在分类器里是分开判的：macOS / Linux **本该有沙箱却没起来**是故障，bash / execute_code 整条禁掉（fail-closed）；Windows **根本没有可用的 OS 沙箱**，走下面这套。
+
+### Windows：没有 OS 沙箱时的边界
+
+`@anthropic-ai/sandbox-runtime` 只有 Seatbelt（macOS）与 bubblewrap（Linux）两个后端，Windows 上没有等价物。Windows 版因此不带 OS 沙箱，边界就是**用户自己的账号权限**，应用层这样补：
+
+- **每条命令交给用户裁决**：`bash`（Git Bash）/ `powershell` / `execute_code` 一律 `needs_confirmation`，确认卡理由写明"本平台没有系统沙箱，这条命令会以你的账号权限直接执行"。"本次会话允许"只记住完全相同的那一条命令；"完全允许"档吃掉普通命令的确认，但破坏性命令（rm -rf / Remove-Item -Recurse / git reset --hard …）与用户目录/整盘遍历仍然每次问。
+- **凭据路径文本闸**：命令或代码里**写明**了凭据位置（`~/.ssh`、`~/.aws`、`%APPDATA%\GitHub CLI`、`.env`、`~/.openpipal/config.json` 等）直接拒绝，不给"点允许"的机会。它认不全（变量拼接、子解释器），所以是逐条确认之上的加一道，不是替代。`.env.example` 这类模板、`~/.openpipal/workspace` 与 `skills` 不在其列。
+- **路径表按平台取**：系统目录禁写（`%SystemRoot%`、`Program Files`、`ProgramData`）、工作根禁区（盘根、`C:\Users`、`AppData`）、凭据目录（点目录那一套加 `%APPDATA%` 下的 gh / gcloud / gnupg / PowerShell 历史）都有 Windows 版本；比较时折叠大小写。
+- **PowerShell 与 bash 同一张危险命令表**：Format-Volume / diskpart / `irm … | iex` / Invoke-Expression / RunAs / reg delete HKLM / Set-MpPreference -Disable 硬拒；Remove-Item -Recurse|-Force、rd /s /q、del /s /q、管道删除、HKCU 注册表删除、清空回收站需确认。
+
+这是最低防线，不是沙箱的替代品：不可信仓库的 postinstall、提示词注入让 agent 跑的命令，在这里能挡住的只有"文本上认得出"的那部分。需要隔离的 Windows 用户，后续路线是 WSL2 里复用 bubblewrap 后端。
 
 
 > **已知代价**：`GITHUB_TOKEN` / `GH_TOKEN` / `NPM_TOKEN` 也在剥离之列（`*_TOKEN` 通配），

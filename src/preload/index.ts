@@ -233,6 +233,11 @@ const api = {
   switchRole: (roleName: string): Promise<any> => {
     return ipcRenderer.invoke('role:switch', roleName)
   },
+  // 窗口按钮（Windows 自绘 — / ×；× 收进托盘）与不透明窗底色对齐
+  minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
+  hideWindow: (): Promise<void> => ipcRenderer.invoke('window:hide'),
+  setWindowBackground: (variant: 'light' | 'dark'): Promise<{ ok: true; applied: boolean }> =>
+    ipcRenderer.invoke('window:set-background', variant),
   // 设置
   getAppSettings: async (): Promise<AppSettingsState> => {
     return parseAppSettingsState(await ipcRenderer.invoke('settings:get-apps'))

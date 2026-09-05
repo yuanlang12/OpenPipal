@@ -16,7 +16,8 @@ import { clipboard } from 'electron'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { marked } from 'marked'
-import { getCurrentProcessName } from './window-tracker'
+import { getCurrentProcessName, getTrackedWindow } from './window-tracker'
+import { pasteIntoWindowWin32 } from './win32-foreground'
 
 const execFileAsync = promisify(execFile)
 
@@ -37,6 +38,26 @@ export async function pasteTextToActiveApp(text: string): Promise<PasteResult> {
   const processName = getCurrentProcessName()
   if (!processName) {
     return { success: false, error: '未检测到挂靠的目标应用' }
+  }
+  if (process.platform === 'win32') {
+    // Windows：同一个 PowerShell 探针把目标窗口提到前台再按 Ctrl+V（见 win32-foreground.ts 的 Do-Paste）
+    const tracked = getTrackedWindow()
+    if (!tracked) {
+      return { success: false, error: '未检测到挂靠的目标窗口' }
+    }
+    try {
+      const html = await marked(text)
+      clipboard.write({ text, html })
+      const result = await pasteIntoWindowWin32(tracked.handle, tracked.pid)
+      return result.ok
+        ? { success: true, targetApp: processName }
+        : { success: false, error: result.error || '粘贴失败' }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+  if (process.platform !== 'darwin') {
+    return { success: false, error: '当前平台暂不支持粘贴到前台应用' }
   }
 
   try {

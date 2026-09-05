@@ -96,10 +96,11 @@ know-it-all:
 
 ## Install
 
-**macOS only for now.** Windows support is planned; until then, forking and adapting the code
-yourself is welcome.
+Desktop builds are published for **macOS** (Apple Silicon and Intel) and **Windows 10/11**
+(x64 and ARM64). The Windows build is the newer of the two and is not code-signed yet; the
+notes under *Windows* say what that means in practice.
 
-### Desktop
+### macOS
 
 1. Grab the `.dmg` for your Mac from [Releases](https://github.com/yuanlang12/OpenPipal/releases/latest)
    (separate builds for Apple Silicon and Intel), then drag `OpenPipal.app` into `Applications`.
@@ -126,13 +127,35 @@ yourself is welcome.
    changes with every build. So after installing a new version you may find the old entry
    stale and have to remove it and grant again. A notarized build removes that chore.
 
-4. Open **Settings → Models**, click **Add provider** and fill in the Base URL and API key, then
-   **Add model** under it with the model name. **Test connection** tells you on the spot whether
-   the two work together.
+### Windows
+
+1. Download `openpipal-<version>-x64-setup.exe` from
+   [Releases](https://github.com/yuanlang12/OpenPipal/releases/latest) — or the `-arm64-` one on a
+   Snapdragon / ARM PC — and run it.
+2. **SmartScreen will object.** The installer is not code-signed, so Windows shows
+   "Windows protected your PC". Click **More info → Run anyway**. Once per install.
+3. **Install [Git for Windows](https://git-scm.com/download/win)** if you want the agent to run
+   shell commands: the `bash` tool uses Git Bash, exactly as the Pi CLI does on Windows.
+   Windows-native work (cmdlets, the registry, `.ps1` scripts) goes through a separate
+   `powershell` tool that needs nothing extra.
+4. **There is no OS sandbox on Windows.** On macOS every command runs inside Seatbelt; Windows
+   has no equivalent, so OpenPipal asks before each command and says plainly that it will run
+   with your account's permissions. Commands that name a credential file (`.ssh`, `.aws`,
+   `.env`, its own `config.json`…) are refused outright. The "Full access" mode stops asking
+   for ordinary commands but still asks before deletions, history rewrites and force-pushes.
+5. App following, window screenshots and paste-into-app need no permission prompts on Windows.
+   The panel is opaque rather than frosted: Windows turns translucent windows solid the moment
+   they lose focus, and a docked panel is unfocused most of the time.
+
+### Add a model
+
+Open **Settings → Models**, click **Add provider** and fill in the Base URL and API key, then
+**Add model** under it with the model name. **Test connection** tells you on the spot whether
+the two work together.
 
 The first launch opens a short tour — three screens, skippable, and replayable any time from
 **Settings → About**. It shows what OpenPipal can do but configures nothing, so the model still
-has to be added as in step 4.
+has to be added as above.
 
 ### Browser extension (optional)
 
@@ -178,7 +201,8 @@ removes everything.
 
 ## Build from source
 
-Requires macOS, Node.js 22.19+ and npm.
+Requires macOS or Windows, Node.js 22.19+ and npm. On Windows run the commands from
+PowerShell or Git Bash.
 
 ```bash
 npm ci
@@ -195,9 +219,13 @@ npx vitest run                           # unit tests
 npx playwright test                      # end-to-end
 ```
 
-`npm run dev` gives you the usual hot-reload loop. Packaging is
-`npx electron-builder --config electron-builder.yml`; note that builds produced this way are
-unsigned and unnotarized.
+`npm run dev` gives you the usual hot-reload loop. Packaging is `npm run build:mac` on a Mac
+and `npm run build:win` on Windows; builds produced this way are unsigned and unnotarized.
+Windows installers are built natively by the `Windows build` GitHub Actions workflow (x64 and
+ARM64 runners) — a Windows package built on a Mac only contains the Mac's native binaries
+unless you go through `npm run build:win:cross`, which stages the `win32` variants of
+esbuild, sharp and canvas first. `npm run release:verify-windows -- --dist dist` checks a
+Windows package for exactly that kind of mistake.
 
 ### Layout
 
@@ -236,8 +264,16 @@ never sees the money or the key.
 **Can I run a local model?** Yes — point the Base URL at `http://localhost:11434/v1` for
 Ollama and use whatever model you've pulled.
 
-**Windows or Linux?** macOS only for now. Windows support is on the roadmap; the code is
-Apache-2.0, so forking and adapting it yourself is welcome too.
+**Windows?** Yes — see *Install*. It is the same app minus the OS sandbox (commands ask for
+confirmation instead) and minus `read_screen` (reading the selected text of another app needs
+UI Automation, not wired up yet). On ARM64 the PDF page renderer is also absent — its native
+dependency has no ARM64 build yet — so PDFs are read as text only there.
+
+**SmartScreen says "Windows protected your PC".** Expected for an unsigned installer:
+**More info → Run anyway**.
+
+**Linux?** Not built or tested. The code is Apache-2.0, so forking and adapting it yourself is
+welcome.
 
 **The extension does nothing.** Make sure the desktop app is running; the extension needs it
 on `localhost:3031`.

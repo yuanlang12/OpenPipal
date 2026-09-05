@@ -13,6 +13,7 @@ import { useThemeStore } from './stores/themeStore'
 import { resolveVariant } from './lib/theme'
 import { Sidebar } from './components/Sidebar'
 import { StatusBar } from './components/StatusBar'
+import { WindowControls } from './components/WindowControls'
 import { BrowserTopBar } from './components/BrowserTopBar'
 import { ChatPanel } from './components/ChatPanel'
 import { InputBar } from './components/InputBar'
@@ -74,11 +75,16 @@ export default function App() {
   useEffect(() => {
     // appStore.theme ('system'|'light'|'dark') → themeStore.variant ('light'|'dark')
     // themeStore.setVariant 内部会调 applyTheme,自动管理 .dark class + CSS variables
-    useThemeStore.getState().setVariant(resolveVariant(theme))
+    // 顺带告诉主进程：Windows/Linux 的窗口是不透明的，底色要跟主题走（macOS 透明窗，主进程会忽略）
+    const applyVariant = (variant: 'light' | 'dark'): void => {
+      useThemeStore.getState().setVariant(variant)
+      void window.api.setWindowBackground?.(variant)?.catch?.(() => undefined)
+    }
+    applyVariant(resolveVariant(theme))
     if (theme === 'system') {
       const mq = window.matchMedia('(prefers-color-scheme: dark)')
       const handler = (e: MediaQueryListEvent) => {
-        useThemeStore.getState().setVariant(e.matches ? 'dark' : 'light')
+        applyVariant(e.matches ? 'dark' : 'light')
       }
       mq.addEventListener('change', handler)
       return () => mq.removeEventListener('change', handler)
@@ -257,6 +263,8 @@ export default function App() {
               onClear={handleNew}
               onSwitchRole={handleSwitchRole}
             />
+            {/* Windows 才渲染：自绘 — / ×（macOS 无边框窗靠 Cmd+W / 托盘，这里返回 null） */}
+            <WindowControls />
           </>
         )}
       </div>

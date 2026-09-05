@@ -27,8 +27,6 @@
 import fs from 'fs'
 import path from 'path'
 import { homedir } from 'os'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { assembleOfflineDc, sanitizeName, dcRuntimeDir, prepareDcForExport, artifactSourceDir } from './dc-export'
 import { collectSidecarNames, readSidecarFiles, injectSidecarData } from './dc-headless'
 import {
@@ -54,8 +52,8 @@ import { PAGE_TEXT_SUMMARY_JS } from './dc-text-summary'
 import { looksLikeDeckDc, looksLikeAnimationDc } from './export-artifact-validate'
 import { mainError, tMain } from './main-i18n'
 import { dataPath } from './data-root'
+import { zipDirectory } from './zip-archive'
 
-const execFileAsync = promisify(execFile)
 const OUTPUTS_ROOT = dataPath('outputs')
 
 // ============================================================================
@@ -740,12 +738,8 @@ export async function exportArtifactHandoff(
     /* ignore */
   }
   try {
-    // cwd=stageDir 父目录，"handoff-<title>" 作为唯一参数——包内顶层就是这个文件夹（同
-    // dc-export.ts exportZip 的分享打包语义），不引入新 npm 依赖。
-    await execFileAsync('zip', ['-r', '-q', outPath, path.basename(stageDir)], {
-      cwd: path.dirname(stageDir),
-      maxBuffer: 64 * 1024 * 1024
-    })
+    // 包内顶层就是 "handoff-<title>" 这个文件夹（同 dc-export.ts exportZip 的分享打包语义）
+    await zipDirectory(stageDir, outPath, 'nested')
   } catch (err: any) {
     console.error('[dc-handoff-export] zip 打包异常', err)
     try {

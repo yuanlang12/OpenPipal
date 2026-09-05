@@ -18,7 +18,9 @@ describe('app-following client contract', () => {
       enabled: false,
       detected: ['Notion'],
       disabled: ['Xcode'],
-      browsers: ['Safari']
+      browsers: ['Safari'],
+      // labels 是后加的：老服务端不带就是空表（Windows 上才会有 exe 名 → 显示名的条目）
+      labels: {}
     })
     expect(() => parseAppSettingsState({ enabled: 'false', detected: [], disabled: [], browsers: [] }))
       .toThrow('response is invalid')

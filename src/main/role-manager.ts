@@ -11,6 +11,7 @@ import { dataPath } from './data-root'
 export {
   addDetectedApp,
   getDetectedApps,
+  getDetectedAppLabels,
   getDisabledApps,
   isAppDisabled,
   isAppFollowingEnabled,
@@ -101,6 +102,9 @@ export const COMMON_TOOLS = [
   'browser_scroll',
   // Pi 内置 Unix 工具 — 用于读写工作空间文件，包括 skill 的 SKILL.md
   'bash',
+  // Windows 专属：实体只在 win32 创建（pi-core-execution-tools / pi-tools），macOS 上这一项与
+  // 扩展未连接时的 browser_* 同理——名字在表里、实体不存在、模型看不见
+  'powershell',
   'read',
   'write',
   'edit',

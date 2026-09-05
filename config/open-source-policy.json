@@ -684,6 +684,44 @@
       "overrides": [
         "reviewed-baseline-default"
       ]
+    },
+    {
+      "id": "review-windows-port-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        ".github/workflows/windows-build.yml",
+        "resources/icon.ico",
+        "resources/tray/openpipal.ico",
+        "scripts/build-windows.mjs",
+        "scripts/render-windows-icons.mjs",
+        "scripts/verify-windows-install.ps1",
+        "scripts/verify-windows-release.mjs",
+        "src/main/platform-window.ts",
+        "src/main/security-paths.ts",
+        "src/main/win32-foreground.ts",
+        "src/main/zip-archive.ts",
+        "src/renderer/src/components/WindowControls.tsx",
+        "src/renderer/src/lib/platform.ts",
+        "tests/unit/app-config-windows-aliases.test.ts",
+        "tests/unit/app-detector-win32.test.ts",
+        "tests/unit/app-follow-settings-labels.test.ts",
+        "tests/unit/code-execution-language-platform.test.ts",
+        "tests/unit/credential-path-reference.test.ts",
+        "tests/unit/execution-env-powershell.test.ts",
+        "tests/unit/home-scan-guard-windows.test.ts",
+        "tests/unit/pi-security-no-sandbox-shell.test.ts",
+        "tests/unit/platform-window.test.ts",
+        "tests/unit/renderer-platform.test.ts",
+        "tests/unit/screenshot-window-source.test.ts",
+        "tests/unit/security-paths.test.ts",
+        "tests/unit/win32-foreground.test.ts",
+        "tests/unit/windows-release-scripts.test.ts",
+        "tests/unit/zip-archive.test.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ]
     }
   ],
   "classificationOnly": true,

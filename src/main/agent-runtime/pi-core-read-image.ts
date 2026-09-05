@@ -1,8 +1,25 @@
-import sharp from 'sharp'
+import type SharpModule from 'sharp'
 import type {
   ReadImageProcessor,
   ReadImageProcessorResult
 } from '@earendil-works/pi-agent-core'
+
+/**
+ * sharp 按需加载而不是顶层 import：它是按平台分包的原生模块，Mac 上交叉打的 Windows 包
+ * 曾漏带 win32 变体（第 1–4 段的包全是），0.33 时 Windows arm64 还没有预编译。
+ * 顶层 import 会让整个主进程在启动时崩掉；按需加载只让 read 工具的图片处理这一项失效。
+ */
+let sharpModule: typeof SharpModule | null | undefined
+function loadSharp(): typeof SharpModule | null {
+  if (sharpModule !== undefined) return sharpModule
+  try {
+    sharpModule = require('sharp') as typeof SharpModule
+  } catch (error) {
+    console.warn('[read-image] sharp 不可用，图片处理关闭:', error instanceof Error ? error.message.split('\n')[0] : error)
+    sharpModule = null
+  }
+  return sharpModule
+}
 
 // Match the established CLI-provider envelope: keep the longest edge within
 // 2000px and leave headroom below providers' 5MB base64 image limit.
@@ -80,6 +97,8 @@ function base64Candidate(
 }
 
 function openSource(source: SharpImageSource) {
+  const sharp = loadSharp()
+  if (!sharp) throw new Error('sharp unavailable on this platform')
   return sharp(source.input, {
     animated: false,
     failOn: 'error',
@@ -226,6 +245,12 @@ export const processPiCoreReadImage: ReadImageProcessor = async (
 ): Promise<ReadImageProcessorResult> => {
   const input = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const inputMimeType = baseMimeType(mimeType)
+  if (!loadSharp()) {
+    return {
+      ok: false,
+      message: '[Image omitted: image processing (sharp) is unavailable on this platform build.]'
+    }
+  }
 
   try {
     const source = inputMimeType === 'image/bmp'

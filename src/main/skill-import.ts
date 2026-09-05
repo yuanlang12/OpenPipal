@@ -18,6 +18,7 @@ import { pipeline } from 'stream/promises'
 import { app } from 'electron'
 import { getUserSkillsDir, listSkillsMeta, scanSkillsInPaths, reloadSkills } from './skill-manager'
 import { mainError, tMain, type MainErrorPayload } from './main-i18n'
+import { systemTarPath } from './zip-archive'
 
 const execFileAsync = promisify(execFile)
 
@@ -248,7 +249,7 @@ export async function downloadGithubRepo(
   }
 
   try {
-    await execFileAsync('/usr/bin/tar', ['-xzf', tarPath, '-C', extractDir])
+    await execFileAsync(systemTarPath(), ['-xzf', tarPath, '-C', extractDir])
   } catch (err: any) {
     cleanupDir(scanTempDir)
     return { ok: false, ...mainError('toolsHub.skills.errors.extractFailed', { detail: err?.message || String(err) }) }

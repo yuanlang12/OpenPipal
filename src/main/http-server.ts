@@ -7,7 +7,7 @@ import { resolveAgentOverrides } from './agent-overrides'
 import { executeExtraction } from './memory-extractor'
 import { listArchivedMemories, restoreArchivedMemory, getGlobalMemoryDir, isWithinMemoryRoot } from './memory-store'
 import { isAutoMemoryEnabled } from './config-manager'
-import { initRoles, switchRole, getAllRoles, getCurrentRole, getRoleConfig, getRoleAssetsDir, getDisabledApps, getDetectedApps, isAppFollowingEnabled, setAppFollowingEnabled, setDisabledApps } from './role-manager'
+import { initRoles, switchRole, getAllRoles, getCurrentRole, getRoleConfig, getRoleAssetsDir, getDisabledApps, getDetectedApps, getDetectedAppLabels, isAppFollowingEnabled, setAppFollowingEnabled, setDisabledApps } from './role-manager'
 import { getWorkspace, listWorkspaces } from './agent-workspace-store'
 import { BROWSER_APPS } from './app-detector'
 import { getExtensionPageHtml } from './extension-page'
@@ -1489,7 +1489,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       return
     }
     if (url === '/settings/apps' && req.method === 'GET') {
-      json(res, 200, { enabled: isAppFollowingEnabled(), detected: getDetectedApps(), disabled: getDisabledApps(), browsers: Array.from(BROWSER_APPS) })
+      json(res, 200, { enabled: isAppFollowingEnabled(), detected: getDetectedApps(), disabled: getDisabledApps(), browsers: Array.from(BROWSER_APPS), labels: getDetectedAppLabels() })
       return
     }
     if (url === '/settings/disabled-apps' && req.method === 'POST') {

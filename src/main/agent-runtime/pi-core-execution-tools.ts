@@ -6,6 +6,7 @@ import {
   type AgentHarnessTool,
   type ExecutionToolContext
 } from '@earendil-works/pi-agent-core'
+import { Type } from 'typebox'
 import {
   OPENPIPAL_EXECUTE_CODE_TIMEOUT_SECONDS,
   OPENPIPAL_DEFAULT_SHELL_TIMEOUT_SECONDS,
@@ -65,6 +66,38 @@ function createOpenPipalBashTool(): ReturnType<typeof createBashTool> {
   }
 }
 
+/** Windows 才有 PowerShell 实体；别的平台上 COMMON_TOOLS 里那个名字只是占位（同扩展未连接时的 browser_*）。 */
+export function offersPowerShellTool(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === 'win32'
+}
+
+/**
+ * pi-agent-core 只带 bash 工具（powershell 那份住在私有的 pi-coding-agent 里）。这里不复刻
+ * 一遍输出截断 / 进度节流 / 退出码措辞，而是拿产品化的 bash 工具换名字、换说明、换执行环境：
+ * 同一份 execute，只是 context.env 指到一个以 PowerShell 为 shell 的 OpenPipalNodeExecutionEnv。
+ */
+function createOpenPipalPowerShellTool(
+  powerShellEnv: OpenPipalNodeExecutionEnv
+): ReturnType<typeof createBashTool> {
+  const bash = createOpenPipalBashTool()
+  return {
+    ...bash,
+    name: 'powershell',
+    label: 'powershell',
+    description: bash.description.replace(
+      'Execute a bash command in the current working directory.',
+      'Execute a PowerShell command (pwsh, falling back to Windows PowerShell 5.1) in the current working directory. Windows only. Prefer `bash` (Git Bash) for POSIX-style commands and scripts; use this tool for Windows-native cmdlets, .ps1 scripts, the registry, services and scheduled tasks.'
+    ),
+    parameters: Type.Object({
+      command: Type.String({ description: 'PowerShell command to execute' }),
+      timeout: Type.Optional(Type.Number({ description: 'Timeout in seconds (optional)' }))
+    }),
+    execute(toolCallId, params, signal, onUpdate, context) {
+      return bash.execute(toolCallId, params, signal, onUpdate, { ...context, env: powerShellEnv })
+    }
+  }
+}
+
 /** Build one conversation-scoped public pi-core execution environment. */
 export function buildPiCoreExecutionTools(
   workingDir: string,
@@ -73,9 +106,13 @@ export function buildPiCoreExecutionTools(
   conversationId?: string
 ): PiCoreExecutionToolBundle {
   const env = new OpenPipalNodeExecutionEnv(workingDir, executionPolicy, conversationId)
+  const powerShellEnv = offersPowerShellTool()
+    ? new OpenPipalNodeExecutionEnv(workingDir, executionPolicy, conversationId, 'powershell')
+    : null
   const tools: AgentHarnessTool<ExecutionToolContext>[] = [
     createReadTool({ imageProcessor: processPiCoreReadImage }),
     createOpenPipalBashTool(),
+    ...(powerShellEnv ? [createOpenPipalPowerShellTool(powerShellEnv)] : []),
     createEditTool(),
     createWriteTool(),
     createOpenPipalGrepTool(),
@@ -98,6 +135,7 @@ export function buildPiCoreExecutionTools(
       if (disposed) return
       disposed = true
       await env.cleanup()
+      await powerShellEnv?.cleanup()
     }
   }
 }

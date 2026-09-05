@@ -72,6 +72,7 @@ const JXA_SCRIPT = `
 `
 
 export async function getActiveContext(): Promise<AppContext | null> {
+  if (process.platform !== 'darwin') return null // JXA 读屏只有 macOS
   try {
     console.log('[AX] 开始读取...')
     const { stdout } = await execFileAsync('osascript', ['-l', 'JavaScript', '-e', JXA_SCRIPT], {

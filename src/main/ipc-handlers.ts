@@ -4,6 +4,7 @@ import type { FSWatcher } from 'fs'
 import os, { homedir } from 'os'
 import path, { basename, join } from 'path'
 import { checkScreenCapturePermission } from './screenshot'
+import { windowBackgroundColor } from './platform-window'
 import { persistChatImages, readUploadAsset, writeArtifactSidecar, readArtifactSidecar } from './chat-uploads'
 import { getAgentRuntime, setAgentRuntimePermissionHandler } from './agent-runtime'
 import type { ChatMessage, RunningAgentHandle } from './agent-runtime/contracts'
@@ -256,6 +257,26 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return await checkScreenCapturePermission()
   })
 
+  // 窗口按钮（Windows 自绘 — / ×）。× 与 macOS 的关闭行为一致：收进托盘，不退出。
+  ipcMain.handle('window:minimize', () => {
+    const win = getWindow()
+    if (win && !win.isDestroyed()) win.minimize()
+  })
+  ipcMain.handle('window:hide', () => {
+    const win = getWindow()
+    if (win && !win.isDestroyed()) win.hide()
+  })
+  // 渲染层的主题定下来后把不透明窗的底色对齐（深色主题下拉伸/首屏不再闪白边）。
+  // macOS 是透明窗 + vibrancy，改底色会把材质盖掉，直接忽略。
+  ipcMain.handle('window:set-background', (_event, variant: unknown) => {
+    if (variant !== 'light' && variant !== 'dark') throw new TypeError('variant must be light or dark')
+    if (process.platform === 'darwin') return { ok: true, applied: false }
+    const win = getWindow()
+    if (!win || win.isDestroyed()) return { ok: true, applied: false }
+    win.setBackgroundColor(windowBackgroundColor(variant))
+    return { ok: true, applied: true }
+  })
+
   // 截取本窗口页面指定区域（画布圈画评论用——capturePage 拍的是渲染页面自身，含 iframe 内容与
   // 笔迹，不经系统屏幕录制权限，与 capture_screenshot 的"外部应用窗口截图"是两条路）
   ipcMain.handle('window:capture-region', async (_event, rect: { x: number; y: number; width: number; height: number }) => {
@@ -285,6 +306,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   })
   // 打开 macOS 系统设置的"屏幕录制"权限面板,引导用户授权
   ipcMain.handle('system:open-screen-recording-prefs', async () => {
+    // 这个 URL scheme 只有 macOS 认；其他平台没有屏幕录制授权面板，直接告知不支持
+    if (process.platform !== 'darwin') return { ok: false, unsupported: true }
     await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
     return { ok: true }
   })

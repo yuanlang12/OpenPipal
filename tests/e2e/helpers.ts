@@ -87,10 +87,7 @@ export async function launchIsolatedElectron(
   )
 
   const app = await electron.launch({
-    executablePath: join(
-      process.cwd(), 'node_modules', 'electron', 'dist',
-      'Electron.app', 'Contents', 'MacOS', 'Electron'
-    ),
+    executablePath: electronExecutablePath(),
     args: [options.entry ?? process.cwd()],
     env: {
       ...process.env,
@@ -109,4 +106,12 @@ export async function launchIsolatedElectron(
       await rm(home, { recursive: true, force: true })
     }
   }
+}
+
+/** 各平台的 Electron 可执行文件路径（electron 包 dist 目录内） */
+export function electronExecutablePath(root = process.cwd()): string {
+  const dist = join(root, 'node_modules', 'electron', 'dist')
+  if (process.platform === 'darwin') return join(dist, 'Electron.app', 'Contents', 'MacOS', 'Electron')
+  if (process.platform === 'win32') return join(dist, 'electron.exe')
+  return join(dist, 'electron')
 }

@@ -662,6 +662,19 @@ independently.
 | F-07 Public project policy | **BLOCKED** | Approve supported versions, contribution/CI policy, maintainer roles, release authorization and disclosure handling; enable and verify private vulnerability reporting from an external reporter account. | Public documents agree and a working private security channel exists. | `F/07-project-policy/` |
 | F-08 Final manifest and approval | **BLOCKED** | Bind A-E results and F decisions to one immutable commit, final file/package hashes and recoverable internal checkpoint. Obtain explicit maintainer approval before changing visibility or publishing. | One signed release record has no NOT RUN, FAIL or BLOCKED required gate. | `F/08-final-approval/` |
 
+## W. Windows package gates (feature/windows)
+
+Windows 首发不签名，不走 F-06 那套外部 runner 与信任包。这一节只证明三件事：**包是对的、
+装上的就是这个包、核心链路在真 Windows 上跑得动。** 全部通过也只是 Windows 包本身的证据，
+不替代 A–F 任何一项。
+
+| Gate | What to do | Pass condition | Evidence |
+|---|---|---|---|
+| W-01 Native build | 正式包由 `.github/workflows/windows-build.yml` 在 Windows runner 上原生打（`windows-latest` → x64，`windows-11-arm` → arm64）。Mac 上的 `npm run build:win:cross` 只作虚拟机冒烟：它把 esbuild / sharp / canvas 的 win32 变体临时塞进 node_modules 再打。**裸跑 `electron-builder --win` 打出的包在 Windows 上启动即崩**（只带 darwin 二进制），不得当发布物。 | 两个架构的 job 都绿，产物里有 `openpipal-<version>-<arch>-setup.exe` | Actions run / `dist/` |
+| W-02 Factory check | `npm run release:verify-windows -- --dist <dir>`（CI 里自动跑）。检查：安装包在且 ≥ 40MB、app.asar 带 out/ 三件与 package.json、`@esbuild/win32-<arch>` 必须在（x64 还要 `@img/sharp-win32-x64`）、没有 dotenv / 私钥 / dist-qa / website、extraResources（托盘 .ico、dc-runtime、skills、acp、mcp-servers.json）齐。 | 每个架构 `verdict: PASS`；arm64 允许一条 `PLATFORM_PACKAGE_UNAVAILABLE` 告警（@napi-rs/canvas 0.1.80 没有 win32-arm64 预编译；sharp 自 0.35 起有） | `windows-release-report-<arch>.json` |
+| W-03 Installed = built | 装到 Windows 上后跑 `scripts/verify-windows-install.ps1 -ExpectedAsarSha256 <sha>`，`<sha>` 取自 W-02 报告的 `asarSha256`。**版本号相等不算证据**（与 macOS /release 第 3 步同一条纪律）。 | 退出 0，`matchesExpected: true` | 脚本输出的 JSON |
+| W-04 Smoke on real Windows | 同一台机器（虚拟机可）：① 启动无崩溃、主进程日志无 `Cannot find module`；② 设置 → 模型 测试连接通；③ 让 agent 跑 `git status`，出现确认卡且理由含"没有系统沙箱"；④ `cat ~/.ssh/id_rsa` 被拒，理由含"凭据路径"；⑤ `powershell` 工具 `Get-Date` 有返回；⑥ 打开应用跟随，切到记事本，面板贴到记事本旁；⑦ capture_screenshot 返回记事本窗口的图；⑧ 粘贴到记事本成功；⑨ 托盘图标可见，标题栏 — 最小化、× 收进托盘；⑩ 切深色主题，窗口边缘无白边。 | 十项全过；截图存证 | `W/04-smoke/` 截图 + 日志 |
+
 ## 4. Completion and reset rules
 
 The candidate is **not releasable** if any required entry is `NOT RUN`, `FAIL` or

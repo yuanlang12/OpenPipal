@@ -97,17 +97,23 @@ export function isSafeCommandName(command: string): boolean {
   return SAFE_COMMAND_NAME.test(command)
 }
 
+// which 是 POSIX；Windows 用 where.exe（可能返回多行，取第一条）
+const LOOKUP_COMMAND = process.platform === 'win32' ? 'where' : 'which'
+function firstLine(stdout: string): string | null {
+  return stdout.split(/\r?\n/).map((s) => s.trim()).find(Boolean) ?? null
+}
+
 /** 检查命令是否可用 */
 export function isAvailable(command: string): string | null {
   if (!isSafeCommandName(command)) return null
   try {
     // execFile 不起 shell：命令名即使含元字符也只会被当作要查找的文件名，不会被拼接执行
-    const result = execFileSync('which', [command], {
+    const result = execFileSync(LOOKUP_COMMAND, [command], {
       encoding: 'utf-8',
       timeout: 2000,
       stdio: ['ignore', 'pipe', 'ignore']
     })
-    return result.trim() || null
+    return firstLine(result)
   } catch {
     return null
   }
@@ -171,8 +177,8 @@ async function probeAsync(command: string): Promise<{ path: string | null; versi
   if (!isSafeCommandName(command)) return { path: null }
   let path: string | null = null
   try {
-    const { stdout } = await execFileAsync('which', [command], { encoding: 'utf-8', timeout: 2000 })
-    path = stdout.trim() || null
+    const { stdout } = await execFileAsync(LOOKUP_COMMAND, [command], { encoding: 'utf-8', timeout: 2000 })
+    path = firstLine(stdout)
   } catch {
     return { path: null }
   }

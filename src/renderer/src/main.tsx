@@ -9,6 +9,7 @@ import './styles/global.css'
 import './styles/shimmer.css'
 import { installWebApiShim } from './web-api-shim'
 import { initThemeOnLoad } from './stores/themeStore'
+import { detectRendererPlatform, platformClassName } from './lib/platform'
 import {
   getBrowserPreferredLanguages,
   initializeRendererI18n,
@@ -22,6 +23,9 @@ import { fatalStartupText } from './i18n/fatalStartup'
 if (!window.api) {
   installWebApiShim()
 }
+
+// 平台类名挂在 <html> 上：Windows 专属样式（方角壳、自绘窗口按钮）据此出现；插件里是 platform-web
+document.documentElement.classList.add(platformClassName(detectRendererPlatform()))
 
 // 启动时立即应用主题(避免 :root 未注入 CSS variables 时的闪烁)
 initThemeOnLoad()

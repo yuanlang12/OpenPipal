@@ -1,15 +1,14 @@
 /**
- * 分享打包（W5 条款C）：exportZip 把产物文件夹用系统 zip 打成单文件落 outputs/。
+ * 分享打包（W5 条款C）：exportZip 把产物文件夹打成单文件落 outputs/。
  *
- * 依赖系统 /usr/bin/zip（不新增 npm 依赖）；无 zip 环境时产包用例跳过（契约允许"无环境则跳过"），
- * 但白名单/sanitize 这类纯校验用例始终运行。os.homedir() 在 POSIX 优先读 HOME——模块导入前劫持，
- * 让 OUTPUTS_ROOT 与白名单三根都落到临时目录。
+ * 打包走系统 bsdtar（zip-archive.ts，macOS / Windows 都自带，不新增 npm 依赖）。os.homedir() 在 POSIX
+ * 优先读 HOME——模块导入前劫持，让 OUTPUTS_ROOT 与白名单三根都落到临时目录。
  */
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { execFileSync } from 'child_process'
+import { listZipEntries } from '../../src/main/zip-archive'
 
 // 必须在 import 模块前设 HOME，让 OUTPUTS_ROOT / 白名单根都指向临时目录
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'openpipal-zip-export-'))
@@ -21,33 +20,13 @@ const DS_ROOT = path.join(OPENPIPAL, 'design-systems')
 
 const { exportZip } = await import('../../src/main/dc-export')
 
-function hasZip(): boolean {
-  try {
-    execFileSync('zip', ['--version'], { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
-  }
-}
-const zipAvailable = hasZip()
-
-function hasUnzip(): boolean {
-  try {
-    execFileSync('unzip', ['-v'], { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
-  }
-}
-
-// 列出 zip 包内条目：优先 unzip -l，否则退化为扫原始字节（zip 头里文件名是明文）
-function zipEntries(zipPath: string): string {
-  if (hasUnzip()) return execFileSync('unzip', ['-l', zipPath], { encoding: 'utf8' })
-  return fs.readFileSync(zipPath).toString('latin1')
+// 列出 zip 包内条目：走系统 bsdtar（与打包同一条链）
+async function zipEntries(zipPath: string): Promise<string> {
+  return (await listZipEntries(zipPath)).join('\n')
 }
 
 describe('exportZip 分享打包', () => {
-  ;(zipAvailable ? it : it.skip)(
+  it(
     '把白名单内的设计系统文件夹打成 zip，落 outputs/，包内含预期文件且用相对路径',
     async () => {
       const kit = path.join(DS_ROOT, 'my-kit')
@@ -62,7 +41,7 @@ describe('exportZip 分享打包', () => {
       expect(fs.existsSync(res.path!)).toBe(true)
       expect(fs.statSync(res.path!).size).toBeGreaterThan(0)
 
-      const listing = zipEntries(res.path!)
+      const listing = await zipEntries(res.path!)
       // 包内路径以 <basename>/ 打头（相对，不含绝对路径），且含嵌套文件
       expect(listing).toContain('my-kit/SKILL.md')
       expect(listing).toContain('my-kit/_ds_manifest.json')
@@ -73,7 +52,7 @@ describe('exportZip 分享打包', () => {
     30000
   )
 
-  ;(zipAvailable ? it : it.skip)(
+  it(
     '重复导出同名幂等：不追加，第二次内容等于第二次源',
     async () => {
       const kit = path.join(DS_ROOT, 'idem')
@@ -84,7 +63,7 @@ describe('exportZip 分享打包', () => {
       fs.writeFileSync(path.join(kit, 'b.txt'), 'b')
       const second = await exportZip(kit, 'idem-pack')
       expect(second.ok).toBe(true)
-      const listing = zipEntries(second.path!)
+      const listing = await zipEntries(second.path!)
       expect(listing).toContain('idem/a.txt')
       expect(listing).toContain('idem/b.txt')
     },
@@ -109,7 +88,6 @@ describe('exportZip 分享打包', () => {
   })
 
   it('outName sanitize 防穿越：斜杠/../ 被清洗，产物仍落在 outputs 根内', async () => {
-    if (!zipAvailable) return
     const kit = path.join(DS_ROOT, 'san')
     fs.mkdirSync(kit, { recursive: true })
     fs.writeFileSync(path.join(kit, 'f.txt'), 'f')

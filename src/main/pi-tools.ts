@@ -8,8 +8,12 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import {
   createCodingTools,
+  createPowerShellTool,
   type BashOperations
 } from '../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/index.js'
+
+/** 与 openpipal-execution-env 的 OpenPipalShellKind 同形——这里不能静态 import 那个模块（连 type 都不行，边界测试按源码文本钉着） */
+type LegacyShellKind = 'bash' | 'powershell'
 import { getWorkingDir } from './config-manager'
 // Preserve the legacy facade's historical scheduler side effect. The pi-core
 // product tool graph uses the small control registry and does not import this
@@ -53,14 +57,14 @@ export const executeCodeWithLegacyPi: CodeExecutionBackend = async ({ command, s
   }
 }
 
-function createOpenPipalBoundedBashOps(): BashOperations {
+function createOpenPipalBoundedShellOps(shell: LegacyShellKind): BashOperations {
   return {
     exec: async (command, cwd, options) => {
       // Do not statically load the new Node backend when legacy is selected.
       // OpenPipalNodeExecutionEnv applies sanitization, timeout/output bounds,
       // abort propagation and (when enabled) exactly one strict SRT wrapper.
       const { OpenPipalNodeExecutionEnv } = await import('./openpipal-execution-env')
-      const env = new OpenPipalNodeExecutionEnv(cwd)
+      const env = new OpenPipalNodeExecutionEnv(cwd, {}, undefined, shell)
       try {
         const forwardedEnv = Object.fromEntries(
           Object.entries(options.env || {})
@@ -94,8 +98,12 @@ export function buildPiTools(
   })
   const cwd = overrides?.workingDir || getWorkingDir()
   const codingTools = createCodingTools(cwd, {
-    bash: { operations: createOpenPipalBoundedBashOps() }
+    bash: { operations: createOpenPipalBoundedShellOps('bash') }
   })
+  // 与 pi-core 一致：powershell 实体只在 Windows 上创建（pi-core-execution-tools 的 offersPowerShellTool）
+  const shellTools = process.platform === 'win32'
+    ? [createPowerShellTool(cwd, { operations: createOpenPipalBoundedShellOps('powershell') })]
+    : []
   // Legacy and pi-core must share the product-owned search worker: the private
   // coding-agent discovery tools cannot enforce OpenPipal's credential skips.
   // The context resolves paths only, and loads its backend on first use — the
@@ -107,6 +115,6 @@ export function buildPiTools(
   ], createDiscoveryToolContext(cwd))
   return filterToolsForChatSource(
     source,
-    filterOpenPipalTools([...productTools, ...codingTools, ...discoveryTools], overrides)
+    filterOpenPipalTools([...productTools, ...codingTools, ...shellTools, ...discoveryTools], overrides)
   )
 }

@@ -23,11 +23,19 @@ files:
   - '!node_modules/typescript/lib/{cs,de,es,fr,it,ja,ko,pl,pt-br,ru,tr,zh-cn,zh-tw}/**'
   # esbuild/bin 是 @esbuild 平台包二进制的重复硬链接（打包会materialize成双份），JS API 只走 @esbuild
   - '!node_modules/esbuild/bin/**'
+  # sharp 0.35 会顺带装一份 9MB 的 wasm 兜底（没有原生二进制的环境才用）。我们发行的每个平台都带
+  # 原生包（macOS arm64/x64、Windows x64/arm64），wasm 那份只占体积
+  - '!node_modules/@img/sharp-wasm32/**'
+  - '!node_modules/@img/sharp-*-wasm32/**'
 asarUnpack:
   # esbuild 同步 API 用 new Worker(__filename) 自举 + spawn @esbuild/<平台>/bin/esbuild，
   # worker_threads 与 exec 都吃不了 asar 内路径 —— 两个包必须整体落成真实文件
   - '**/node_modules/esbuild/**'
   - '**/node_modules/@esbuild/**'
+  # sharp / @napi-rs/canvas 的平台包里是 .node 加一串 .dll/.dylib，OS 加载器只认真实文件。
+  # smartUnpack 通常会自己认出来，这里写明是为了 Windows 包（Mac 上交叉打时这些包是临时塞进去的）不靠运气
+  - '**/node_modules/@img/**'
+  - '**/node_modules/@napi-rs/**'
 mac:
   # Electron 43 no longer supports macOS 11. Keep the packaged requirement explicit.
   minimumSystemVersion: '12.0'
@@ -48,6 +56,21 @@ mac:
       arch:
         - arm64
         - x64
+win:
+  # Windows 目标（feature/windows）。没配签名证书时 electron-builder 自动跳过签名。
+  # 图标走 buildResources 默认位置 resources/icon.ico（scripts/render-windows-icons.mjs 从 icon.icns 生成）。
+  # 架构**不在这里写死**：写成 arch: [x64, arm64] 后 CLI 的 --x64 / --arm64 会被无视、一次打两个，
+  # 而两个架构需要的 win32 原生包（esbuild / sharp / canvas）不同，必须一次只打一个。
+  # 不传架构时 electron-builder 按构建机的架构打（Windows runner 正好），Mac 交叉打包由
+  # scripts/build-windows.mjs 显式传 --x64 / --arm64。
+  target:
+    - nsis
+nsis:
+  artifactName: ${name}-${version}-${arch}-setup.${ext}
+  # 只出 x64 / arm64 各自的安装包。默认还会多打一个把两个架构装在一起的 290MB 合并版，
+  # 用户按机器下载对应那个就够了，合并版只会让 Releases 页多一个让人犹豫的文件
+  buildUniversalInstaller: false
+
 extraResources:
   # dc 渲染/导出运行时 —— dc-export.ts / dc-headless.ts 打包态读 process.resourcesPath/dc-runtime；
   # 漏掉会导致正式版导出 ENOENT（vendor/react.production.min.js 找不到）

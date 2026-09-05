@@ -117,6 +117,7 @@ vi.mock('../../src/main/role-manager', () => ({
   getRoleAssetsDir: vi.fn(() => '/tmp'),
   getDisabledApps: vi.fn(() => state.disabledApps),
   getDetectedApps: vi.fn(() => []),
+  getDetectedAppLabels: vi.fn(() => ({})),
   isAppFollowingEnabled: vi.fn(() => state.appFollowingEnabled),
   setAppFollowingEnabled: state.setAppFollowingEnabled,
   setDisabledApps: state.setDisabledApps

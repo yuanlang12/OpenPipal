@@ -223,10 +223,81 @@ async function findExecutableOnPath(
   return undefined
 }
 
-async function resolveShellCommand(
+/** 执行环境跑哪种 shell。powershell 只在 Windows 上有实体（见 pi-core-execution-tools）。 */
+export type OpenPipalShellKind = 'bash' | 'powershell'
+
+/** 与 Pi 的 powershell 工具同一组开关：不读 profile、不交互、绕过执行策略、命令从参数进。 */
+export const POWERSHELL_ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command']
+/** Windows PowerShell 5.1 默认按系统代码页输出，中文会成问号；Pi 也是这样在命令前面垫一句。 */
+const POWERSHELL_UTF8_PREFIX = 'try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n'
+
+/**
+ * PowerShell 可执行文件的查找顺序（纯函数，给测试用）：PATH 上的 pwsh.exe（PowerShell 7）
+ * 优先，其次 PATH 上的 powershell.exe，最后是 System32 里那份 5.1——它不在 PATH 上时也一定在。
+ */
+export function powerShellCandidates(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform
+): string[] {
+  if (platform !== 'win32') return []
+  const directories = (environment.PATH || environment.Path || '')
+    .split(';')
+    .map(directory => directory.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean)
+  const systemRoot = environment.SystemRoot?.trim() || 'C:\\Windows'
+  return Array.from(new Set([
+    ...directories.map(directory => path.win32.join(directory, 'pwsh.exe')),
+    ...directories.map(directory => path.win32.join(directory, 'powershell.exe')),
+    path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  ]))
+}
+
+/** 第一个真实存在的 PowerShell 可执行文件（顺序见 powerShellCandidates）；非 Windows 或没装返回 null */
+export async function findPowerShellExecutable(
+  environment: NodeJS.ProcessEnv = process.env
+): Promise<string | null> {
+  for (const candidate of powerShellCandidates(environment)) {
+    if (await isExecutable(candidate)) return candidate
+  }
+  return null
+}
+
+async function resolvePowerShellCommand(
   command: string,
   environment: NodeJS.ProcessEnv
 ): Promise<Result<ResolvedShell, ExecutionError>> {
+  if (process.platform !== 'win32') {
+    return {
+      ok: false,
+      error: new ExecutionError('shell_unavailable', 'The powershell tool is only available on Windows.')
+    }
+  }
+  const executable = await findPowerShellExecutable(environment)
+  if (executable) {
+    return {
+      ok: true,
+      value: {
+        executable,
+        args: [...POWERSHELL_ARGS, `${POWERSHELL_UTF8_PREFIX}${command}`],
+        commandFromStdin: false
+      }
+    }
+  }
+  return {
+    ok: false,
+    error: new ExecutionError(
+      'shell_unavailable',
+      'No PowerShell executable found. Install PowerShell 7 (pwsh.exe) or make sure powershell.exe is on PATH.'
+    )
+  }
+}
+
+async function resolveShellCommand(
+  command: string,
+  environment: NodeJS.ProcessEnv,
+  shell: OpenPipalShellKind = 'bash'
+): Promise<Result<ResolvedShell, ExecutionError>> {
+  if (shell === 'powershell') return resolvePowerShellCommand(command, environment)
   if (process.platform === 'win32') {
     const candidates: string[] = []
     if (environment.ProgramFiles) {
@@ -342,12 +413,15 @@ export class OpenPipalNodeExecutionEnv extends NodeExecutionEnv {
    * 这正是子代理该有的保守面：子代理自带一整套工具，档位与本对话授权都不往下传。
    */
   private readonly conversationId?: string
+  /** bash（macOS / Linux 原生，Windows 走 Git Bash）或 powershell（仅 Windows） */
+  private readonly shell: OpenPipalShellKind
   private closed = false
 
   constructor(
     cwd: string,
     policy: Partial<OpenPipalExecutionPolicy> = {},
-    conversationId?: string
+    conversationId?: string,
+    shell: OpenPipalShellKind = 'bash'
   ) {
     const safeEnv = Object.fromEntries(
       Object.entries(getSanitizedEnv())
@@ -356,6 +430,7 @@ export class OpenPipalNodeExecutionEnv extends NodeExecutionEnv {
     super({ cwd, shellEnv: safeEnv })
     this.safeEnv = safeEnv
     this.conversationId = conversationId
+    this.shell = shell
     this.policy = {
       defaultTimeoutSeconds: policy.defaultTimeoutSeconds ?? OPENPIPAL_DEFAULT_SHELL_TIMEOUT_SECONDS,
       maxTimeoutSeconds: policy.maxTimeoutSeconds ?? OPENPIPAL_MAX_SHELL_TIMEOUT_SECONDS,
@@ -379,6 +454,14 @@ export class OpenPipalNodeExecutionEnv extends NodeExecutionEnv {
     let script: ReturnType<typeof createTemporaryCodeFile> | undefined
     let executableCommand = command
     const sandboxed = isSandboxed()
+    if (sandboxed && this.shell === 'powershell') {
+      // 沙箱包装是 bash 脚本形态的（Seatbelt / bwrap 只在 macOS、Linux），PowerShell 实体也只在
+      // Windows 创建——两者按设计永不同时成立；真撞上说明组装出了错，宁可报错也不裸跑。
+      return {
+        ok: false,
+        error: new ExecutionError('spawn_error', 'PowerShell cannot run inside the OS sandbox wrapper.')
+      }
+    }
     try {
       if (sandboxed) {
         script = createTemporaryCodeFile('sh', command)
@@ -470,7 +553,7 @@ export class OpenPipalNodeExecutionEnv extends NodeExecutionEnv {
     if (this.closed || options.abortSignal?.aborted) {
       return { ok: false, error: new ExecutionError('aborted', 'aborted') }
     }
-    const shellResult = await resolveShellCommand(command, options.env || {})
+    const shellResult = await resolveShellCommand(command, options.env || {}, this.shell)
     if (!shellResult.ok) return shellResult
     if (this.closed || options.abortSignal?.aborted) {
       return { ok: false, error: new ExecutionError('aborted', 'aborted') }

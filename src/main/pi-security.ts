@@ -33,6 +33,14 @@ import { containsReceiptPlaceholder } from './tool-content-compactor'
 import { dataPath, getDataRoot } from './data-root'
 import { normalizeCodeExecutionLanguage } from './code-execution-language'
 import {
+  deniedWorkspaceRootsFor,
+  isCaseInsensitivePathPlatform,
+  isDriveRoot,
+  osSandboxAvailableOnPlatform,
+  sensitiveDirsFor,
+  systemDirsFor
+} from './security-paths'
+import {
   discoveryRootContainsPluginMcpConfig,
   ENV_TEMPLATE_BASENAMES,
   getAuditLogPath,
@@ -155,33 +163,19 @@ export function resolvePermissionRequest(requestId: string, approved: boolean): 
 // Layer 3: 硬性边界（不可绕过）
 // =====================================================================
 
-/** 敏感目录——即使在 homedir 内也绝对拒绝访问 */
-const SENSITIVE_DIRS = [
-  '.ssh', '.aws', '.gnupg', '.config/gcloud',
-  '.docker', '.kube', '.npmrc', '.netrc',
-  '.bash_history', '.zsh_history',
-  '.env', '.credentials', '.password-store',
-  // git / GitHub 凭证。2026-08-21 复核发现这几条一直没被覆盖——既不在这张表里、
-  // 也不在沙箱 denyRead 里，模型一条 `cat ~/.git-credentials` 就能拿走用户已有的
-  // git 凭证（配了 store helper 时是明文 https://user:token@host）。
-  // 做「按项目授权再放行凭证」之前必须先堵这道门，否则那套设计从一开始就绕得过去。
-  '.git-credentials',            // credential.helper=store 的默认落点
-  '.config/git/credentials',     // 同上的 XDG 位置
-  '.config/gh',                  // gh CLI 的 hosts.yml（含 oauth token）
-  '.config/hub',                 // hub CLI 的老位置
-  '.gitconfig.local',            // 常见的"把 token 塞进 url.insteadOf"私有配置
-].map(d => path.join(HOME, d)).concat([
+/**
+ * 敏感目录——即使在 homedir 内也绝对拒绝访问。
+ * 目录清单按平台取（security-paths.ts）：POSIX 那套点目录各平台通用，Windows 再补上
+ * %APPDATA% 下同一批工具的凭据位置（gh / gcloud / gnupg / PowerShell 历史）。
+ */
+const SENSITIVE_DIRS = sensitiveDirsFor(process.platform, HOME, process.env).concat([
   // Keep the rest of the data root available for legitimate memories and
   // artifacts while hard-denying every authoritative credential location.
   ...getCredentialReadDenyPaths(),
 ])
 
-/** 系统目录——禁止写入 */
-const SYSTEM_DIRS = [
-  '/etc', '/System', '/usr', '/sbin', '/bin',
-  '/Library/LaunchDaemons', '/Library/LaunchAgents',
-  '/private/etc',
-]
+/** 系统目录——禁止写入（Windows 上是 %SystemRoot% / Program Files / ProgramData） */
+const SYSTEM_DIRS = systemDirsFor(process.platform, process.env)
 
 /**
  * 允许操作的目录白名单。
@@ -280,8 +274,25 @@ export function isArtifactSidecarPath(
   return pathWithin(resolveRealPath(filePath), resolveRealPath(artifactRoot))
 }
 
+/**
+ * 比较用的规范形。Windows 折叠大小写：那里 realpath 对不存在的路径原样返回、盘符大小写
+ * 随调用方，`c:\Users\x\.SSH` 与 `C:\Users\x\.ssh` 是同一个目录，字节比较会放过它
+ * （理由与 macOS 那边为什么**不**折叠见 security-paths 的 isCaseInsensitivePathPlatform）。
+ */
+function comparablePath(p: string): string {
+  return isCaseInsensitivePathPlatform() ? p.toLowerCase() : p
+}
+
+function samePath(a: string, b: string): boolean {
+  return comparablePath(a) === comparablePath(b)
+}
+
 function pathWithin(candidate: string, root: string): boolean {
-  return candidate === root || candidate.startsWith(root + path.sep)
+  const c = comparablePath(candidate)
+  const r = comparablePath(root)
+  if (c === r) return true
+  // 盘根 / 根目录自带尾分隔符，再拼一个会让 `C:\Users` 与 `C:\` 比不上
+  return c.startsWith(r.endsWith(path.sep) ? r : r + path.sep)
 }
 
 /**
@@ -386,34 +397,9 @@ export interface WorkspaceRootVerdict {
   resolved?: string
 }
 
-/**
- * 不能当工作根的目录。
- *
- * 分两类：
- * - equal：本身就等于"整台机器"，但它们的**子目录**是正常项目位置（~/xxx、/Volumes/Disk/repo），
- *   所以只能等值拒绝，不能按子树拒。
- * - subtree：整棵树都是配置 / 凭证 / 可执行体，里面没有合法的"项目目录"。必须按子树拒，
- *   否则用户选到 ~/Library/Application Support 这类更深的目录就绕过了根判定。
- *
- * 为什么 ~/Library 这类要单列：它们既不等于家目录（逃过 equal），也不在 SENSITIVE_DIRS
- * 那张固定表里（逃过敏感判定），而里面装着钥匙串、浏览器 Cookie、LaunchAgents——
- * 一旦成为允许根，读就是 safe、写在沙箱下也是 safe，等于把持久化后门开成免确认操作。
- */
+/** 不能当工作根的目录——分 equal / subtree 两类，理由与清单见 security-paths.ts */
 function deniedWorkspaceRoots(): { equal: string[]; subtree: string[] } {
-  return {
-    equal: [path.parse(HOME).root, HOME, path.dirname(HOME), '/Volumes', '/home', '/mnt', '/media'],
-    subtree: [
-      path.join(HOME, 'Library'),
-      path.join(HOME, '.config'),
-      path.join(HOME, '.local'),
-      path.join(HOME, '.cache'),
-      '/Library',
-      '/Applications',
-      '/opt',
-      '/private/var',
-      '/var',
-    ],
-  }
+  return deniedWorkspaceRootsFor(process.platform, HOME, process.env)
 }
 
 /**
@@ -422,7 +408,7 @@ function deniedWorkspaceRoots(): { equal: string[]; subtree: string[] } {
  * 默认工作区，必须继续可用。
  */
 function isBareHomeDotDir(real: string): boolean {
-  return path.dirname(real) === HOME && path.basename(real).startsWith('.')
+  return samePath(path.dirname(real), HOME) && path.basename(real).startsWith('.')
 }
 
 export function assessWorkspaceRoot(dir: string | null | undefined): WorkspaceRootVerdict {
@@ -443,7 +429,9 @@ export function assessWorkspaceRoot(dir: string | null | undefined): WorkspaceRo
   // 过宽 / 系统 / 敏感三类一律不接受。注意比的是 real——符号链接指回家目录、
   // 或大小写变体（macOS 默认不区分大小写）都已经在 resolveRealPath 里规范化掉。
   const denied = deniedWorkspaceRoots()
-  if (denied.equal.some(root => real === resolveRealPath(root))) {
+  // isDriveRoot：Windows 上 `D:\` 这类非系统盘的盘根不在 equal 表里（表里只有家目录所在的盘），
+  // 但拿整块盘当工作根同样等于把整台机器放进来。
+  if (isDriveRoot(real) || denied.equal.some(root => samePath(real, resolveRealPath(root)))) {
     return { ok: false, code: 'too_broad', reason: `目录太宽，会把整台机器都放进工作范围：${real}`, resolved: real }
   }
   if (denied.subtree.some(root => pathWithin(real, resolveRealPath(root))) || isBareHomeDotDir(real)) {
@@ -588,7 +576,7 @@ export function isBuiltinResourcePath(filePath: string): boolean {
   const roots = _builtinRoots
   if (!roots.length) return false
   const real = resolveRealPath(filePath)
-  return roots.some(d => real.startsWith(d + path.sep) || real === d)
+  return roots.some(d => pathWithin(real, d))
 }
 
 // =====================================================================
@@ -651,22 +639,53 @@ function inside(candidate: string, root: string, workingDir?: string): boolean {
 }
 
 /**
- * 遍历类命令（find/rg/du/tree、grep -r、ls -R）的目标是否是主目录根 / /Users / 全盘。
- * 命中返回提示语（needs_confirmation 用），未命中 null。只认"遍历根 = 主目录本身或更上层"，
- * 明确子目录（~/Documents/code、~/Desktop/xx）不拦——防线对准的是隐私暴露面，不是读操作本身。
+ * 遍历类命令（find/rg/du/tree、grep -r、ls -R；PowerShell 的 Get-ChildItem -Recurse）的目标
+ * 是否是主目录根 / /Users（C:\Users）/ 全盘。命中返回提示语（needs_confirmation 用），未命中 null。
+ * 只认"遍历根 = 主目录本身或更上层"，明确子目录（~/Documents/code、~/Desktop/xx）不拦——
+ * 防线对准的是隐私暴露面，不是读操作本身。
+ *
+ * platform / home 是测试接缝：Windows 的 token 形状（`C:\`、`/c/`、`%USERPROFILE%`、
+ * `$env:USERPROFILE`）在 macOS 上要用 path.win32 才算得出来。
  */
-export function detectHomeWideScan(command: string): string | null {
+export function detectHomeWideScan(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+  home: string = HOME
+): string | null {
   const traversal = /\b(?:find|rg|du|tree)\b/.test(command) ||
     /\bgrep\b[^|;&]*\s-[A-Za-z]*[rR]/.test(command) ||
-    /\bls\b[^|;&]*\s-[A-Za-z]*R/.test(command)
+    /\bls\b[^|;&]*\s-[A-Za-z]*R/.test(command) ||
+    /\b(?:Get-ChildItem|gci|dir|ls)\b[^|;&\n]*\s-Rec(?:urse)?\b/i.test(command)
   if (!traversal) return null
-  // 目标 token：独立出现的 ~ / $HOME / /Users[/<name>] / 裸 /（后面紧跟空白、引号、命令分隔或行尾才算）
-  const tokens = command.match(/(?:^|[\s"'`=])(~|\$HOME|\/Users(?:\/[A-Za-z0-9._-]+)?\/?|\/)(?=[\s"'`;|&)]|$)/g) || []
+  const win32 = platform === 'win32'
+  const p = win32 ? path.win32 : path.posix
+  const fold = (value: string): string => (win32 ? value.toLowerCase() : value)
+  // 目标 token：独立出现的 ~ / $HOME / %USERPROFILE% / $env:USERPROFILE / /Users[/<name>] /
+  // 盘根 `C:\` / `C:\Users[\<name>]` / Git Bash 的 `/c/` / 裸 /（后面紧跟空白、引号、命令分隔或行尾才算）
+  const scan = command
+    .replace(/\$env:userprofile/gi, '$env:USERPROFILE')
+    .replace(/%userprofile%/gi, '%USERPROFILE%')
+  const tokens = scan.match(
+    /(?:^|[\s"'`=])(~|\$HOME|\$env:USERPROFILE|%USERPROFILE%|\/Users(?:\/[A-Za-z0-9._-]+)?\/?|[A-Za-z]:[\\/](?:Users(?:[\\/][A-Za-z0-9._-]+)?[\\/]?)?|\/[a-z]\/(?:Users(?:\/[A-Za-z0-9._-]+)?\/?)?|\/)(?=[\s"'`;|&)]|$)/g
+  ) || []
+  const resolveTarget = (t: string): string => {
+    if (t === '~' || t === '$HOME' || t === '$env:USERPROFILE' || t === '%USERPROFILE%') return home
+    if (win32) {
+      // Git Bash 把盘符写成 /c/…；PowerShell 与 cmd 用 C:\…
+      const gitBashDrive = t.match(/^\/([a-z])(\/.*)?$/)
+      if (gitBashDrive) return p.resolve(`${gitBashDrive[1].toUpperCase()}:\\${(gitBashDrive[2] || '').slice(1)}`)
+    }
+    return p.resolve(t)
+  }
   for (const raw of tokens) {
     const t = raw.replace(/^[\s"'`=]+/, '')
-    const resolved = path.resolve(expandHome(t === '$HOME' ? '~' : t))
-    if (resolved === '/' || resolved === '/Users' || resolved === HOME) {
-      return `命令要遍历主目录/全盘（${t}）——会触达桌面、iCloud、照片、音乐等隐私目录并触发系统授权弹窗。如确有必要请确认；若在找随消息发来的图片，存盘路径已在消息中注明，无需搜索`
+    const resolved = resolveTarget(t)
+    const wholeMachine = win32 ? isDriveRoot(resolved, 'win32') : resolved === '/'
+    const usersRoot = win32 ? fold(resolved) === fold(p.dirname(home)) : resolved === '/Users'
+    if (wholeMachine || usersRoot || fold(resolved) === fold(home)) {
+      return win32
+        ? `命令要遍历用户目录/整块磁盘（${t}）——会触达桌面、文档、下载等隐私目录。如确有必要请确认；若在找随消息发来的图片，存盘路径已在消息中注明，无需搜索`
+        : `命令要遍历主目录/全盘（${t}）——会触达桌面、iCloud、照片、音乐等隐私目录并触发系统授权弹窗。如确有必要请确认；若在找随消息发来的图片，存盘路径已在消息中注明，无需搜索`
     }
   }
   return null
@@ -724,10 +743,10 @@ export function assessToolScopeWithRoots(
     }
   }
 
-  if (toolName !== 'bash' && toolName !== 'shell') return null
+  if (toolName !== 'bash' && toolName !== 'shell' && toolName !== 'powershell') return null
   const command = String(args?.command || '')
   if (!command) return null
-  const broadDiscovery = /\b(?:find|rg|grep|ls)\b/.test(command)
+  const broadDiscovery = /\b(?:find|rg|grep|ls|Get-ChildItem|gci|dir)\b/i.test(command)
 
   // Bash 参数不是结构化路径，针对 OpenPipal 自有根目录做明确的租户边界判定。
   // 先抓绝对/~ 路径；命令里只写 `.openpipal/...` 的情况再用关键目录兜底。
@@ -783,8 +802,8 @@ const DESTRUCTIVE_CODE_RE = /\bshutil\.rmtree\b|\bos\.(remove|unlink|rmdir|remov
  * eval/exec 是脚本名和子命令，不是 shell 内建。只在命令位置匹配，既保住防绕过的原意，
  * 又不再打日常命令。
  */
-function atCommandPosition(word: string): RegExp {
-  return new RegExp(String.raw`(?:^|[\n;&|(])\s*${word}\b`)
+function atCommandPosition(word: string, flags = ''): RegExp {
+  return new RegExp(String.raw`(?:^|[\n;&|(])\s*${word}\b`, flags)
 }
 
 /**
@@ -807,6 +826,26 @@ const IRREVERSIBLE_COMMANDS: Array<[RegExp, string]> = [
   [/\b(chmod|chown)\b.*\b777\b/, '把权限改成 777'],
   [atCommandPosition('eval'), 'shell eval'],
   [atCommandPosition('exec'), 'shell exec'],
+  // ---- PowerShell / cmd（Windows 的 powershell 工具，以及 bash 里嵌的 `pwsh -c` 同一张表）----
+  // 对应关系：Format-Volume ≈ mkfs、`irm … | iex` ≈ `curl | sh`、Invoke-Expression ≈ eval、
+  // RunAs/runas ≈ sudo、icacls Everyone ≈ chmod 777。HKLM 是机器级注册表，删了整机受影响。
+  [/\b(?:Format-Volume|Clear-Disk|Remove-Partition|Initialize-Disk)\b/i, '格式化或抹掉磁盘分区'],
+  // `format` 只认后面直接跟盘符的写法：python 的 `format(x)` 也会出现在行首
+  [/(?:^|[\n;&|(])\s*format(?:\.com)?\s+[A-Za-z]:/i, '格式化磁盘（format）'],
+  [/(?:^|[\n;&|(])\s*diskpart\b/i, '改动磁盘分区（diskpart）'],
+  [/\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest|curl|wget)\b[^\n]*\|\s*(?:iex|Invoke-Expression|pwsh|powershell)\b/i, '把下载内容直接喂给 PowerShell'],
+  [atCommandPosition('Invoke-Expression', 'i'), 'PowerShell Invoke-Expression'],
+  // `iex` 别名只认 PowerShell 的用法（后面跟 $var / ( / 引号 / -Command，或直接收尾如 `… | iex`）：
+  // Elixir 的 REPL 也叫 iex，`iex -S mix` 是日常命令，不能一并硬拒
+  [/(?:^|[\n;&|(])\s*iex(?:\s+[($"'`]|\s+-Command\b|(?=\s*(?:$|[\n;&|)])))/i, 'PowerShell Invoke-Expression（iex）'],
+  [/\bStart-Process\b[^\n]*-Verb\s+RunAs\b/i, '提权运行（Start-Process -Verb RunAs）'],
+  [/(?:^|[\n;&|(])\s*runas(?:\.exe)?\s/i, '提权运行（runas）'],
+  [/\breg(?:\.exe)?\s+delete\s+HKLM\b/i, '删机器级注册表（reg delete HKLM）'],
+  [/\bRemove-Item\b[^\n]*\bHKLM:/i, '删机器级注册表（Remove-Item HKLM:）'],
+  [/\b(?:Stop-Computer|Restart-Computer)\b/i, '关机 / 重启'],
+  [/(?:^|[\n;&|(])\s*shutdown(?:\.exe)?\s+[/-]/i, '关机 / 重启（shutdown）'],
+  [/\bSet-MpPreference\b[^\n]*-Disable/i, '关闭 Defender 防护'],
+  [/\bicacls\b[^\n]*\/grant[^\n]*\b(?:Everyone|\*S-1-1-0)\b/i, '把权限放给 Everyone'],
 ]
 
 const DESTRUCTIVE_COMMANDS: Array<[RegExp, string]> = [
@@ -819,6 +858,14 @@ const DESTRUCTIVE_COMMANDS: Array<[RegExp, string]> = [
   // 不能写 `\b-delete\b`：`\b` 要求非词字符与词字符相邻，而 `-` 前面是空格——两边都是
   // 非词字符，边界不成立，这条规则原本从来没有命中过（继承自旧的 DANGEROUS_BASH_PATTERNS）
   [/\bfind\b.*(?:^|\s)-delete\b/, 'find -delete'],
+  // ---- PowerShell / cmd 的递归或强制删除。bash 那条 `rm -r` 规则对 PowerShell 的 rm 别名同样命中，
+  // 这里补的是它认不出的写法：Remove-Item -Recurse/-Force、rd /s /q、del /s /q、`gci … | Remove-Item`
+  [/\b(?:Remove-Item|ri|rmdir|rd|del|erase)\b[^\n;|&]*(?:\s-Recurse\b|\s-Force\b|\s-rf?\b|\s-fo\b|\s\/[sSqQ]\b)/i, '递归或强制删除（Remove-Item / rd / del）'],
+  [/\|\s*(?:Remove-Item|ri|del|erase)\b/i, '管道批量删除（… | Remove-Item）'],
+  // HKLM 版本在上面是硬拒；用户自己的注册表项（HKCU 等）与回收站交给用户裁决
+  [/\breg(?:\.exe)?\s+delete\b/i, '删注册表项（reg delete）'],
+  [/\bRemove-Item\b[^\n]*\bHK(?:CU|U|CR|CC):/i, '删注册表项（Remove-Item HKCU:）'],
+  [/\bClear-RecycleBin\b/i, '清空回收站'],
 ]
 
 export type DestructiveTier = 'blocked' | 'confirm'
@@ -891,14 +938,19 @@ function commandWritesArtifactSidecar(command: string): boolean {
       commandIndex++
       while (commandIndex < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[commandIndex])) commandIndex++
     }
-    const executable = path.basename(tokens[commandIndex] || '')
+    // PowerShell 的 cmdlet 与别名不分大小写；把 `Copy-Item` / `Set-Content` 这类写命令
+    // 折成小写后和 cp/tee 走同一套"目标操作数"判定（Windows 上 bash 与 powershell 都要拦）
+    const executable = path.basename(tokens[commandIndex] || '').toLowerCase()
     const args = tokens.slice(commandIndex + 1)
     const operands = args.filter(arg => arg !== '--' && !arg.startsWith('-'))
 
-    if (executable === 'cp' || executable === 'mv') {
+    if (['cp', 'mv', 'copy', 'move', 'copy-item', 'move-item', 'cpi', 'mi'].includes(executable)) {
       // cp/mv 的最后一个操作数是目标；前面的 sidecar 路径都只是来源。
       if (artifactPathIn(operands.at(-1))) return true
-    } else if (executable === 'tee' || executable === 'mkdir' || executable === 'touch' || executable === 'rm') {
+    } else if ([
+      'tee', 'mkdir', 'touch', 'rm',
+      'set-content', 'sc', 'add-content', 'ac', 'out-file', 'new-item', 'ni', 'remove-item', 'ri', 'del', 'md'
+    ].includes(executable)) {
       if (operands.some(artifactPathIn)) return true
     } else if (executable === 'sed' && args.some(arg => arg === '-i' || arg.startsWith('-i'))) {
       // sed -i 会原地改写文件，出现的 sidecar 文件就是写入目标。
@@ -906,6 +958,75 @@ function commandWritesArtifactSidecar(command: string): boolean {
     }
   }
   return false
+}
+
+/**
+ * 没有 OS 沙箱的平台上给用户看的那句话——确认卡上每条命令都带着它。
+ * 说的是事实（边界 = 你的账号权限），不是安抚。
+ */
+export const NO_SANDBOX_SHELL_NOTICE = '本平台没有系统沙箱，这条命令会以你的账号权限直接执行'
+
+/**
+ * 命令 / 代码文本里有没有**写明**的凭据路径。
+ *
+ * 只在没有 OS 沙箱的平台上用（Windows）：那里 `cat ~/.ssh/id_rsa` 与 `ls` 的差别只剩一张
+ * 确认卡，而人对确认卡的反应是习惯性点允许。文本判据认不全（变量拼接、子解释器），
+ * 所以它不替代逐条确认，只把最直白的那一类从「问用户」提到「直接拦」。
+ *
+ * 按 token 找**路径形状**的片段，不做整串子串匹配：`process.env.X` 里的 `.env` 不是路径，
+ * 项目根下的 `.npmrc` 是仓库配置不是家目录凭据——所以家目录专属的那几个文件名要求 token
+ * 以家目录标记（~、$HOME、%USERPROFILE%、/Users/x、C:\Users\x）开头。反斜杠先折成正斜杠，
+ * 一张表同时盖住 bash 与 PowerShell 的写法。
+ */
+const CREDENTIAL_PATH_PATTERNS: Array<[RegExp, string, 'anywhere' | 'home']> = [
+  [/(^|\/)\.(?:ssh|aws|gnupg|kube|docker|password-store|credentials)(\/|$)/i, '.ssh / .aws 这类凭据目录', 'anywhere'],
+  [/(^|\/)\.(?:git-credentials|netrc|npmrc|gitconfig\.local)$/i, '家目录下的 git / npm 凭据文件', 'home'],
+  [/(^|\/)\.config\/(?:gh|hub|gcloud)(\/|$)/i, 'CLI 登录凭据（gh / gcloud）', 'anywhere'],
+  [/(^|\/)\.config\/git\/credentials$/i, 'git 凭据文件', 'anywhere'],
+  // %APPDATA% 既可能已展开（…/AppData/Roaming/…）也可能还是变量（$env:APPDATA、%APPDATA%）
+  [/(?:appdata\/roaming|\$env:appdata|%appdata%)\/(?:github cli|gcloud|gnupg)(\/|$)/i, '%APPDATA% 下的 CLI 凭据', 'anywhere'],
+  [/(?:appdata\/(?:roaming|local)|\$env:(?:local)?appdata|%(?:local)?appdata%)\/microsoft\/credentials(\/|$)/i, 'Windows 凭据管理器的落盘', 'anywhere'],
+  [/(^|\/)(?:\.bash_history|\.zsh_history|consolehost_history\.txt)$/i, 'shell 命令历史', 'anywhere'],
+]
+
+const HOME_MARKER_RE = /^(?:~|\$HOME|\$env:USERPROFILE|%USERPROFILE%|\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:\/Users\/[^/]+|\/[a-z]\/Users\/[^/]+)\//i
+
+/** 数据根里真正装凭据的那几个位置，相对数据根、已折成正斜杠（从 credential-paths 算，不手抄一份） */
+function credentialDataRootEntries(): string[] {
+  const root = getDataRoot()
+  return getCredentialReadDenyPaths()
+    .map(p => path.relative(root, p).split(path.sep).join('/'))
+    .filter(rel => rel && !rel.startsWith('..'))
+}
+
+export function detectCredentialPathReference(text: string): string | null {
+  if (!text) return null
+  const dataRootName = path.basename(getDataRoot())
+  const dataRootEntries = credentialDataRootEntries()
+  for (const rawToken of shellTokens(text)) {
+    const token = rawToken.replace(/\\/g, '/')
+    for (const [re, label, where] of CREDENTIAL_PATH_PATTERNS) {
+      if (!re.test(token)) continue
+      if (where === 'home' && !HOME_MARKER_RE.test(token)) continue
+      return label
+    }
+    // dotenv：`.env` / `.env.local` 拦，`.env.example` 这类模板放行（与结构化读工具同一条规则）
+    const dotenv = token.match(/(?:^|\/)(\.env(?:\.[^/]+)?)$/i)
+    if (dotenv && !isEnvTemplateBasename(dotenv[1])) return 'dotenv 文件'
+    // ~/.openpipal 下的 config.json / oauth / tasks 等——数据根其余部分（workspace、skills、memory）照常可用
+    const inDataRoot = token.match(new RegExp(`(?:^|/)${escapeRegExp(dataRootName)}/(.+)$`, 'i'))
+    if (inDataRoot) {
+      const rest = inDataRoot[1].toLowerCase()
+      if (dataRootEntries.some(entry => rest === entry.toLowerCase() || rest.startsWith(`${entry.toLowerCase()}/`))) {
+        return `~/${dataRootName} 里的配置与凭据文件`
+      }
+    }
+  }
+  return null
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /** 从工具参数中提取文件路径 */
@@ -967,8 +1088,8 @@ export function classifyToolRisk(
     return { level: 'safe', reason: '只读工具' }
   }
 
-  // ---- bash/shell 命令检查 ----
-  if (toolName === 'bash' || toolName === 'shell') {
+  // ---- bash/shell/powershell 命令检查 ----
+  if (toolName === 'bash' || toolName === 'shell' || toolName === 'powershell') {
     const command: string = args?.command || ''
     // artifact sidecar 旁路封锁（Layer 3 硬性边界，沙箱与否都拦）：见上方常量定义注释
     if (commandWritesArtifactSidecar(command)) {
@@ -983,10 +1104,22 @@ export function classifyToolRisk(
     // sensitive path can be assembled through variables, substitutions, or a
     // child interpreter. If the OS sandbox is unavailable, confirmation alone
     // cannot guarantee that OpenPipal credentials remain unreadable.
-    if (!isSandboxed()) {
+    //
+    // 两种"没沙箱"要分开：macOS / Linux 本该有沙箱却没起来，是故障，fail-closed 整条禁掉；
+    // Windows 根本没有可用的 OS 沙箱，禁掉等于这个平台永远没有 shell——那里改成
+    // **每条命令交给用户裁决**（需确认，本次会话只记住完全相同的那一条），确认卡上写明
+    // 边界是用户自己的账号权限；文本上认得出的凭据路径直接拦，不给「点允许」的机会。
+    const unsandboxed = !isSandboxed()
+    if (unsandboxed && osSandboxAvailableOnPlatform()) {
       return { level: 'risky', reason: '系统沙箱未启用，已安全禁用 Shell 执行' }
     }
-    // 破坏性但可逆的那一档放在沙箱判定之后：没有沙箱时 shell 整条已被禁，
+    if (unsandboxed) {
+      const credentialRef = detectCredentialPathReference(command)
+      if (credentialRef) {
+        return { level: 'risky', reason: `命令触到了凭据路径（${credentialRef}）。没有系统沙箱兜底时禁止执行；请换一个不涉及凭据文件的做法。` }
+      }
+    }
+    // 破坏性但可逆的那一档放在沙箱判定之后：沙箱故障时 shell 整条已被禁，
     // 先判会得到「rm -rf 只要确认、ls 反而硬拒」的倒挂。
     if (destructive?.tier === 'confirm') {
       // alwaysConfirm：这一档是「交给用户裁决」的破坏性操作（rm -rf / git reset --hard /
@@ -1007,6 +1140,11 @@ export function classifyToolRisk(
     if (homeScan) {
       // alwaysConfirm：隐私边界与"要不要每次问"无关，完全允许档也得问（见 RiskAssessment 注释）
       return { level: 'needs_confirmation', reason: homeScan, alwaysConfirm: true }
+    }
+    if (unsandboxed) {
+      // 普通命令在无沙箱平台上：需确认，但**不带 alwaysConfirm**——用户选了"完全允许"就是在说
+      // 「这台 Windows 上我信任它跑命令」，那是用户的决定；破坏性与隐私那两档在上面仍然每次问。
+      return { level: 'needs_confirmation', reason: `${NO_SANDBOX_SHELL_NOTICE}: ${command.substring(0, 80)}` }
     }
     return { level: 'safe', reason: `沙箱保护下执行: ${command.substring(0, 80)}` }
   }
@@ -1088,8 +1226,16 @@ export function classifyToolRisk(
     // Arbitrary Python/JavaScript/Bash can construct sensitive paths in ways a
     // source regex cannot soundly recognize. Fail closed unless the execution
     // backend has the denyRead sandbox that protects credential files.
-    if (!isSandboxed()) {
+    // 与 bash 分支同一套两分法：沙箱故障 → 禁；平台本无沙箱（Windows）→ 逐条确认 + 凭据路径文本闸。
+    const unsandboxedCode = !isSandboxed()
+    if (unsandboxedCode && osSandboxAvailableOnPlatform()) {
       return { level: 'risky', reason: '系统沙箱未启用，已安全禁用代码执行' }
+    }
+    if (unsandboxedCode) {
+      const credentialRef = detectCredentialPathReference(code)
+      if (credentialRef) {
+        return { level: 'risky', reason: `代码触到了凭据路径（${credentialRef}）。没有系统沙箱兜底时禁止执行；请换一个不涉及凭据文件的做法。` }
+      }
     }
     if (destructiveCode?.tier === 'confirm' || DESTRUCTIVE_CODE_RE.test(code)) {
       // 与 bash 同档同待遇：完全允许档也吃不掉（否则堵了 bash 这扇门又从代码执行开一扇窗）
@@ -1098,6 +1244,9 @@ export function classifyToolRisk(
         reason: `代码包含删除/破坏性操作${destructiveCode ? `（${destructiveCode.label}）` : ''}，与 bash 同级确认`,
         alwaysConfirm: true
       }
+    }
+    if (unsandboxedCode) {
+      return { level: 'needs_confirmation', reason: `${NO_SANDBOX_SHELL_NOTICE}（${lang} 代码）` }
     }
     return { level: 'safe', reason: '沙箱保护下执行代码' }
   }
@@ -1224,7 +1373,7 @@ let requestCounter = 0
 // ---- 会话级权限记忆 ----
 const sessionApprovals = new Map<string, Set<string>>()
 const ARGUMENT_SCOPED_SESSION_TOOLS = new Set([
-  'bash', 'shell', 'execute_code',
+  'bash', 'shell', 'powershell', 'execute_code',
   'write', 'edit', 'write_file', 'create_file'
 ])
 
@@ -1506,7 +1655,7 @@ async function enforceGitProjectGrant(
   context: { conversationId?: string; tier: PermissionTier; workingDir?: string },
   signal?: AbortSignal
 ): Promise<BeforeToolCallResult | undefined> {
-  if (toolName !== 'bash' && toolName !== 'shell' && toolName !== 'execute_code') return undefined
+  if (toolName !== 'bash' && toolName !== 'shell' && toolName !== 'powershell' && toolName !== 'execute_code') return undefined
   const command = String(
     (toolName === 'execute_code' ? args?.code : args?.command) || ''
   )

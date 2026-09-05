@@ -3,7 +3,7 @@
 // 启动阶段的日志才进得了文件——而启动阶段恰恰最容易出事。
 import './main-log'
 import './env'
-import { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, shell, ipcMain, screen } from 'electron'
 import { loadConfig, saveConfig } from './config-manager'
 import { join } from 'path'
 import { mkdirSync, existsSync } from 'fs'
@@ -16,7 +16,7 @@ import { shutdownOAuth } from './mcp-oauth'
 import { initSkills, reloadSkills, preloadSkillEngine } from './skill-manager'
 import { initSubagents, preloadSubagentEngine } from './subagent-manager'
 import { initializeOptionalStartupCapability } from './startup-capability-readiness'
-import { initRoles, switchRole, getAllRoles, getCurrentRole, RoleConfig, getDisabledApps, getDetectedApps, isAppFollowingEnabled, setAppFollowingEnabled, setDisabledApps } from './role-manager'
+import { initRoles, switchRole, getAllRoles, getCurrentRole, RoleConfig, getDisabledApps, getDetectedApps, getDetectedAppLabels, isAppFollowingEnabled, setAppFollowingEnabled, setDisabledApps } from './role-manager'
 import { migrateLegacyTemplates } from './agent-template-manager'
 import { migrateLegacyWorkspaces, ensureAgentOutputsDirs } from './agent-workspace-store'
 import { gcArtifactDebris } from './artifact-store'
@@ -36,6 +36,7 @@ import { DATA_DIR_NAME, dataPath, getOpenPipalHome } from './data-root'
 import { safeExternalHttpUrl } from './external-navigation-policy'
 import { drainConversationService, initializeConversationService } from './conversation-service'
 import { shutdownDurableVoiceSession } from './durable-voice-session'
+import { platformWindowOptions, trayIconFile } from './platform-window'
 
 // Release/real-device QA must never borrow the operator's real OpenPipal data.
 // Release/real-device QA must never borrow the operator's real OpenPipal data.
@@ -60,6 +61,8 @@ if (isolatedHome) {
   // 必须先于任何 os.homedir() 消费者求值 —— 本文件是主进程入口,且 env/main-log
   // 之外的模块都在其后 import。
   process.env.HOME = resolvedIsolatedHome
+  // Windows 的 os.homedir() 读 USERPROFILE 不读 HOME；两个都设，下面的 fail-closed 断言才成立
+  if (process.platform === 'win32') process.env.USERPROFILE = resolvedIsolatedHome
   app.setPath('home', resolvedIsolatedHome)
   app.setPath('userData', isolatedUserData)
   if (homedir() !== resolvedIsolatedHome) {
@@ -174,7 +177,9 @@ ipcMain.handle('settings:get-apps', () => ({
   enabled: isAppFollowingEnabled(),
   detected: getDetectedApps(),
   disabled: getDisabledApps(),
-  browsers: Array.from(BROWSER_APPS)
+  browsers: Array.from(BROWSER_APPS),
+  // Windows 的键是 exe 名（WINWORD），给人看的名字另存一份；macOS 上键就是名字，这里是空表
+  labels: getDetectedAppLabels()
 }))
 ipcMain.handle('settings:set-disabled-apps', (_event, apps: string[]) => {
   if (!Array.isArray(apps) || !apps.every(appName => typeof appName === 'string')) {
@@ -219,23 +224,18 @@ function createWindow(): void {
     // Orb 模式需要 setBounds(72×72)，最小尺寸必须 ≤ 72 否则 macOS 会拒绝并把窗口卡在 480×400
     minWidth: 64,
     minHeight: 64,
-    // 透明无边框：docked 模式靠 App.tsx 的 bg 填充
+    // 无边框：docked 模式靠 App.tsx 的 bg 填充（透明与否随平台，见下方 platformWindowOptions）
     // 代价：没有原生 traffic lights（改用 Tray / Cmd+Q / Cmd+W 关闭）
-    transparent: true,
     frame: false,
     // 一块浮着的玻璃必须有影子,否则它只是「贴」在桌面上。
     // 之前关掉是为了 orb 模式(72px 圆球外面套一圈方影子很难看),
     // 而 orb 已在 window-tracker 里彻底移除,可以开回来。
     hasShadow: true,
-    // macOS 原生毛玻璃材质。backdrop-filter 只能采样页面自己的像素,采不到桌面 ——
-    // 想让 chrome 真的磨砂透出背后的桌面/前台应用,只有挂 NSVisualEffectView 这一条路。
-    // visualEffectState:'active' 让材质在窗口失焦时依然保持点亮:OpenPipal 常年
-    // 贴在别的应用旁边,失焦是常态,不能一没焦点就糊成一块死灰。
-    vibrancy: 'under-window',
-    visualEffectState: 'active',
     alwaysOnTop: false,
     skipTaskbar: false,
-    backgroundColor: '#00000000',
+    // 透明 / 毛玻璃 / 底色随平台走：macOS 透明 + vibrancy，其他平台不透明主题底色（见 platform-window.ts）。
+    // 建窗时只能按系统深浅猜，渲染层主题定下来后会经 window:set-background 对齐。
+    ...platformWindowOptions(process.platform, nativeTheme.shouldUseDarkColors),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -471,9 +471,11 @@ app.on('before-quit', (e) => {
 function createTray(): void {
   // 官方 mark 的 template 版（纯黑+透明,文件名 Template 结尾 → 自动适配菜单栏深浅色）
   // 重新生成: node scripts/render-tray-icon.cjs
+  // Windows 用彩色 .ico（模板反色只有 macOS 做）——文件名由 platform-window.ts 决定
+  const iconFile = trayIconFile()
   const iconPath = app.isPackaged
-    ? join(process.resourcesPath, 'tray/openpipalTemplate.png')
-    : join(__dirname, '../../resources/tray/openpipalTemplate.png')
+    ? join(process.resourcesPath, 'tray', iconFile)
+    : join(__dirname, '../../resources/tray', iconFile)
   const icon = nativeImage.createFromPath(iconPath)
   // 图缺失时回落到旧的文字符号,保证 Tray 永远可见可点
   tray = new Tray(icon)

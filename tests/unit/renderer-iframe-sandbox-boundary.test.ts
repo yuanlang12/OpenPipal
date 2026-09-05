@@ -74,8 +74,9 @@ describe('CLI 探测命令注入边界', () => {
     const source = read('src/main/cli-registry.ts')
     expect(source).not.toContain('execSync')
     expect(source).toContain('execFileSync')
-    // 命令与参数必须分离传递
-    expect(source).toContain("execFileSync('which', [command]")
+    // 命令与参数必须分离传递；查找命令按平台选 which / where，但仍是 execFile 的第一个参数，不进字符串
+    expect(source).toContain("const LOOKUP_COMMAND = process.platform === 'win32' ? 'where' : 'which'")
+    expect(source).toContain('execFileSync(LOOKUP_COMMAND, [command]')
     expect(source).toContain("execFileSync(command, ['--version']")
   })
 

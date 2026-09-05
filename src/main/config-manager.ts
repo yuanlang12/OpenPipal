@@ -181,6 +181,8 @@ export interface OpenPipalConfig {
   appFollowingEnabled?: boolean
   disabledApps?: string[]
   detectedApps?: string[]
+  /** detectedApps 的键 → 显示名；只有两者不同（Windows：exe 名 vs 版本信息里的名字）才有条目 */
+  detectedAppLabels?: Record<string, string>
   modelConfig?: ModelConfig
   modelPresets?: ModelPreset[]     // 已保存的模型预设列表
   modelProviders?: ModelProvider[] // 服务商实体列表（configVersion 2 起）

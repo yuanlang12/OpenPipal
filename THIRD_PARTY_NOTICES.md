@@ -57,7 +57,7 @@ verified.
 | `protobufjs` | `^8.6.0` / `8.6.0` | BSD-3-Clause | `protobufjs/protobuf.js` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
 | `quickjs-emscripten` | `^0.32.0` / `0.32.0` | MIT | `justjake/quickjs-emscripten` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
 | `react-i18next` | `17.0.11` / `17.0.11` | MIT | `i18next/react-i18next` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
-| `sharp` | `^0.33.5` / `0.33.5` | Apache-2.0 | `lovell/sharp` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
+| `sharp` | `^0.35.4` / `0.35.4` | Apache-2.0 | `lovell/sharp` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
 | `typescript` | `^5.7.2` / `5.9.3` | Apache-2.0 | `microsoft/TypeScript` | `package.json`, `LICENSE.txt` — **LOCALLY DOCUMENTED** |
 | `ws` | `^8.20.0` / `8.20.0` | MIT | `websockets/ws` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |
 | `yaml` | `2.9.0` / `2.9.0` | ISC | `eemeli/yaml` | `package.json`, `LICENSE` — **LOCALLY DOCUMENTED** |

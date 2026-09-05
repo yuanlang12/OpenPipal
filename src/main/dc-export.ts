@@ -14,14 +14,13 @@
 import fs from 'fs'
 import path from 'path'
 import { homedir } from 'os'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { app } from 'electron'
 import { rewriteFromAttrs } from './dc-siblings'
 import { inlineDcForHeadless, collectSidecarNames, readSidecarFiles, injectSidecarData } from './dc-headless'
 import { findArtifactFileById } from './artifact-store'
 import { mainError } from './main-i18n'
 import { dataPath, getDataRoot } from './data-root'
+import { zipDirectory } from './zip-archive'
 
 const OUTPUTS_ROOT = dataPath('outputs')
 
@@ -344,8 +343,6 @@ export function exportStandaloneHtml(
   }
 }
 
-const execFileAsync = promisify(execFile)
-
 export interface ZipExportResult {
   ok: boolean
   path?: string
@@ -392,20 +389,8 @@ export async function exportZip(sourceDir: string, outName: string, targetDir?: 
     // 双保险防穿越：sanitize 后 outPath 的父目录必须恰是输出根
     if (path.dirname(outPath) !== outRoot) return { ok: false, ...mainError('artifacts.shell.export.errors.badOutputName') }
 
-    // zip -r 对已存在的包是追加而非覆盖，先删旧包保证幂等
-    try {
-      if (fs.existsSync(outPath)) fs.unlinkSync(outPath)
-    } catch {
-      /* ignore */
-    }
-
-    const parent = path.dirname(resolved)
-    const basename = path.basename(resolved)
-    // cwd=父目录 → 包内为 <basename>/… 相对路径，不泄露绝对路径
-    await execFileAsync('zip', ['-r', '-q', outPath, basename], {
-      cwd: parent,
-      maxBuffer: 64 * 1024 * 1024
-    })
+    // 包内为 <basename>/… 相对路径，不泄露绝对路径；打包走 zip-archive.ts（系统 bsdtar，两平台通用，不追加）
+    await zipDirectory(resolved, outPath, 'nested')
 
     if (!fs.existsSync(outPath) || fs.statSync(outPath).size === 0) {
       return { ok: false, ...mainError('artifacts.shell.export.errors.zipEmpty') }
