@@ -56,10 +56,12 @@ jobs:
 
       # 显式传架构：electron-builder.yml 的 win.target 不写 arch，CLI 说打哪个就打哪个
       # （node_modules 里只有本 runner 架构的 win32 原生包，打另一个架构就是坏包）。
+      # --publish never：electron-builder 在 CI 环境里会自动尝试发到 GitHub Release，没 GH_TOKEN 就以
+      # 退出码 1 收场——安装包其实已经打好了（2026-09-05 首跑实撞）。发布由人决定，这里只出产物。
       - name: Build installer
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run build:win -- --${{ matrix.arch }}
+        run: npm run build:win -- --${{ matrix.arch }} --publish never
 
       - name: Factory check
         run: node scripts/verify-windows-release.mjs --dist dist --arch ${{ matrix.arch }} --json dist/windows-release-report-${{ matrix.arch }}.json
