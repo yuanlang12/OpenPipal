@@ -1,0 +1,177 @@
+{
+  "title": "今天想设计点什么？",
+  "inputPlaceholder": "画一个落地页布局…",
+  "projectName": {
+    "enabled": false
+  },
+  "fields": [
+    {
+      "id": "taskType",
+      "kind": "text-options",
+      "title": "模板",
+      "display": "cards",
+      "options": [
+        {
+          "label": "原型",
+          "subtitle": "交互式手机尺寸原型",
+          "placeholder": "描述要设计的应用…"
+        },
+        {
+          "label": "幻灯片",
+          "subtitle": "演示文稿与路演材料",
+          "placeholder": "把这些信息整理成幻灯片…"
+        },
+        {
+          "label": "文档",
+          "subtitle": "简历、PDF 等",
+          "placeholder": "描述要撰写的文档…"
+        },
+        {
+          "label": "线框",
+          "subtitle": "低保真界面与流程",
+          "placeholder": "描述要勾勒的界面…"
+        },
+        {
+          "label": "动画",
+          "subtitle": "动态图形与循环动画",
+          "placeholder": "描述要制作的动画…"
+        },
+        {
+          "label": "界面稿",
+          "subtitle": "应用界面与交互画面",
+          "placeholder": "描述要制作的界面稿…"
+        },
+        {
+          "label": "简历",
+          "subtitle": "简洁、可打印的简历",
+          "placeholder": "描述要呈现的岗位与经历…"
+        },
+        {
+          "label": "研究报告",
+          "subtitle": "基于实时网络来源的报告",
+          "placeholder": "描述要研究的主题…"
+        },
+        {
+          "label": "邮件",
+          "subtitle": "可直接发送的单文件邮件",
+          "placeholder": "描述要设计的邮件…"
+        },
+        {
+          "label": "传单",
+          "subtitle": "可直接打印的单页",
+          "placeholder": "描述要宣传的活动或事项…"
+        },
+        {
+          "label": "配色与字体",
+          "subtitle": "配色与字体搭配探索",
+          "placeholder": "描述要探索的品牌或氛围…"
+        },
+        {
+          "label": "示意图",
+          "subtitle": "流程图与系统草图",
+          "placeholder": "描述要绘制的示意图…"
+        },
+        {
+          "label": "三折页",
+          "subtitle": "双面可打印折页",
+          "placeholder": "描述要制作的宣传折页…"
+        },
+        {
+          "label": "3D 物体",
+          "subtitle": "可导出 OBJ 或 GLB 的 three.js 模型",
+          "placeholder": "描述要建模的物体…"
+        }
+      ]
+    }
+  ],
+  "contextButtons": [
+    "brand",
+    "screenshot",
+    "codebase",
+    "figma"
+  ],
+  "allowSkip": true,
+  "localeOverlays": {
+    "en": {
+      "title": "What would you like to design today?",
+      "inputPlaceholder": "Sketch a landing-page layout…",
+      "fields": {
+        "taskType": {
+          "title": "Template",
+          "options": [
+            {
+              "label": "Prototype",
+              "subtitle": "Interactive phone-sized mockups",
+              "placeholder": "Describe the app to design…"
+            },
+            {
+              "label": "Slides",
+              "subtitle": "Presentations and pitch decks",
+              "placeholder": "Turn this information into slides…"
+            },
+            {
+              "label": "Document",
+              "subtitle": "Résumés, PDFs, and more",
+              "placeholder": "Describe the document to write…"
+            },
+            {
+              "label": "Wireframe",
+              "subtitle": "Lo-fi screens and flows",
+              "placeholder": "Describe the screens to sketch…"
+            },
+            {
+              "label": "Animation",
+              "subtitle": "Motion graphics and loops",
+              "placeholder": "Describe the animation to make…"
+            },
+            {
+              "label": "UI mockup",
+              "subtitle": "App screens and interfaces",
+              "placeholder": "Describe the screens to mock up…"
+            },
+            {
+              "label": "Résumé",
+              "subtitle": "Clean, print-ready résumés",
+              "placeholder": "Describe the role and experience to present…"
+            },
+            {
+              "label": "Research report",
+              "subtitle": "Reports grounded in live web sources",
+              "placeholder": "Describe the topic to research…"
+            },
+            {
+              "label": "Email",
+              "subtitle": "Send-ready single-file emails",
+              "placeholder": "Describe the email to design…"
+            },
+            {
+              "label": "Flyer",
+              "subtitle": "Print-ready single pages",
+              "placeholder": "Describe the event or announcement…"
+            },
+            {
+              "label": "Color and type",
+              "subtitle": "Palette and typography explorations",
+              "placeholder": "Describe the brand or mood to explore…"
+            },
+            {
+              "label": "Diagram",
+              "subtitle": "Flowcharts and system sketches",
+              "placeholder": "Describe the diagram to draw…"
+            },
+            {
+              "label": "Trifold brochure",
+              "subtitle": "Print-ready two-sided folds",
+              "placeholder": "Describe the brochure to make…"
+            },
+            {
+              "label": "3D object",
+              "subtitle": "three.js models exportable as OBJ or GLB",
+              "placeholder": "Describe the object to model…"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

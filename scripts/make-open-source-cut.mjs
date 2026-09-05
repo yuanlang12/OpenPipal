@@ -4,7 +4,8 @@
  *
  * 私仓是唯一事实源；公开树由本脚本从私仓**确定性地裁出来**，而不是手工维护一个分支
  * ——手工分支会漂移，脚本不会。裁剪清单直接读 config/open-source-policy.json，
- * 于是「校验器认为不能公开的」与「实际没被拷进去的」不可能对不上。
+ * 于是「校验器认为不能公开的」与「实际没被拷进去的」不可能对不上。判定语义也与校验器相同：
+ * 一条路径命中多条规则时，最后一条算数（后面的 conditional-keep 可以覆盖前面的 exclude）。
  *
  * 裁掉两类：
  *   exclude              —— 明确不进公开发行（私有历史 / QA 产物 / 非默认 Agent）
@@ -39,20 +40,38 @@ const args = parseArgs(process.argv.slice(2))
 const repo = process.cwd()
 const policy = JSON.parse(readFileSync(join(repo, 'config', 'open-source-policy.json'), 'utf8'))
 
-const dropRules = policy.rules.filter(r => r.action === 'exclude' || r.action === 'blocked-replacement')
-const matchers = dropRules.flatMap(r => (r.patterns || []).map(p => ({ ruleId: r.id, re: globToRegExp(p) })))
+// 丢不丢按策略的语义判：**最后一条命中的规则算数**，与校验器 verify-open-source-candidate.mjs 一致。
+// reviewed-baseline 作用域的规则只对基线里有的路径生效。早先这里只看排除类规则、命中第一条就丢，
+// 于是 keep-self-written-design-roles 这种"覆盖排除、这一件要发"的规则被无视，设计助手的
+// preflow.json 从首发起就没进过公开树（2026-09-05 所有者在 Windows 真机上发现）。
+const baselinePaths = new Set(
+  execFileSync('git', ['ls-tree', '-r', '--name-only', policy.reviewedBaselineCommit], { cwd: repo, encoding: 'utf8' })
+    .split('\n').filter(Boolean)
+)
+// 接缝规则（keep-release-cut-seams）说的是**本脚本写出来的替身**（optional-roles.ts 空实现、公开 README、裁剪清单），
+// 只是让校验器认它们合法；拿它来判私仓原件会把被裁角色的真实现拷进公开树，所以判定时跳过它。
+const SEAM_RULE_ID = 'keep-release-cut-seams'
+const rules = policy.rules
+  .filter(r => r.id !== SEAM_RULE_ID)
+  .map(r => ({ id: r.id, scope: r.scope, action: r.action, matchers: (r.patterns || []).map(globToRegExp) }))
+const matchesRule = (rule, path) =>
+  !(rule.scope === 'reviewed-baseline' && !baselinePaths.has(path)) && rule.matchers.some(re => re.test(path))
 
 const tracked = execFileSync('git', ['ls-files'], { cwd: repo, encoding: 'utf8' }).split('\n').filter(Boolean)
 const dropped = new Map()
 const kept = []
+const keptByOverride = []
 for (const path of tracked) {
-  const hit = matchers.find(m => m.re.test(path))
-  if (hit) {
-    if (!dropped.has(hit.ruleId)) dropped.set(hit.ruleId, [])
-    dropped.get(hit.ruleId).push(path)
-  } else {
-    kept.push(path)
+  const matched = rules.filter(rule => matchesRule(rule, path))
+  const final = matched[matched.length - 1]
+  if (final && final.action !== 'conditional-keep') {
+    if (!dropped.has(final.id)) dropped.set(final.id, [])
+    dropped.get(final.id).push(path)
+    continue
   }
+  kept.push(path)
+  const overridden = matched.filter(rule => rule.action !== 'conditional-keep').map(rule => rule.id)
+  if (overridden.length) keptByOverride.push(`${path} ← ${final.id} 覆盖 ${overridden.join(', ')}`)
 }
 
 if (existsSync(args.outDir)) {
@@ -78,7 +97,11 @@ const roleModules = [
 ]
 for (const mod of roleModules) {
   const dest = join(args.outDir, mod.rel)
-  if (existsSync(dest)) continue // 本发行版带着它，原样保留
+  if (existsSync(dest)) {
+    // 带着它 = 策略里没有任何排除规则命中它；否则就是判定出了错，宁可炸也不能把私有角色发出去
+    if ([...dropped.values()].some(paths => paths.includes(mod.rel))) throw new Error(mod.rel + ' 被裁却仍在公开树里')
+    continue // 本发行版带着它，原样保留
+  }
   mkdirSync(dirname(dest), { recursive: true })
   writeFileSync(dest, [
     '/**',
@@ -218,6 +241,7 @@ const manifest = {
   trackedInPrivateRepo: tracked.length,
   publishedFiles: kept.length,
   droppedByRule: Object.fromEntries([...dropped].map(([k, v]) => [k, v.length])),
+  keptByOverride,
   seams
 }
 // 裁剪清单是内部记录（所有者 2026-09-02 决定不随公开树发行），写在公开树旁边而不是里面。
