@@ -3,7 +3,7 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { getBuiltinRoleNameKey } from '../../../../shared/i18n/resources'
 import { AgentMark } from '../agent-mark'
-import { isAccessoryId, isMarkHue, type AccessoryId, type MarkHue } from '../agent-mark'
+import { isAccessoryId, isMarkHue, isMarkShape, type AccessoryId, type MarkHue, type MarkShape } from '../agent-mark'
 import { getMarkOverride, loadMark, useMarkOverrides } from '../agent-mark/markStore'
 
 /**
@@ -24,6 +24,7 @@ import { getMarkOverride, loadMark, useMarkOverrides } from '../agent-mark/markS
 export interface MarkConfig {
   accessory?: string
   hue?: string
+  shape?: string
 }
 
 export interface RoleAvatarRole {
@@ -49,6 +50,8 @@ const LEGACY_ROLE_NAME_ALIASES: Record<string, string> = {
 export interface ResolvedMark {
   accessory: AccessoryId
   hue: MarkHue
+  /** 内置角色默认都是圆角方；用户捏过的从 mark.json 来 */
+  shape?: MarkShape
 }
 
 /** 角色 → 默认配饰。加内置角色时在这里登记一件配饰 + 一个色，不要动眼型。 */
@@ -80,6 +83,7 @@ export function resolveRoleMark(role: RoleAvatarRole): ResolvedMark {
   return {
     accessory: firstValid(isAccessoryId, [live?.accessory, role.mark?.accessory]) ?? base.accessory,
     hue: firstValid(isMarkHue, [live?.hue, role.mark?.hue]) ?? base.hue,
+    shape: firstValid(isMarkShape, [live?.shape, role.mark?.shape]) ?? base.shape ?? 'square',
   }
 }
 
@@ -130,6 +134,7 @@ export function RoleAvatar({
       state={status}
       accessory={mark.accessory}
       hue={mark.hue}
+      shape={mark.shape}
       size={size}
       animated={animated}
       ariaLabel={ariaLabel}

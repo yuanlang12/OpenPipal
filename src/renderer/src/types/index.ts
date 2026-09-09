@@ -52,7 +52,7 @@ export interface RoleInfo {
   /** 角色头像 data URL(system-agents/<role>/avatar.* 存在时);无则渲染端回落 Lucide */
   avatarDataUrl?: string
   /** 捏头像的配饰组合 —— 来自 system-agents/<role>/mark.json，文件式 opt-in */
-  mark?: { accessory?: string; hue?: string }
+  mark?: { accessory?: string; hue?: string; shape?: string }
 }
 
 export interface PermissionRequestData {
@@ -96,8 +96,8 @@ export type ChatMessageKind =
   | 'runtime-context' // 本轮 prompt 附带的易变上下文快照（时间/前台应用/产物清单），UI 隐藏、AI 回放时原样读取——落盘副本与实发字节一致是前缀缓存命中的前提
   | 'inject-notice' // 消息插队的 turn 边界通知（"已引导对话" / "已加入跟单队列"），左对齐细灰字，不发给 AI
 
-/** 规矩的跨进程形状只在 shared 定义一次；渲染层沿用 HookNoticePayload 这个名字 */
-export type { HookNotice as HookNoticePayload, HookEntry } from '../../../shared/hook-contract'
+/** 规则的跨进程形状只在 shared 定义一次；渲染层沿用 HookNoticePayload 这个名字 */
+export type { HookNotice as HookNoticePayload, HookEntry, HookSource } from '../../../shared/hook-contract'
 import type { HookNotice as HookNoticePayload } from '../../../shared/hook-contract'
 export type { MemoryNotice } from '../../../shared/memory-notice-contract'
 import type { MemoryNotice } from '../../../shared/memory-notice-contract'
@@ -172,7 +172,7 @@ export interface ChatMessage {
     path: string
     language?: string
   }
-  /** 规矩文件写入后加载器的结论（inject-notice/hook 那一行的数据，持久化、不发给模型） */
+  /** 规则文件写入后加载器的结论（inject-notice/hook 那一行的数据，持久化、不发给模型） */
   hookNotice?: HookNoticePayload
   /** 记忆提取 / 整理的结论（inject-notice/memory 胶囊的数据，持久化、不发给模型） */
   memoryNotice?: MemoryNotice

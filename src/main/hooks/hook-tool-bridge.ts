@@ -1,14 +1,14 @@
 /**
- * 规矩借助手的工具干活：ctx.callTool('bash', { command }) 的宿主实现。
+ * 规则借助手的工具干活：ctx.callTool('bash', { command }) 的宿主实现。
  *
  * 不新造能力对象，直接复用助手这一轮真正挂着的工具（含 MCP 工具）——于是自动得到：
  *   同一套 pi-security 审核（越界路径、危险命令、git 凭据门、浏览器策略）、
  *   同一个沙箱、同样的授权卡（onConfirmation 就是本会话的 permissionHandler）、
  *   同样的参数校验（pi-ai 的 validateToolArguments：克隆 + 可选字段 null 归一 + 类型转换，
  *   与 Agent 循环一字不差）、同样的"结果算不算出错"口径（details 里的 isError/error/subagent）。
- *   规矩能做的 = 助手能做的，一个不多。
+ *   规则能做的 = 助手能做的，一个不多。
  *
- * 不经过 Agent 循环，所以规矩发起的调用不再触发 tool_call / tool_result 规矩（不递归），
+ * 不经过 Agent 循环，所以规则发起的调用不再触发 tool_call / tool_result 规则（不递归），
  * 也不进对话流的工具卡片（只留主进程日志）。
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core'
@@ -52,7 +52,7 @@ export function createHookToolCaller(options: HookToolCallerOptions): HookToolCa
     let prepared: Record<string, unknown>
     try {
       const raw = tool.prepareArguments ? tool.prepareArguments(input) : input
-      // 与 Agent 循环同一个校验器：内部先 structuredClone，所以规矩手里那份对象之后再改也影响不到执行
+      // 与 Agent 循环同一个校验器：内部先 structuredClone，所以规则手里那份对象之后再改也影响不到执行
       prepared = validateToolArguments(tool, { type: 'toolCall', id: toolCallId, name: toolName, arguments: raw as Record<string, unknown> }) as Record<string, unknown>
     } catch (error) {
       throw new Error(`参数不合法：${error instanceof Error ? error.message : String(error)}`)

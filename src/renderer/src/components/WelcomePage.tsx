@@ -17,6 +17,7 @@ import { WorkingDirBar } from './shared/WorkingDirBar'
 import { useComposerFileIntake } from './shared/useComposerFileIntake'
 import { fmtSize } from '../utils/format'
 import { getBuiltinRoleNameKey } from '../../../shared/i18n/resources'
+import { PAL_BASE_ROLE } from '../../../shared/pal-contract'
 
 // 只有 teacher / design 有副标题,其余角色不展示 —— 一张 6 个角色、
 // 4 个是空对象的表没有存在价值。
@@ -510,7 +511,7 @@ export function WelcomePage({
               {agentTemplates.map(t => (
                 <button
                   key={t.id}
-                  onClick={() => newConversationFromAgent(roleName, t.id, t.name)}
+                  onClick={() => newConversationFromAgent(PAL_BASE_ROLE, t.id, t.name)}
                   className="flex flex-col items-start p-3 rounded-lg bg-surface-50 border border-surface-100 hover:border-brand-200 dark:hover:border-brand-700 transition-colors text-left"
                 >
                   <span className="text-xl mb-1.5">{t.icon}</span>

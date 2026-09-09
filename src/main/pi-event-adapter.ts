@@ -249,7 +249,7 @@ export function normalizeQuestionsV2Items(rawQuestions: any[]): Record<string, a
 export type TranscriptEntry =
   | { kind: 'text'; content: string }
   | { kind: 'tool'; toolName: string; toolCallId?: string; content: string; toolArgs?: string; searchResults?: string }
-  /** 规矩文件写入后加载器的结论——桌面端由渲染层落成 inject-notice/hook，无渲染层的两条路在这里接住 */
+  /** 规则文件写入后加载器的结论——桌面端由渲染层落成 inject-notice/hook，无渲染层的两条路在这里接住 */
   | { kind: 'hook'; notice: HookNotice }
 
 /** 与渲染层 chatStore.onHookNotice 落盘的形状一致：inject-notice/hook，不进模型载荷 */

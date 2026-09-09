@@ -7,7 +7,7 @@
  *   before_agent_start 系统提示逐个串起来，最后一个的结果就是发给模型的
  *
  * 可靠性（宿主兜底，永久机制）：单个 handler 抛错或超时 → 记一条 HookRunError、跳过它、
- * 继续跑下一个（fail-open）。一条写坏的规矩不应该让助手整个瘫掉；真正的安全闸门在
+ * 继续跑下一个（fail-open）。一条写坏的规则不应该让助手整个瘫掉；真正的安全闸门在
  * hook 外面（pi-security），这里放行不等于放过。
  *
  * 两条不可妥协的边界：
@@ -33,7 +33,7 @@ import type {
 
 export const DEFAULT_HOOK_TIMEOUT_MS = 10_000
 
-/** 宿主提供的"用助手的工具"实现；chain 把它绑到每次调用的信号上再交给规矩 */
+/** 宿主提供的"用助手的工具"实现；chain 把它绑到每次调用的信号上再交给规则 */
 export type HookToolCaller = (
   toolName: string,
   input: Record<string, unknown>,
@@ -153,11 +153,11 @@ export async function runToolCallHooks(
       if (!outcome) continue   // 超时或抛错：草稿整份作废，真正的参数一个字节没动
       const result = outcome.result
       if (result && result.block) {
-        // 拦下的调用不提交草稿：审计里记的要是模型原本发的参数，不是规矩顺手改过的
+        // 拦下的调用不提交草稿：审计里记的要是模型原本发的参数，不是规则顺手改过的
         const reason = typeof result.reason === 'string' && result.reason.trim()
           ? result.reason.trim()
           : '这次不允许用这个工具'
-        return { block: true, reason: `被规矩「${hook.description}」拦下：${reason}` }
+        return { block: true, reason: `被规则「${hook.description}」拦下：${reason}` }
       }
       commitArgs(event.input, draft)
     }

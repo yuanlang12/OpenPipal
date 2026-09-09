@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef } from 'react'
+import { memo, useEffect, useId, useRef } from 'react'
 import { ACCESSORY_BY_ID, hueVar, type AccessoryId, type MarkHue } from './accessories'
 import { sample, staticFrame, type MarkClock, type MarkFrame, type MarkState } from './engine'
-import { eyePath, eyeTransform } from './geometry'
+import { eyePath, eyeTransform, r2, type MarkShape } from './geometry'
 import type { ExpressionId } from './expressions'
 import { RINGS, ringPaths } from './rings'
 import { now, prefersReducedMotion, subscribe } from './driver'
@@ -22,6 +22,8 @@ export interface AgentMarkProps {
   expression?: ExpressionId | null
   accessory?: AccessoryId
   hue?: MarkHue
+  /** 身体轮廓；不给 = 圆角方。眼睛与配饰不随它变 */
+  shape?: MarkShape
   size?: number
   /** 只有当前可见且活跃的 Agent 才开动画；列表里的静态实例零 rAF */
   animated?: boolean
@@ -29,17 +31,15 @@ export interface AgentMarkProps {
   ariaLabel?: string
 }
 
-const r2 = (n: number): number => Math.round(n * 100) / 100
-
-export function AgentMark({
-  state = 'idle', expression = null, accessory = 'none', hue = 'ink',
+export const AgentMark = memo(function AgentMark({
+  state = 'idle', expression = null, accessory = 'none', hue = 'ink', shape = 'square',
   size = 20, animated = false, className = '', ariaLabel,
 }: AgentMarkProps): React.JSX.Element {
   const maskId = useId().replace(/:/g, '')
   const svgRef = useRef<SVGSVGElement>(null)
   const nodes = useRef<Record<string, SVGElement | null>>({})
   const clock = useRef<MarkClock>({
-    state, prevState: state, expression, prevExpression: expression, since: 0,
+    state, prevState: state, expression, prevExpression: expression, since: 0, shape,
   })
   const lastBody = useRef<string | null>(null)
   const color = hueVar(hue)
@@ -47,13 +47,14 @@ export function AgentMark({
   // 切状态 = 记一次 since，morph 由 sample 按时间算，组件不持有中间态
   useEffect(() => {
     const c = clock.current
+    c.shape = shape
     if (c.state === state && c.expression === expression) return
     c.prevState = c.state
     c.prevExpression = c.expression ?? null
     c.state = state
     c.expression = expression
     c.since = now()
-  }, [state, expression])
+  }, [state, expression, shape])
 
   useEffect(() => {
     const draw = (f: MarkFrame): void => {
@@ -90,8 +91,10 @@ export function AgentMark({
         const back = nodes.current[`ringB${i}`]
         if (!front || !back) continue
         if (f.ringAlpha <= 0) {
+          // 隐藏时连几何一起清：getBBox 不看 opacity，留着的弧线会把导出取景框撑到 ~100 宽（先点过"生成中"再导出就中招）
           if (front.getAttribute('opacity') !== '0') {
             front.setAttribute('opacity', '0'); back.setAttribute('opacity', '0')
+            front.removeAttribute('d'); back.removeAttribute('d')
           }
           continue
         }
@@ -103,7 +106,7 @@ export function AgentMark({
     }
 
     if (!animated || prefersReducedMotion()) {
-      draw(staticFrame(expression ?? undefined))
+      draw(staticFrame(expression ?? undefined, shape))
       return
     }
 
@@ -121,9 +124,13 @@ export function AgentMark({
     } else attach()
 
     return () => { observer?.disconnect(); detach() }
-  }, [animated, expression, color])
+  }, [animated, expression, color, shape])
 
-  const ref = (key: string) => (el: SVGElement | null): void => { nodes.current[key] = el }
+  // ref 回调按 key 只建一次：每次 render 新建闭包会让 React 先 null 再重挂每个 ref——
+  // 侧栏几十个头像跟着流式输出一起重渲染时，这是白做的一大笔
+  const refs = useRef<Record<string, (el: SVGElement | null) => void>>({})
+  const ref = (key: string): ((el: SVGElement | null) => void) =>
+    refs.current[key] || (refs.current[key] = (el) => { nodes.current[key] = el })
   const acc = ACCESSORY_BY_ID.get(accessory) ?? ACCESSORY_BY_ID.get('none')!
 
   return (
@@ -171,4 +178,4 @@ export function AgentMark({
       </g>
     </svg>
   )
-}
+})

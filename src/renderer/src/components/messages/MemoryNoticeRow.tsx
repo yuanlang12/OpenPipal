@@ -2,7 +2,7 @@
  * MemoryNoticeRow —— 对话流里「已记住：…」那枚胶囊。
  *
  * 记忆是顺手记下的一件事，不是这轮的主线任务：居中、小，长期留在它发生的位置
- * ——以前是 8 秒消失的浮条，用户回头找不到"记了什么"。与规矩胶囊（HookNoticeRow）同族，壳在 NoticeCapsule。
+ * ——以前是 8 秒消失的浮条，用户回头找不到"记了什么"。与规则胶囊（HookNoticeRow）同族，壳在 NoticeCapsule。
  */
 import type { TFunction } from 'i18next'
 import { Lightbulb } from 'lucide-react'

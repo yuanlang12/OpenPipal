@@ -41,6 +41,7 @@ import { registerTaskSchedulerControl } from './task-scheduler-control'
 import { acquireConversationExecution } from './conversation-execution-coordinator'
 import { isWebhookSecretValid } from './local-http-auth'
 import { tMain } from './main-i18n'
+import { PAL_BASE_ROLE } from '../shared/pal-contract'
 
 // ---- 状态 ----
 
@@ -199,8 +200,9 @@ async function ensureConversation(task: Task): Promise<EnsuredConversation> {
     }
     return { conversationId: task.boundConversationId, createdNow: false }
   }
-  // 新建会话：使用任务记录的 role，缺失则 fallback 到当前活跃 role
-  const role = task.role || getCurrentRole()?.name || 'learner'
+  // 新建会话：Pal / 模板的任务用中性角色（人设在它自己的目录里，见 pal-contract）；
+  // 全局角色的任务用记录的 role，缺失则回落到当前活跃 role
+  const role = (task.workspaceId || task.agentId) ? PAL_BASE_ROLE : (task.role || getCurrentRole()?.name || 'learner')
   const conv = await createConversation(
     role,
     `[自动化] ${task.name}`,
@@ -544,7 +546,7 @@ async function runTaskInConversation(
     }
     for (const entry of transcript) {
       const timestamp = Date.now()
-      // 定时任务里定下的规矩也要留那行提醒（带撤销入口），否则只有插件页看得到
+      // 定时任务里定下的规则也要留那行提醒（带撤销入口），否则只有插件页看得到
       if (entry.kind === 'hook') { toAppend.push(hookNoticeToStoredMessage(entry.notice, timestamp)); continue }
       toAppend.push(entry.kind === 'tool'
         ? {

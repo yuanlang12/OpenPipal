@@ -70,8 +70,8 @@ import {
   PiCoreToolAuthorizer
 } from './pi-core-tool-adapter'
 import { hasHandlers, runBeforeAgentStartHooks, type HookChain, type HookToolCaller } from '../hooks/hook-chain'
-import { formatHookNoticeForModel, loadActiveHooks, probeHookChanges, probeHookFileWrite, refreshHookSignatures, snapshotHookSignatures } from '../hooks/hook-registry'
-import { isRuleWriteActive } from '../hooks/rule-writer'
+import { formatHookNoticeForModel, formatHookStatusForPrompt, loadActiveHooks, probeHookChanges, probeHookFileWrite, refreshHookSignatures, snapshotHookSignatures, type HookReportEntry, type HookScope } from '../hooks/hook-registry'
+import { isRuleWriteActive, listPendingRuleDescriptions } from '../hooks/rule-writer'
 import { createHookToolCaller } from '../hooks/hook-tool-bridge'
 import type { HookContext } from '../hooks/hook-types'
 import {
@@ -128,27 +128,30 @@ function lastUserPromptText(history: ChatMessage[]): string {
 }
 
 /**
- * 装配本轮生效的用户规矩。加载失败不影响对话（fail-open），但每一条没生效的都要留证据。
- * 没有任何规矩时返回 undefined——下游代码路径与从前逐字节一致。
+ * 装配本轮生效的用户规则。加载失败不影响对话（fail-open），但每一条没生效的都要留证据。
+ * 没有任何规则时 chain 为 undefined——下游代码路径与从前逐字节一致；report 是本会话装的那份清单，
+ * 系统提示里的 <rules> 从它来（不读注册表的进程级快照——别的会话、规则页随时会覆盖那份）。
  */
 async function resolveHookChain(
   ctx: Omit<HookContext, 'callTool'>,
   conversationShort: string,
-  callTool: HookToolCaller
-): Promise<HookChain | undefined> {
+  callTool: HookToolCaller,
+  scope: HookScope
+): Promise<{ chain: HookChain | undefined; report: HookReportEntry[]; agentScanError?: string }> {
   let active: Awaited<ReturnType<typeof loadActiveHooks>>
   try {
-    active = await loadActiveHooks()
+    // 插件里的规则人人装；独立智能体自己 hooks/ 里的只在跑它时装（位置即范围）
+    active = await loadActiveHooks(undefined, scope)
   } catch (error) {
-    console.warn(`[Hooks] conv=${conversationShort} 规矩加载异常，本轮不带规矩：${safeErrorMessage(error)}`)
-    return undefined
+    console.warn(`[Hooks] conv=${conversationShort} 规则加载异常，本轮不带规则：${safeErrorMessage(error)}`)
+    return { chain: undefined, report: [] }
   }
   for (const failure of active.failures) {
     console.warn(`[Hooks] conv=${conversationShort} ${failure.id} 没生效：${failure.error}`)
   }
-  if (active.hooks.length === 0) return undefined
-  console.log(`[Hooks] conv=${conversationShort} 生效 ${active.hooks.length} 条规矩：${active.hooks.map((hook) => hook.id).join(', ')}`)
-  return { hooks: active.hooks, ctx, callTool }
+  const chain = active.hooks.length === 0 ? undefined : { hooks: active.hooks, ctx, callTool }
+  if (chain) console.log(`[Hooks] conv=${conversationShort} 生效 ${active.hooks.length} 条规则：${active.hooks.map((hook) => hook.id).join(', ')}`)
+  return { chain, report: active.report, agentScanError: active.agentScanError }
 }
 
 function splitUserMessage(message: AgentMessage | undefined): PromptInput | undefined {
@@ -423,17 +426,20 @@ async function* runPiCoreAgentChat(
     disabledTools: workspace.disabledTools,
     mcpServers: workspace.mcpServers
   })
-  // 用户规矩（插件 hooks/）：工具装配完才装——规矩借的就是这一轮的工具；
-  // 在预算估算之前跑 before_agent_start，改过的提示词按改过的算预算
-  const hookChain = await resolveHookChain({
+  // 用户规则（插件 hooks/）：工具装配完才装——规则借的就是这一轮的工具；
+  // 在预算估算之前跑 before_agent_start，改过的提示词按改过的算预算。
+  // 范围贯穿本轮：装规则、指纹基线、shell 探针看的都是同一批文件（插件 + 正在跑的那个 Agent）
+  const hookScope: HookScope = { workspaceId: workspace.workspaceId }
+  const { chain: hookChain, report: hookReport, agentScanError: hookScanError } = await resolveHookChain({
     conversationId: overrides?.conversationId,
     workingDir: workspace.workingDir,
     roleName: executionRoleName,
+    workspaceId: workspace.workspaceId,
     source,
     signal: lifecycleSignal
   }, conversationShort, createHookToolCaller({
     tools: builtTools.tools,
-    // 与 createBundle 里的 PiCoreToolAuthorizer 同一份授权选项：规矩能做的 = 助手能做的
+    // 与 createBundle 里的 PiCoreToolAuthorizer 同一份授权选项：规则能做的 = 助手能做的
     authorization: {
       conversationId: overrides?.conversationId,
       onConfirmation: permissionHandler,
@@ -441,14 +447,18 @@ async function* runPiCoreAgentChat(
       tier: overrides?.permissionTier
     },
     onCall: (log) => console.log(
-      `[Hooks] conv=${conversationShort} 规矩调工具 ${log.toolName}`
+      `[Hooks] conv=${conversationShort} 规则调工具 ${log.toolName}`
       + (log.blocked ? ` 被拒：${log.blocked}` : log.error ? ` 出错：${log.error}` : '')
       + `（${log.ms}ms）`
     )
-  }))
-  // 本轮的规矩文件指纹基线：探针只对它报变化。shell 命令开跑前还会再刷一次（见 onToolStart），
+  }), hookScope)
+  // 本轮的规则文件指纹基线：探针只对它报变化。shell 命令开跑前还会再刷一次（见 onToolStart），
   // 所以别的会话/插件页在命令开跑之前动的文件不会被算成"这轮刚定的"
-  const hookBaseline = snapshotHookSignatures()
+  const hookBaseline = snapshotHookSignatures(hookScope)
+  // 规则清单进系统提示：模型看不到胶囊，问它"定没定"只能猜（真机实撞：后台没写成，它答"已完成"）。
+  // 没有规则就是空串，零注入；放在 before_agent_start 之前，规则自己追加的提示排在清单后面
+  const hookStatus = formatHookStatusForPrompt(hookReport, listPendingRuleDescriptions(overrides?.conversationId), hookScanError)
+  if (hookStatus) systemPrompt = `${systemPrompt}\n\n${hookStatus}`
   if (hookChain && hasHandlers(hookChain, 'before_agent_start')) {
     systemPrompt = await runBeforeAgentStartHooks(hookChain, {
       type: 'before_agent_start',
@@ -644,41 +654,41 @@ async function* runPiCoreAgentChat(
           thinkingLevel === 'off' ? undefined : { reasoningEffort: thinkingLevel }
         )
       },
-      // 顺序：问答中断 → 用户规矩 → 宿主安全员审最终参数（见 pi-core-tool-adapter.ts）
+      // 顺序：问答中断 → 用户规则 → 宿主安全员审最终参数（见 pi-core-tool-adapter.ts）
       beforeToolCall: composePiCoreBeforeToolCall({
         authorizer,
         hookChain,
         isInterrupted: () => interruptedByQuestion,
-        // shell 命令开跑前把规矩文件指纹刷到"此刻"：跑完的探针只报这条命令期间出现的变化，
+        // shell 命令开跑前把规则文件指纹刷到"此刻"：跑完的探针只报这条命令期间出现的变化，
         // 别的会话、插件页在此之前动的文件不会被算到这条会话头上
         onToolStart: (toolName) => {
-          if (toolName === 'bash' || toolName === 'powershell') refreshHookSignatures(hookBaseline)
+          if (toolName === 'bash' || toolName === 'powershell') refreshHookSignatures(hookBaseline, hookScope)
         }
       }),
       afterToolCall: composePiCoreAfterToolCall({
         hookChain,
         onInterrupt: () => { interruptedByQuestion = true },
-        // 模型刚写完的文件若是规矩：加载器当场给结论——对话流一行提醒 + 回给模型一句话
+        // 模型刚写完的文件若是规则：加载器当场给结论——对话流一行提醒 + 回给模型一句话
         probeWrittenFile: async (toolName, args) => {
           let notices: Awaited<ReturnType<typeof probeHookFileWrite>>
           if (toolName === 'write' || toolName === 'edit') {
             if (typeof args.path !== 'string') return undefined
-            notices = await probeHookFileWrite(args.path, workspace.workingDir, undefined, hookBaseline)
+            notices = await probeHookFileWrite(args.path, workspace.workingDir, undefined, hookBaseline, hookScope)
           } else if (toolName === 'bash' || toolName === 'powershell') {
             if (isRuleWriteActive()) {
-              // 后台（set_rule → Evolver）正在写规矩：此刻多出来的文件是它的，结论由它自己送；
+              // 后台（set_rule → Evolver）正在写规则：此刻多出来的文件是它的，结论由它自己送；
               // 这里只把基线推到"此刻"，不然下一条 shell 命令还会把它报成本轮建的
-              refreshHookSignatures(hookBaseline)
+              refreshHookSignatures(hookBaseline, hookScope)
               return undefined
             }
             // 模型用 shell 建的文件不知道路径，拿本轮基线比一遍：新的、改过的都当场加载
-            notices = await probeHookChanges(hookBaseline)
+            notices = await probeHookChanges(hookBaseline, undefined, hookScope)
           } else {
             return undefined
           }
           if (notices.length === 0) return undefined
           for (const notice of notices) {
-            console.log(`[Hooks] conv=${conversationShort} 规矩${notice.status === 'ok' ? '已生效' : '没生效'}：${notice.hookId}${notice.error ? ` — ${notice.error}` : ''}`)
+            console.log(`[Hooks] conv=${conversationShort} 规则${notice.status === 'ok' ? '已生效' : '没生效'}：${notice.hookId}${notice.error ? ` — ${notice.error}` : ''}`)
             eventQueue.push({ type: 'hook_notice', notice })
           }
           return notices.map(formatHookNoticeForModel).join('\n')

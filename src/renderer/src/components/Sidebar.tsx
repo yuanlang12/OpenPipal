@@ -11,7 +11,7 @@ import {
   getConversationTimeDescriptor,
 } from '../../../shared/i18n/resources'
 import { ConvStatusDot } from './shared/ConvStatusDot'
-import { RoleAvatar } from './shared/RoleAvatar'
+import { ConversationAvatar } from './shared/ConversationAvatar'
 import { OpenPipalLogo } from './shared/OpenPipalLogo'
 
 interface SidebarProps { collapsed: boolean }
@@ -105,14 +105,15 @@ export function Sidebar({ collapsed }: SidebarProps) {
     >
       <div className="flex items-center gap-2">
         <span className="shrink-0 flex items-center">
-          {conv.workspaceId
-            ? <span className="text-xs">{workspaceMap.get(conv.workspaceId)?.icon || '🤖'}</span>
-            : <RoleAvatar
-                role={{ name: conv.role }}
-                status={statusForConversation(conv.id)}
-                animated={conv.id === activeConversationId}
-                size={18}
-              />}
+          <ConversationAvatar
+            workspaceId={conv.workspaceId}
+            role={conv.role}
+            icon={conv.workspaceId ? workspaceMap.get(conv.workspaceId)?.icon : undefined}
+            status={statusForConversation(conv.id)}
+            animated={conv.id === activeConversationId}
+            size={18}
+            className="text-xs"
+          />
         </span>
         <span className="text-sw-base truncate flex-1">{getConversationDisplayTitle(conv, t)}</span>
         <ConvStatusDot id={conv.id} />

@@ -1,5 +1,5 @@
 /**
- * 规矩借助手的工具（ctx.callTool）——宿主实现的四条保证：
+ * 规则借助手的工具（ctx.callTool）——宿主实现的四条保证：
  *   1. 参数按工具 schema 校验，不合法直接抛，不碰安全员也不碰工具
  *   2. 走同一个 authorizeToolCall（同一份授权选项、同一个信号），拒绝就抛错并留日志
  *   3. 放行才 execute；工具抛错折成 isError 结果（同 Agent 循环的口径）
@@ -68,7 +68,7 @@ describe('createHookToolCaller', () => {
     expect(logs[0]?.blocked).toBe('越界')
   })
 
-  it('参数按 Agent 同一套校验器转换（"30" → 30），且执行拿到的是克隆，规矩之后再改自己那份也无妨', async () => {
+  it('参数按 Agent 同一套校验器转换（"30" → 30），且执行拿到的是克隆，规则之后再改自己那份也无妨', async () => {
     const execute = vi.fn(async () => ({ content: [], details: {} }))
     const call = createHookToolCaller({ tools: [bashTool(execute)], authorization })
     const input: Record<string, unknown> = { command: 'ls', timeout: '30' }
@@ -78,7 +78,7 @@ describe('createHookToolCaller', () => {
     expect(executed).not.toBe(input)
   })
 
-  it('工具用 details 说"其实失败了"（isError/error/subagent）时，规矩看到的 isError 与 Agent 口径一致', async () => {
+  it('工具用 details 说"其实失败了"（isError/error/subagent）时，规则看到的 isError 与 Agent 口径一致', async () => {
     const call = createHookToolCaller({ tools: [bashTool(async () => ({ content: [{ type: 'text', text: '[错误] x' }], details: { isError: true } }))], authorization })
     const result = await call('bash', { command: 'false' }, new AbortController().signal)
     expect(result.isError).toBe(true)
@@ -86,7 +86,7 @@ describe('createHookToolCaller', () => {
     expect((await sub('bash', { command: 'x' }, new AbortController().signal)).isError).toBe(true)
   })
 
-  it('工具抛错折成 isError 结果，不向规矩抛', async () => {
+  it('工具抛错折成 isError 结果，不向规则抛', async () => {
     const call = createHookToolCaller({ tools: [bashTool(async () => { throw new Error('exit 1') })], authorization })
     const result = await call('bash', { command: 'false' }, new AbortController().signal)
     expect(result).toEqual({ content: [{ type: 'text', text: 'exit 1' }], details: undefined, isError: true })

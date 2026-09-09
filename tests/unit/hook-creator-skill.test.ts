@@ -2,7 +2,7 @@
  * hook-creator 技能与运行时不漂移。
  *
  * 技能给模型看的类型声明（references/hook-types.d.ts）和运行时契约（hook-types.ts）是两份文件，
- * 一边加了事件另一边没加，模型就会照旧文档写出加载不了的规矩。这里钉三件事：
+ * 一边加了事件另一边没加，模型就会照旧文档写出加载不了的规则。这里钉三件事：
  *   1. 事件名集合一致；2. 面向作者的接口名两边都有；3. 范例代码真的能被 loader 加载。
  */
 import { describe, it, expect } from 'vitest'

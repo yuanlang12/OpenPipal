@@ -1,5 +1,5 @@
 /**
- * hook-loader 单测——把一个 TS/JS 规矩文件编译求值成 LoadedHook。
+ * hook-loader 单测——把一个 TS/JS 规则文件编译求值成 LoadedHook。
  *
  * 覆盖：TS 语法 + export const description + import type 被擦掉；纯 JS module.exports；
  * 语法错报行号；值 import 被明确拒绝；未知事件名 / 没注册事件 / 没有默认导出 都给出可读原因；
@@ -22,7 +22,7 @@ function write(name: string, source: string): string {
 }
 
 describe('hook-loader', () => {
-  it('TS 规矩：description 与三类事件都被收集，import type 不影响加载', async () => {
+  it('TS 规则：description 与三类事件都被收集，import type 不影响加载', async () => {
     const file = write('mask-names.ts', `
       import type { HookAPI, ToolResultHookEvent } from 'openpipal/hooks'
       export const description = '  读成绩表前先遮名字  '

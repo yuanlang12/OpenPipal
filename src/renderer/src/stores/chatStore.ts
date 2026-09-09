@@ -2937,7 +2937,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       )
     }
 
-    // 胶囊提醒（记忆 / 规矩）：落在它发生的会话里、发生的位置上，长期可见；不发给模型、不算对话历史。
+    // 胶囊提醒（记忆 / 规则）：落在它发生的会话里、发生的位置上，长期可见；不发给模型、不算对话历史。
     // 目标会话就是当前会话 → 进内存 + 常规落盘；不是（用户切走了 / 后台会话 / 事件没带会话就落当前）
     // → 直接追加到它自己的会话文件（与后台工具消息同一条路：主进程按会话串行写入）
     const persistNoticeMessage = (cid: string | null | undefined, message: ChatMessage, label: string): void => {
@@ -3009,8 +3009,8 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       )
     }
 
-    // 规矩的结论（模型当场写的文件：本轮探针；后台 set_rule → Evolver 写的：写完送来，cid 可能为空）
-    // → 一枚「已定下规矩 / 规矩没生效」胶囊，带「查看 / 撤销」。
+    // 规则的结论（模型当场写的文件：本轮探针；后台 set_rule → Evolver 写的：写完送来，cid 可能为空）
+    // → 一枚「已定下规则 / 规则没生效」胶囊，带「查看 / 撤销」。
     if ((window.api as any).onHookNotice) {
       cleanups.push(
         (window.api as any).onHookNotice((cid: string | null, notice: HookNoticePayload) => {

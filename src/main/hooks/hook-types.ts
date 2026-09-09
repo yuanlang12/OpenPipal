@@ -1,5 +1,5 @@
 /**
- * 用户 hook（「规矩」）的公开契约。
+ * 用户 hook（「规则」）的公开契约。
  *
  * 一个 hook = 插件目录 `plugins/<name>/hooks/<file>.ts` 里的一个模块：
  *
@@ -18,7 +18,7 @@ export type HookEventName = 'tool_call' | 'tool_result' | 'before_agent_start'
 
 export const HOOK_EVENT_NAMES: readonly HookEventName[] = ['tool_call', 'tool_result', 'before_agent_start']
 
-/** 规矩借助手的工具跑出来的结果（形状同工具回给模型的） */
+/** 规则借助手的工具跑出来的结果（形状同工具回给模型的） */
 export interface HookToolResult {
   content: HookContent[]
   details?: unknown
@@ -28,13 +28,16 @@ export interface HookToolResult {
 export interface HookContext {
   conversationId?: string
   workingDir: string
+  /** 内置角色名（general / coding / design …）；独立智能体跑在哪个底层角色上就是哪个 */
   roleName?: string
+  /** 当前对话属于哪个独立智能体（我的 Pal）；全局助手与内置角色没有。放在智能体自己目录里的规则不用判它（位置即范围）；只有插件里的全局规则想区别对待某个智能体时才用 */
+  workspaceId?: string
   source: 'desktop' | 'extension' | 'acp' | 'scheduler'
   /** 这次调用的信号：用户点停止、或这个处理函数超时，都会 abort；异步工作应当尊重它 */
   signal: AbortSignal
   /**
    * 用助手自己的工具（read / write / bash / web_search …）：同一套安全审核、同一个沙箱、
-   * 同样会弹授权卡；参数按工具 schema 校验。规矩自己发起的调用不再触发规矩（不递归）。
+   * 同样会弹授权卡；参数按工具 schema 校验。规则自己发起的调用不再触发规则（不递归）。
    * 等授权卡期间处理函数的超时会暂停。审核拒绝时抛错，工具本身出错时 isError=true。
    */
   callTool?: (toolName: string, input: Record<string, unknown>) => Promise<HookToolResult>

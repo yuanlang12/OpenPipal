@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { AgentMark } from './AgentMark'
 import { isAccessoryId, isMarkHue } from './accessories'
+import { isMarkShape } from './geometry'
 import { getMarkOverride, loadMark, useMarkOverrides } from './markStore'
 import type { MarkState } from './engine'
 
@@ -12,13 +13,15 @@ import type { MarkState } from './engine'
  * 这就是"默认 opt-in、不启用时代码路径走不到"：没捏过的 Agent 一行新逻辑都走不到。
  */
 export function WorkspaceAvatar({
-  workspaceId, icon, size = 16, state = 'idle', animated = false, ariaLabel,
+  workspaceId, icon, size = 16, state = 'idle', animated = false, className, ariaLabel,
 }: {
   workspaceId: string
   icon?: string
   size?: number
   state?: MarkState
   animated?: boolean
+  /** 同时管 emoji 回落的字号（默认 text-sm）与 Mark 的外层 class */
+  className?: string
   ariaLabel?: string
 }): React.JSX.Element {
   useMarkOverrides()
@@ -27,12 +30,13 @@ export function WorkspaceAvatar({
   const config = getMarkOverride('agent', workspaceId)
   const accessory = isAccessoryId(config?.accessory) ? config.accessory : null
   const hue = isMarkHue(config?.hue) ? config.hue : 'ink'
+  const shape = isMarkShape(config?.shape) ? config.shape : 'square'
 
   if (!accessory) {
-    return <span className="text-sm" aria-label={ariaLabel}>{icon || '🤖'}</span>
+    return <span className={className || 'text-sm'} aria-label={ariaLabel}>{icon || '🤖'}</span>
   }
   return (
-    <AgentMark state={state} accessory={accessory} hue={hue} size={size}
-      animated={animated} ariaLabel={ariaLabel} />
+    <AgentMark state={state} accessory={accessory} hue={hue} shape={shape} size={size}
+      animated={animated} className={className} ariaLabel={ariaLabel} />
   )
 }

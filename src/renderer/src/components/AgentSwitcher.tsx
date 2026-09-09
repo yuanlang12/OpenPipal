@@ -5,7 +5,9 @@ import { useAppStore } from '../stores/appStore'
 import { useChatStore } from '../stores/chatStore'
 import { useAgentStore } from '../stores/agentStore'
 import { RoleAvatar } from './shared/RoleAvatar'
+import { WorkspaceAvatar } from './agent-mark'
 import { getBuiltinRoleNameKey } from '../../../shared/i18n/resources'
+import { PAL_BASE_ROLE } from '../../../shared/pal-contract'
 
 /**
  * 统一智能体选择器 —— 一个下拉同时切换「全局角色」和「我的 Agents（独立 workspace）」。
@@ -61,9 +63,10 @@ export function AgentSwitcher() {
   const selectWorkspace = useCallback(async (id: string, name: string) => {
     setOpen(false)
     if (id === activeWorkspaceId) { setActiveView('chat'); return }
-    await newConversationFromWorkspace(roleName, id, name)
+    // Pal 不借当前选中的全局角色（见 pal-contract）
+    await newConversationFromWorkspace(PAL_BASE_ROLE, id, name)
     setActiveView('chat')
-  }, [activeWorkspaceId, newConversationFromWorkspace, roleName, setActiveView])
+  }, [activeWorkspaceId, newConversationFromWorkspace, setActiveView])
 
   const rowClass = (active: boolean) =>
     `w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-[13px] text-left transition-colors ${
@@ -81,7 +84,7 @@ export function AgentSwitcher() {
         className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[13px] font-medium text-surface-700 hover:bg-sidebar-hover dark:hover:bg-surface-50 transition-colors max-w-[200px]"
       >
         {activeWorkspace
-          ? <span className="text-sm leading-none shrink-0">{activeWorkspace.icon || '🤖'}</span>
+          ? <WorkspaceAvatar workspaceId={activeWorkspace.id} icon={activeWorkspace.icon} state={activeRoleStatus} animated size={20} className="text-sm leading-none shrink-0" />
           : <RoleAvatar role={{ name: roleName, avatarDataUrl: currentRole?.avatarDataUrl }} status={activeRoleStatus} animated size={20} className="shrink-0" />}
         <span className="truncate">
           {activeWorkspace
@@ -127,7 +130,7 @@ export function AgentSwitcher() {
               const active = activeWorkspaceId === w.id
               return (
                 <button key={w.id} onClick={() => selectWorkspace(w.id, w.name)} className={rowClass(active)}>
-                  <span className="text-sm leading-none shrink-0">{w.icon || '🤖'}</span>
+                  <WorkspaceAvatar workspaceId={w.id} icon={w.icon} size={16} className="text-sm leading-none shrink-0" />
                   <span className="truncate flex-1">{w.name}</span>
                   {active && <Check className="w-3.5 h-3.5 shrink-0" />}
                 </button>

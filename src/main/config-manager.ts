@@ -2222,6 +2222,35 @@ export function getWorkingDir(): string {
   return join(homedir(), 'Documents')
 }
 
+/**
+ * 用户在设置里明确选的默认工作目录；没选返回 undefined。
+ * 不像 getWorkingDir 那样回落到 ~/Documents——那个回落是沙箱根与安全层的历史默认；
+ * 对话在哪干活的默认另有一套（resolveDefaultWorkingDir：会话选的 > Pal 的 > 这里 > ~/.openpipal/workspace）。
+ */
+export function getConfiguredWorkingDir(): string | undefined {
+  if (workingDir) return workingDir
+  try {
+    if (!existsSync(CONFIG_PATH)) return undefined
+    const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'))
+    return typeof config.workingDir === 'string' && config.workingDir ? config.workingDir : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 设置页「恢复默认」：删掉配置项，回到 App 自己的默认 */
+export function clearWorkingDir(): void {
+  workingDir = null
+  try {
+    if (!existsSync(CONFIG_PATH)) return
+    const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'))
+    delete config.workingDir
+    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8')
+  } catch (err) {
+    console.error('[Config] 清除工作目录失败:', err)
+  }
+}
+
 export function setWorkingDir(dir: string): void {
   workingDir = dir
   // 持久化

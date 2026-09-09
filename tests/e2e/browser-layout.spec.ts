@@ -5,7 +5,7 @@ const ARTIFACTS_DIR = 'tests/artifacts/browser-layout'
 /**
  * 浏览器模式精简布局 —— 验证：
  *  1. 桌面左侧 Sidebar 在浏览器模式（__OPENPIPAL_ENV__='browser'）下不渲染
- *  2. 顶栏 BrowserTopBar 出现：AgentSwitcher（全局角色 + 我的 Agents）/ 历史 / 新建
+ *  2. 顶栏 BrowserTopBar 出现：AgentSwitcher（全局角色 + 我的 Pal）/ 历史 / 新建
  *  3. 选中独立 Agent 会以 workspaceId 开新会话（createConversation 收到 workspaceId）
  *  4. 历史浮层可展开、可搜索
  *
@@ -27,8 +27,8 @@ const ROLES = [
   { name: 'design', displayName: '设计助手', icon: '🎨' },
 ];
 const WORKSPACES = [
-  { id: 'ws-1', name: '论文导师', icon: '📚', description: '', createdAt: Date.now(), updatedAt: Date.now(), hasAgentMd: true, memoryCount: 3, skillCount: 1, taskCount: 0 },
-  { id: 'ws-2', name: '周报助手', icon: '🗂️', description: '', createdAt: Date.now(), updatedAt: Date.now(), hasAgentMd: true, memoryCount: 0, skillCount: 0, taskCount: 0 },
+  { id: 'ws-1', name: '论文导师', icon: '📚', description: '', createdAt: Date.now(), updatedAt: Date.now(), memoryCount: 3, skillCount: 1, taskCount: 0 },
+  { id: 'ws-2', name: '周报助手', icon: '🗂️', description: '', createdAt: Date.now(), updatedAt: Date.now(), memoryCount: 0, skillCount: 0, taskCount: 0 },
 ];
 const CONVS = [
   { id: 'c1', title: 'GTC 大会新闻资讯', role: 'learner', createdAt: Date.now(), updatedAt: Date.now(), messageCount: 22 },
@@ -98,7 +98,7 @@ test('浏览器模式：隐藏侧栏 + 顶栏切换智能体 + 历史浮层', as
   await page.getByText('学习助手').first().click()
   const menu = page.getByTestId('agent-switcher-menu')
   await expect(menu.getByText('全局角色')).toBeVisible()
-  await expect(menu.getByText('我的 Agents')).toBeVisible()
+  await expect(menu.getByText('我的 Pal')).toBeVisible()
   // general（OpenPipal 通用助手）现在是真实角色，应出现在全局角色组里
   await expect(menu.getByText('OpenPipal')).toBeVisible()
   await expect(menu.getByText('设计助手')).toBeVisible()

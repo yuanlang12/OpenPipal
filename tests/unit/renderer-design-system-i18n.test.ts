@@ -23,7 +23,7 @@ describe('renderer design-system browser i18n', () => {
     expect(english.t('designSystemBrowser.view.gallery')).toBe('Gallery view')
     expect(english.t('designSystemBrowser.view.fileCount', { count: 1 })).toBe('1 file')
     expect(english.t('designSystemBrowser.view.fileCount', { count: 3 })).toBe('3 files')
-    expect(english.t('designSystemBrowser.gallery.review.send')).toBe('Send feedback to Agent')
+    expect(english.t('designSystemBrowser.gallery.review.send')).toBe('Send feedback to Pal')
     expect(english.t('designSystemBrowser.files.sections.style')).toBe('Stylesheets')
     expect(english.t('designSystemBrowser.files.truncated')).toContain('first 200 KB')
     expect(chinese.t('designSystemBrowser.view.gallery')).toBe('画廊视图')

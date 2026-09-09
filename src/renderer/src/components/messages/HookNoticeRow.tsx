@@ -1,7 +1,7 @@
 /**
- * HookNoticeRow —— 对话流里「已定下规矩：…」那枚胶囊。
+ * HookNoticeRow —— 对话流里「已定下规则：…」那枚胶囊。
  *
- * 规矩不是这轮的主线任务，是顺手定下的一件事：居中、小，长期留在它发生的位置——随会话落盘，
+ * 规则不是这轮的主线任务，是顺手定下的一件事：居中、小，长期留在它发生的位置——随会话落盘，
  * 不发给模型、不算对话历史；不弹窗、不自动消失。与记忆胶囊（MemoryNoticeRow）同族，壳在 NoticeCapsule。
  * 文案来自加载器的结论（message.hookNotice），"现在还开着没有"是渲染时从 hookStore 算的：
  * 以后在插件页关掉了，回头翻这条对话会看到「（已撤销）」，不会骗人。
@@ -43,7 +43,7 @@ export function HookNoticeRow({ message }: { message: ChatMessage }) {
   const loaded = useHookStore((s) => s.loaded)
   const refresh = useHookStore((s) => s.refresh)
   const setEnabled = useHookStore((s) => s.setEnabled)
-  const setActiveView = useAppStore((s) => s.setActiveView)
+  const openToolsHub = useAppStore((s) => s.openToolsHub)
   const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -54,7 +54,7 @@ export function HookNoticeRow({ message }: { message: ChatMessage }) {
 
   const current = loaded ? entries.find((entry) => entry.id === notice.hookId) : undefined
   const state = resolveHookRowState(loaded, current, notice.status)
-  // 文案以"现在"为准：写入时失败、后来改好了，这行就该变成「已定下规矩」
+  // 文案以"现在"为准：写入时失败、后来改好了，这行就该变成「已定下规则」
   const failed = state === 'error' || (state === 'unknown' && notice.status === 'error')
   const description = current?.description || notice.description
   const errorText = current?.error || notice.error || ''
@@ -88,7 +88,7 @@ export function HookNoticeRow({ message }: { message: ChatMessage }) {
       attrs={{ 'data-hook-state': state }}
     >
       <span className="truncate">{text}{suffix}</span>
-      <button type="button" className={actionCls} onClick={() => setActiveView('tools')}>
+      <button type="button" className={actionCls} onClick={() => openToolsHub('rules')}>
         {t('chat.message.hookRuleView')}
       </button>
       {(state === 'ok' || state === 'error') && file && (

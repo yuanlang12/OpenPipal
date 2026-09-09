@@ -51,7 +51,7 @@ export interface RoleConfig {
    * 捏头像存的配饰组合 —— 派生字段(非 agent.md 持久配置)。
    * 来源:system-agents/<role>/mark.json 存在即读。眼型是核心符号,不在这里,也不许改。
    */
-  mark?: { accessory?: string; hue?: string }
+  mark?: { accessory?: string; hue?: string; shape?: string }
   /**
    * 文件式角色级记忆开关——agent.md frontmatter `memory: off` 关闭注入+抽取。
    * 缺省/其它值 = true（记忆照常）。design 关闭：跨会话偏好走设计系统/资产显式通道，
@@ -86,7 +86,7 @@ export const COMMON_TOOLS = [
   'execute_code',
   // 任务管理（定时 / webhook / 门控）
   'manage_task',
-  // 定规矩：把用户"以后都要…"的要求递交后台写成 hook（hooks/set-rule-tool）
+  // 定规则：把用户"以后都要…"的要求递交后台写成 hook（hooks/set-rule-tool）
   'set_rule',
   // Phase 6d：环境感知 + 内容呈现（渐进式披露——AI 按需调 get_environment）
   'get_environment',

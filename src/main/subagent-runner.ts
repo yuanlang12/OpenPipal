@@ -59,7 +59,7 @@ const SUBAGENT_TOOL_BLACKLIST: ReadonlySet<string> = new Set([
   'create_visualizer',
   'generate_document',
   'present_to_user',
-  'set_rule', // 规矩是用户对主 agent 说的；子 agent 替用户定规矩等于越权
+  'set_rule', // 规则是用户对主 agent 说的；子 agent 替用户定规则等于越权
   'subagent', // P3 注册 subagent 工具后生效——同进程嵌套套娃
 ])
 

@@ -101,17 +101,17 @@ describe('hook-registry', () => {
 
   it('没有插件目录时安静返回空', async () => {
     rmSync(PLUGINS, { recursive: true, force: true })
-    await expect(loadActiveHooks()).resolves.toEqual({ hooks: [], failures: [] })
+    await expect(loadActiveHooks()).resolves.toEqual({ hooks: [], failures: [], report: [] })
   })
 })
 
-describe('probeHookFileWrite：工具刚写完的文件是不是规矩', () => {
+describe('probeHookFileWrite：工具刚写完的文件是不是规则', () => {
   it('写进 hooks/ 的文件当场加载，结论是加载器的；~ 与相对路径都认', async () => {
     const dir = plugin('local-rules', { 'hooks/mask.ts': GOOD })
     const abs = join(dir, 'hooks', 'mask.ts')
     const [notice] = await probeHookFileWrite(abs)
-    expect(notice).toEqual({ status: 'ok', hookId: 'local-rules/mask', pluginName: 'local-rules', file: abs, description: '读成绩表前先遮名字' })
-    expect(formatHookNoticeForModel(notice)).toMatch(/【规矩已生效】读成绩表前先遮名字/)
+    expect(notice).toEqual({ status: 'ok', hookId: 'local-rules/mask', source: { kind: 'plugin', id: 'local-rules', name: 'local-rules' }, file: abs, description: '读成绩表前先遮名字' })
+    expect(formatHookNoticeForModel(notice)).toMatch(/【规则已生效】读成绩表前先遮名字/)
 
     const viaTilde = await probeHookFileWrite('~/.openpipal/plugins/local-rules/hooks/mask.ts')
     expect(viaTilde[0]?.file).toBe(abs)
@@ -123,7 +123,7 @@ describe('probeHookFileWrite：工具刚写完的文件是不是规矩', () => {
     expect(hooks.map(h => h.id)).toEqual(['local-rules/mask'])
   })
 
-  it('不是规矩相关的路径一律空数组', async () => {
+  it('不是规则相关的路径一律空数组', async () => {
     plugin('local-rules', { 'hooks/mask.ts': GOOD, 'skills/x/SKILL.md': '# x' })
     expect(await probeHookFileWrite(join(HOME, 'Documents', 'a.ts'))).toEqual([])
     expect(await probeHookFileWrite(join(PLUGINS, 'local-rules', 'skills', 'x', 'SKILL.md'))).toEqual([])
@@ -137,7 +137,7 @@ describe('probeHookFileWrite：工具刚写完的文件是不是规矩', () => {
     const [bad] = await probeHookFileWrite(join(dir, 'hooks', 'bad.ts'))
     expect(bad.status).toBe('error')
     expect(bad.error).toMatch(/不认识的事件「nope」/)
-    expect(formatHookNoticeForModel(bad)).toMatch(/【规矩没生效】/)
+    expect(formatHookNoticeForModel(bad)).toMatch(/【规则没生效】/)
 
     rmSync(join(dir, 'plugin.json'))
     const [orphan] = await probeHookFileWrite(join(dir, 'hooks', 'bad.ts'))
@@ -145,7 +145,7 @@ describe('probeHookFileWrite：工具刚写完的文件是不是规矩', () => {
     expect(orphan.error).toMatch(/无效.*plugin\.json/)
   })
 
-  it('先写 hooks 再写 plugin.json：写 manifest 时把已有规矩都报一遍', async () => {
+  it('先写 hooks 再写 plugin.json：写 manifest 时把已有规则都报一遍', async () => {
     const dir = join(PLUGINS, 'local-rules')
     mkdirSync(join(dir, 'hooks'), { recursive: true })
     writeFileSync(join(dir, 'hooks', 'a.ts'), GOOD, 'utf-8')
@@ -181,7 +181,7 @@ describe('probeHookFileWrite：工具刚写完的文件是不是规矩', () => {
     expect(bad).toMatchObject({ hookId: 'local-rules/c', status: 'error' })
   })
 
-  it('基线是本轮自己的：别的会话/插件页动了缓存，不会被这轮当成"刚定的规矩"报出来', async () => {
+  it('基线是本轮自己的：别的会话/插件页动了缓存，不会被这轮当成"刚定的规则"报出来', async () => {
     const dir = plugin('local-rules', { 'hooks/a.ts': GOOD })
     await loadActiveHooks()
     const mine = snapshotHookSignatures()
@@ -196,7 +196,7 @@ describe('probeHookFileWrite：工具刚写完的文件是不是规矩', () => {
     expect(await probeHookChanges(mine)).toEqual([])
   })
 
-  it('停用的插件里写规矩：明确说不会生效', async () => {
+  it('停用的插件里写规则：明确说不会生效', async () => {
     const dir = plugin('local-rules', { 'hooks/mask.ts': GOOD })
     writeFileSync(join(DATA, 'plugins.config.json'), JSON.stringify({ disabled: ['local-rules'] }), 'utf-8')
     const [notice] = await probeHookFileWrite(join(dir, 'hooks', 'mask.ts'))
@@ -261,5 +261,92 @@ describe('文件式开关与清单', () => {
       ['b-rules/ok', 'ok', '-', '读成绩表前先遮名字']
     ])
     expect(entries[1].error).toMatch(/没有注册任何事件/)
+  })
+})
+
+// ---- 独立智能体自己的规则：agents/<id>/hooks/，位置即范围 ----
+
+const AGENTS = join(DATA, 'agents')
+function agent(id: string, name: string, files: Record<string, string>): string {
+  const dir = join(AGENTS, id)
+  mkdirSync(join(dir, 'hooks'), { recursive: true })
+  writeFileSync(join(dir, 'meta.json'), JSON.stringify({ id, name, icon: '🤖', description: '', createdAt: 1, updatedAt: 1 }), 'utf-8')
+  for (const [rel, content] of Object.entries(files)) writeFileSync(join(dir, rel), content, 'utf-8')
+  return dir
+}
+
+describe('独立智能体的规则（agents/<id>/hooks/）', () => {
+  beforeEach(() => {
+    rmSync(AGENTS, { recursive: true, force: true })
+  })
+
+  it('跑哪个 Agent 装哪个：插件规则人人有，Agent 目录里的只在带 workspaceId 时装', async () => {
+    plugin('local-rules', { 'hooks/global.ts': GOOD })
+    agent('ws-a', '物理教案专家', { 'hooks/mask.ts': GOOD })
+    agent('ws-b', '另一个', { 'hooks/other.ts': GOOD })
+    const nobody = await loadActiveHooks()
+    expect(nobody.hooks.map(h => h.id)).toEqual(['local-rules/global'])
+    const a = await loadActiveHooks(undefined, { workspaceId: 'ws-a' })
+    expect(a.hooks.map(h => h.id).sort()).toEqual(['agent:ws-a/mask', 'local-rules/global'])
+    expect(getHookReport().find(e => e.id === 'agent:ws-a/mask')?.source).toEqual({ kind: 'agent', id: 'ws-a', name: '物理教案专家' })
+    const all = await loadActiveHooks(undefined, { allAgents: true })
+    expect(all.hooks.map(h => h.id).sort()).toEqual(['agent:ws-a/mask', 'agent:ws-b/other', 'local-rules/global'])
+  })
+
+  it('清单把所有 Agent 的规则都列上，带来源；关掉的 .off 也列；开关认 Agent 目录里的文件', async () => {
+    plugin('local-rules', { 'hooks/global.ts': GOOD })
+    const dir = agent('ws-a', '物理教案专家', { 'hooks/mask.ts': GOOD, 'hooks/old.ts.off': GOOD })
+    const entries = await listHookEntries()
+    const byId = Object.fromEntries(entries.map(e => [e.id, e]))
+    expect(byId['agent:ws-a/mask']).toMatchObject({ status: 'ok', source: { kind: 'agent', id: 'ws-a', name: '物理教案专家' } })
+    expect(byId['agent:ws-a/old']).toMatchObject({ status: 'off', offReason: 'file', source: { kind: 'agent', id: 'ws-a' } })
+    expect(byId['local-rules/global']).toMatchObject({ status: 'ok', source: { kind: 'plugin', id: 'local-rules' } })
+
+    const off = setHookFileEnabled(join(dir, 'hooks', 'mask.ts'), false)
+    expect(off).toEqual({ ok: true, file: join(dir, 'hooks', 'mask.ts.off') })
+    const after = await loadActiveHooks(undefined, { workspaceId: 'ws-a' })
+    expect(after.hooks.map(h => h.id)).toEqual(['local-rules/global'])
+    expect(setHookFileEnabled(join(dir, 'memory', 'x.ts'), false).ok).toBe(false)
+  })
+
+  it('写进 Agent hooks/ 的文件当场加载，结论带 Agent 来源；bash 探针的基线也盯着 Agent 目录', async () => {
+    const dir = agent('ws-a', '物理教案专家', {})
+    const file = join(dir, 'hooks', 'mask.ts')
+    writeFileSync(file, GOOD, 'utf-8')
+    const [notice] = await probeHookFileWrite(file)
+    expect(notice).toMatchObject({ status: 'ok', hookId: 'agent:ws-a/mask', source: { kind: 'agent', id: 'ws-a', name: '物理教案专家' }, description: '读成绩表前先遮名字' })
+
+    const baseline = snapshotHookSignatures()
+    expect(baseline.has(file)).toBe(true)
+    writeFileSync(join(dir, 'hooks', 'second.ts'), GOOD, 'utf-8')
+    const changed = await probeHookChanges(baseline)
+    expect(changed.map(n => n.hookId)).toEqual(['agent:ws-a/second'])
+    expect(changed[0].source.kind).toBe('agent')
+  })
+
+  it('探针的范围与会话装规则的范围一致：全局会话看不到 Agent 目录，跑 ws-a 时只看 ws-a 的', async () => {
+    const a = agent('ws-a', '物理教案专家', {})
+    const b = agent('ws-b', '另一个', {})
+    // 写探针：全局会话写进 Agent 目录不给"从下一轮开始执行"的结论（那条规则对它不生效）
+    writeFileSync(join(a, 'hooks', 'mask.ts'), GOOD, 'utf-8')
+    expect(await probeHookFileWrite(join(a, 'hooks', 'mask.ts'), undefined, undefined, undefined, {})).toEqual([])
+    expect((await probeHookFileWrite(join(a, 'hooks', 'mask.ts'), undefined, undefined, undefined, { workspaceId: 'ws-b' }))).toEqual([])
+    expect((await probeHookFileWrite(join(a, 'hooks', 'mask.ts'), undefined, undefined, undefined, { workspaceId: 'ws-a' })).map(n => n.hookId)).toEqual(['agent:ws-a/mask'])
+    // shell 探针同口径
+    const globalBaseline = snapshotHookSignatures({})
+    const aBaseline = snapshotHookSignatures({ workspaceId: 'ws-a' })
+    writeFileSync(join(a, 'hooks', 'second.ts'), GOOD, 'utf-8')
+    writeFileSync(join(b, 'hooks', 'other.ts'), GOOD, 'utf-8')
+    expect(await probeHookChanges(globalBaseline, undefined, {})).toEqual([])
+    expect((await probeHookChanges(aBaseline, undefined, { workspaceId: 'ws-a' })).map(n => n.hookId)).toEqual(['agent:ws-a/second'])
+  })
+
+  it('agents/ 下没有 meta.json 的野目录不算 Agent：里面的 hooks/ 不被编译执行、不进清单', async () => {
+    mkdirSync(join(AGENTS, 'stray', 'hooks'), { recursive: true })
+    writeFileSync(join(AGENTS, 'stray', 'hooks', 'x.ts'), GOOD, 'utf-8')
+    agent('ws-a', '物理教案专家', { 'hooks/mask.ts': GOOD })
+    const all = await loadActiveHooks(undefined, { allAgents: true })
+    expect(all.hooks.map(h => h.id)).toEqual(['agent:ws-a/mask'])
+    expect((await listHookEntries()).map(e => e.id)).toEqual(['agent:ws-a/mask'])
   })
 })

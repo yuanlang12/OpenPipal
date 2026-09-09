@@ -1,21 +1,27 @@
 import { useEffect, useState } from 'react'
-import { Plus, Trash2, Edit2, MessageSquare, Brain, FileText, Clock } from 'lucide-react'
+import { Plus, Trash2, Edit2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { useAgentStore, type AgentTemplate, type WorkspaceSummary } from '../stores/agentStore'
 import { useChatStore } from '../stores/chatStore'
 import { useAppStore } from '../stores/appStore'
 import { AgentTemplateEditor } from './AgentTemplateEditor'
-import { formatLocaleDate } from '../i18n/formatters'
 import { useAgentMarkStudio, MarkStudioAffordance, WorkspaceAvatar } from './agent-mark'
+import { PAL_BASE_ROLE } from '../../../shared/pal-contract'
 
+/** 「创建」去的是通用助手：在那里聊完点"保存为 Pal"就是新建的路 */
+const CREATE_ROLE = PAL_BASE_ROLE
+
+/**
+ * 我的 Pals —— 两栏列表，每行：头像 · 名字 · 一句描述 · 右侧「试一下」。
+ * 没有分类和作者，所以没有分组标题和 "by 某某"；从对话保存的在前、手动建的模板在后，各按主进程给的顺序，
+ * 模板行多一个编辑入口。删除藏在悬停里，不抢"试一下"。
+ */
 export function AgentsPanel() {
-  const { t: translate, i18n } = useTranslation()
-  const locale = i18n.resolvedLanguage || i18n.language
+  const { t: translate } = useTranslation()
   const { templates, workspaces, loading, loadTemplates, loadWorkspaces, updateTemplate, deleteTemplate, deleteWorkspace } = useAgentStore()
   const { newConversationFromAgent, newConversationFromWorkspace } = useChatStore()
   const { setActiveView } = useAppStore()
-  const roleName = useAppStore(s => s.currentRole?.name || 'learner')
   const { openMarkStudio, markStudio } = useAgentMarkStudio()
 
   const [editing, setEditing] = useState<AgentTemplate | null>(null)
@@ -29,18 +35,27 @@ export function AgentsPanel() {
       setEditing(null)
     }
   }
-  const handleStartChat = async (agentId: string, agentName: string) => {
-    await newConversationFromAgent(roleName, agentId, agentName)
+  const handleStartTemplate = async (agentId: string, agentName: string) => {
+    // Pal 的人设在它自己的目录里；role 槽位一律给中性值，不借 App 当前选中的全局角色（见 pal-contract）
+    await newConversationFromAgent(PAL_BASE_ROLE, agentId, agentName)
     setActiveView('chat')
   }
-  const handleNewChat = async () => {
+  const handleStartWorkspace = async (w: WorkspaceSummary) => {
+    await newConversationFromWorkspace(PAL_BASE_ROLE, w.id, w.name)
+    setActiveView('chat')
+  }
+  const handleCreate = async () => {
     const { newConversation } = useChatStore.getState()
-    await newConversation(roleName)
+    await newConversation(CREATE_ROLE)
     setActiveView('chat')
   }
   const handleEdit = async (id: string) => {
     const full = await window.api.getAgentTemplate!(id)
     if (full) setEditing(full)
+  }
+  const armDelete = (id: string): void => {
+    setConfirmDeleteId(id)
+    setTimeout(() => setConfirmDeleteId(current => (current === id ? null : current)), 3000)
   }
 
   if (editing) {
@@ -72,8 +87,8 @@ export function AgentsPanel() {
               {translate('agents.description')}
             </p>
           </div>
-          <button type="button" onClick={handleNewChat} className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-md bg-brand-500 text-ink-on-accent font-medium text-[13px] shadow-sm hover:bg-brand-600 transition-colors">
-            <Plus className="w-4 h-4" /> {translate('agents.actions.newConversation')}
+          <button type="button" onClick={handleCreate} data-testid="agents-create" className="shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-md bg-brand-500 text-ink-on-accent font-medium text-[13px] shadow-sm hover:bg-brand-600 transition-colors">
+            <Plus className="w-4 h-4" /> {translate('agents.actions.create')}
           </button>
         </div>
       </div>
@@ -92,96 +107,45 @@ export function AgentsPanel() {
               {translate('agents.empty.fromConversation')}<br />
               {translate('agents.empty.capabilities')}
             </p>
-            <button type="button" onClick={handleNewChat} className="mt-4 px-4 py-2 rounded-md bg-brand-500 text-ink-on-accent font-medium text-[13px] hover:bg-brand-600 transition-colors">
-              {translate('agents.actions.startConversation')}
+            <button type="button" onClick={handleCreate} className="mt-4 px-4 py-2 rounded-md bg-brand-500 text-ink-on-accent font-medium text-[13px] hover:bg-brand-600 transition-colors">
+              {translate('agents.actions.create')}
             </button>
           </div>
         ) : (
-          <div className="space-y-6">
-            {/* Workspace Agents — 从对话中提取的 */}
-            {workspaces.length > 0 && (
-              <div>
-                <h2 className="text-[12px] font-medium text-surface-400 uppercase tracking-wider mb-3">
-                  {translate('agents.sections.generated')}
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {workspaces.map(w => (
-                    <WorkspaceCard
-                      key={w.id}
-                      workspace={w}
-                      confirmDeleteId={confirmDeleteId}
-                      translate={translate}
-                      locale={locale}
-                      onStartChat={async () => {
-                        await newConversationFromWorkspace(roleName, w.id, w.name)
-                        setActiveView('chat')
-                      }}
-                      onDelete={() => deleteWorkspace(w.id)}
-                      onConfirmDelete={() => { setConfirmDeleteId(w.id); setTimeout(() => setConfirmDeleteId(null), 3000) }}
-                      onCustomizeMark={() => openMarkStudio({ scope: 'agent', roleName: w.id, displayName: w.name })}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 旧 Agent 模板 */}
-            {templates.length > 0 && (
-              <div>
-                <h2 className="text-[12px] font-medium text-surface-400 uppercase tracking-wider mb-3">
-                  {translate('agents.sections.templates')}
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {templates.map(template => (
-                    <div key={template.id} className="group flex flex-col p-5 rounded-lg border border-surface-100 hover:border-brand-200 dark:hover:border-brand-700 transition-colors">
-                      <div className="flex items-start gap-3 mb-3">
-                        <span className="text-2xl">{template.icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-[14px] font-semibold text-surface-700 break-words">{template.name}</h3>
-                          {template.description && <p className="text-[12px] text-surface-400 mt-0.5 line-clamp-2 break-words">{template.description}</p>}
-                        </div>
-                      </div>
-                      {template.workingDir && <p title={template.workingDir} className="text-[11px] text-surface-300 mb-3 truncate">📂 {template.workingDir.split('/').pop()}</p>}
-                      <div className="mt-auto pt-3 border-t border-surface-100 flex flex-wrap items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-                        <button type="button" onClick={() => handleStartChat(template.id, template.name)} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-brand-600 hover:bg-brand-50 transition-colors">
-                          <MessageSquare className="w-3.5 h-3.5" /> {translate('agents.actions.chat')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleEdit(template.id)}
-                          aria-label={translate('agents.actions.editNamed', { name: template.name })}
-                          title={translate('agents.actions.editNamed', { name: template.name })}
-                          className="p-1.5 rounded-md text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        {confirmDeleteId === template.id ? (
-                          <button
-                            type="button"
-                            onClick={() => { deleteTemplate(template.id); setConfirmDeleteId(null) }}
-                            aria-label={translate('agents.actions.confirmDeleteNamed', { name: template.name })}
-                            className="px-2 py-1 text-[10px] text-red-500 rounded bg-red-50 font-medium"
-                          >
-                            {translate('agents.actions.confirmDelete')}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => { setConfirmDeleteId(template.id); setTimeout(() => setConfirmDeleteId(null), 3000) }}
-                            aria-label={translate('agents.actions.deleteNamed', { name: template.name })}
-                            title={translate('agents.actions.deleteNamed', { name: template.name })}
-                            className="p-1.5 rounded-md text-surface-300 hover:text-red-400 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          <ul className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 gap-y-1" data-testid="agents-list">
+            {workspaces.map(w => (
+              <AgentRow
+                key={`ws:${w.id}`}
+                name={w.name}
+                description={w.description}
+                meta={workspaceMeta(w, translate)}
+                avatar={(
+                  <span className="relative grid h-9 w-9 place-items-center">
+                    <WorkspaceAvatar workspaceId={w.id} icon={w.icon} size={34} />
+                    <MarkStudioAffordance size={16} label={translate('agentMark.entry')} onClick={() => openMarkStudio({ scope: 'agent', roleName: w.id, displayName: w.name })} />
+                  </span>
+                )}
+                confirming={confirmDeleteId === w.id}
+                onTry={() => { void handleStartWorkspace(w) }}
+                onDelete={() => { deleteWorkspace(w.id); setConfirmDeleteId(null) }}
+                onArmDelete={() => armDelete(w.id)}
+              />
+            ))}
+            {templates.map(template => (
+              <AgentRow
+                key={`tpl:${template.id}`}
+                name={template.name}
+                description={template.description}
+                meta={template.workingDir ? `📂 ${template.workingDir.split('/').pop()}` : undefined}
+                avatar={<span className="grid h-9 w-9 place-items-center text-2xl">{template.icon}</span>}
+                confirming={confirmDeleteId === template.id}
+                onTry={() => { void handleStartTemplate(template.id, template.name) }}
+                onEdit={() => { void handleEdit(template.id) }}
+                onDelete={() => { deleteTemplate(template.id); setConfirmDeleteId(null) }}
+                onArmDelete={() => armDelete(template.id)}
+              />
+            ))}
+          </ul>
         )}
       </div>
       {markStudio}
@@ -189,68 +153,54 @@ export function AgentsPanel() {
   )
 }
 
-// ---- Workspace 卡片组件 ----
+function workspaceMeta(w: WorkspaceSummary, translate: TFunction): string | undefined {
+  const parts: string[] = []
+  if (w.memoryCount > 0) parts.push(translate('agents.metrics.memories', { count: w.memoryCount }))
+  if (w.taskCount > 0) parts.push(translate('agents.metrics.tasks', { count: w.taskCount }))
+  return parts.length ? parts.join(' · ') : undefined
+}
 
-function WorkspaceCard({ workspace: w, confirmDeleteId, translate, locale, onStartChat, onDelete, onConfirmDelete, onCustomizeMark }: {
-  workspace: WorkspaceSummary
-  confirmDeleteId: string | null
-  translate: TFunction
-  locale: string
-  onStartChat: () => void
+// ---- 一行一个 Pal ----
+
+function AgentRow({ name, description, meta, avatar, confirming, onTry, onEdit, onDelete, onArmDelete }: {
+  name: string
+  description?: string
+  /** 第二行灰字：记忆条数、自动化个数或模板的工作目录 */
+  meta?: string
+  avatar: React.ReactNode
+  confirming: boolean
+  onTry: () => void
+  onEdit?: () => void
   onDelete: () => void
-  onConfirmDelete: () => void
-  /** 捏头像入口 —— 改的是这张卡所属角色的标识，不动 workspace 自己的 emoji 图标 */
-  onCustomizeMark: () => void
+  onArmDelete: () => void
 }) {
+  const { t: translate } = useTranslation()
   return (
-    <div className="group flex flex-col p-5 rounded-lg border border-brand-100 dark:border-brand-800 bg-brand-50/30 dark:bg-brand-900/10 hover:border-brand-300 dark:hover:border-brand-600 transition-colors cursor-pointer" onClick={onStartChat}>
-      <div className="flex items-start gap-3 mb-3">
-        <span className="relative shrink-0 grid h-7 w-7 place-items-center text-2xl">
-          <WorkspaceAvatar workspaceId={w.id} icon={w.icon} size={26} />
-          <MarkStudioAffordance
-            size={18}
-            label={translate('agentMark.entry')}
-            onClick={onCustomizeMark}
-          />
-        </span>
-        <div className="flex-1 min-w-0">
-          <h3 className="text-[14px] font-semibold text-surface-700 break-words">{w.name}</h3>
-          {w.description && <p className="text-[12px] text-surface-400 mt-0.5 line-clamp-2 break-words">{w.description}</p>}
-        </div>
+    <li className="group flex items-center gap-3 px-3 py-2.5 -mx-3 rounded-lg hover:bg-surface-50 transition-colors" data-testid="agent-row">
+      <span className="shrink-0">{avatar}</span>
+      <div className="flex-1 min-w-0">
+        <h3 className="text-[13.5px] font-semibold text-surface-700 truncate">{name}</h3>
+        {description && <p className="text-[12px] text-surface-400 truncate" title={description}>{description}</p>}
+        {meta && <p className="text-[11px] text-surface-300 truncate">{meta}</p>}
       </div>
-
-      {/* 能力指标 */}
-      <div className="flex flex-wrap items-center gap-3 text-[11px] text-surface-300 mb-3">
-        {w.hasAgentMd && (
-          <span className="flex items-center gap-1">
-            <FileText className="w-3 h-3" /> agent.md
-          </span>
-        )}
-        {w.memoryCount > 0 && (
-          <span className="flex items-center gap-1">
-            <Brain className="w-3 h-3" /> {translate('agents.metrics.memories', { count: w.memoryCount })}
-          </span>
-        )}
-        {w.taskCount > 0 && (
-          <span className="flex items-center gap-1">
-            <Clock className="w-3 h-3" /> {translate('agents.metrics.tasks', { count: w.taskCount })}
-          </span>
-        )}
-      </div>
-
-      <div className="mt-auto pt-3 border-t border-brand-100 dark:border-brand-800 flex items-center justify-between">
-        <span className="text-[10px] text-surface-300">
-          {formatLocaleDate(w.createdAt, locale)}
-        </span>
-        <div className="flex flex-wrap items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-          <button type="button" onClick={(e) => { e.stopPropagation(); onStartChat() }} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-brand-600 hover:bg-brand-50 transition-colors">
-            <MessageSquare className="w-3.5 h-3.5" /> {translate('agents.actions.chat')}
-          </button>
-          {confirmDeleteId === w.id ? (
+      <div className="flex items-center gap-1 shrink-0">
+        <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+          {onEdit && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); onDelete() }}
-              aria-label={translate('agents.actions.confirmDeleteNamed', { name: w.name })}
+              onClick={onEdit}
+              aria-label={translate('agents.actions.editNamed', { name })}
+              title={translate('agents.actions.editNamed', { name })}
+              className="p-1.5 rounded-md text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
+            >
+              <Edit2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {confirming ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label={translate('agents.actions.confirmDeleteNamed', { name })}
               className="px-2 py-1 text-[10px] text-red-500 rounded bg-red-50 font-medium"
             >
               {translate('agents.actions.confirmDelete')}
@@ -258,16 +208,24 @@ function WorkspaceCard({ workspace: w, confirmDeleteId, translate, locale, onSta
           ) : (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); onConfirmDelete() }}
-              aria-label={translate('agents.actions.deleteNamed', { name: w.name })}
-              title={translate('agents.actions.deleteNamed', { name: w.name })}
+              onClick={onArmDelete}
+              aria-label={translate('agents.actions.deleteNamed', { name })}
+              title={translate('agents.actions.deleteNamed', { name })}
               className="p-1.5 rounded-md text-surface-300 hover:text-red-400 transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           )}
-        </div>
+        </span>
+        <button
+          type="button"
+          onClick={onTry}
+          data-testid="agent-try"
+          className="px-3.5 py-1.5 rounded-full border border-surface-200 text-[12.5px] font-medium text-surface-700 hover:border-brand-400 hover:text-brand-600 transition-colors"
+        >
+          {translate('agents.actions.tryIt')}
+        </button>
       </div>
-    </div>
+    </li>
   )
 }

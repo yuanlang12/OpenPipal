@@ -10,7 +10,7 @@ import {
   getConversationGroupKey,
   getConversationTimeDescriptor,
 } from '../../../shared/i18n/resources'
-import { RoleAvatar } from './shared/RoleAvatar'
+import { ConversationAvatar } from './shared/ConversationAvatar'
 
 /**
  * 历史记录浮层 —— 浏览器顶栏专用。把 Sidebar 的"搜索 + 分组对话列表 + 删除"
@@ -103,14 +103,15 @@ export function HistoryPopover() {
     >
       <div className="flex items-center gap-2">
         <span className="shrink-0 flex items-center">
-          {conv.workspaceId
-            ? <span className="text-xs">{workspaceMap.get(conv.workspaceId)?.icon || '🤖'}</span>
-            : <RoleAvatar
-                role={{ name: conv.role }}
-                status={statusForConversation(conv.id)}
-                animated={conv.id === activeConversationId}
-                size={18}
-              />}
+          <ConversationAvatar
+            workspaceId={conv.workspaceId}
+            role={conv.role}
+            icon={conv.workspaceId ? workspaceMap.get(conv.workspaceId)?.icon : undefined}
+            status={statusForConversation(conv.id)}
+            animated={conv.id === activeConversationId}
+            size={18}
+            className="text-xs"
+          />
         </span>
         <span className="text-[12px] truncate flex-1">{getConversationDisplayTitle(conv, t)}</span>
         <div className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0">

@@ -263,7 +263,9 @@
       "scope": "candidate",
       "action": "exclude",
       "patterns": [
-        "website/**"
+        "website/**",
+        "scripts/build-website.mjs",
+        "scripts/website-*.html"
       ],
       "overrides": [
         "reviewed-baseline-default",
@@ -776,6 +778,26 @@
         "tests/unit/notice-capsule-seam.test.ts",
         "tests/unit/rule-writer.test.ts",
         "tests/unit/set-rule-tool.test.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ]
+    },
+    {
+      "id": "review-pal-list-avatar-shapes-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "src/renderer/src/components/shared/ConversationAvatar.tsx",
+        "src/shared/pal-contract.ts",
+        "tests/unit/agent-mark-shapes.test.ts",
+        "tests/unit/agent-wide-skill-scope.test.ts",
+        "tests/unit/default-working-dir.test.ts",
+        "tests/unit/evolver-set-rule-boundary.test.ts",
+        "tests/unit/hook-status-prompt.test.ts",
+        "tests/unit/hook-store-unavailable.test.ts",
+        "tests/unit/pal-base-role.test.ts",
+        "tests/unit/workspace-avatar-seam.test.ts"
       ],
       "overrides": [
         "reviewed-baseline-default"

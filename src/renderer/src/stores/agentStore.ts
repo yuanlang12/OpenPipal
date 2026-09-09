@@ -24,7 +24,6 @@ export interface WorkspaceSummary {
   description: string
   createdAt: number
   updatedAt: number
-  hasAgentMd: boolean
   memoryCount: number
   skillCount: number
   taskCount: number

@@ -1,5 +1,5 @@
 /**
- * 规矩文件可用的类型。与 src/main/hooks/hook-types.ts 同源（单测钉住不漂移）。
+ * 规则文件可用的类型。与 src/main/hooks/hook-types.ts 同源（单测钉住不漂移）。
  * 只能 `import type`——这个模块没有运行时值。
  */
 declare module 'openpipal/hooks' {
@@ -19,14 +19,17 @@ declare module 'openpipal/hooks' {
   export interface HookContext {
     conversationId?: string
     workingDir: string
+    /** 内置角色名（general / coding / design …）；独立智能体跑在哪个底层角色上就是哪个 */
     roleName?: string
+    /** 当前对话属于哪个独立智能体（我的 Pal）；全局助手与内置角色没有。放在智能体自己目录里的规则不用判它（位置即范围）；只有插件里的全局规则想区别对待某个智能体时才用 */
+    workspaceId?: string
     source: 'desktop' | 'extension' | 'acp' | 'scheduler'
     /** 这次调用的信号：用户点停止、或这个处理函数超时，都会 abort */
     signal: AbortSignal
     /**
      * 用助手自己的工具（read / write / bash / web_search …）：同一套安全审核、同一个沙箱、
      * 同样会弹授权卡；参数按工具 schema 校验。审核拒绝时抛错，工具本身出错时 isError=true。
-     * 规矩自己发起的调用不再触发规矩。
+     * 规则自己发起的调用不再触发规则。
      */
     callTool?: (toolName: string, input: Record<string, unknown>) => Promise<HookToolResult>
   }
@@ -50,7 +53,7 @@ declare module 'openpipal/hooks' {
     toolName: string
     toolCallId: string
     input: Record<string, unknown>
-    /** 当前结果（前面的规矩改过就是改过之后的） */
+    /** 当前结果（前面的规则改过就是改过之后的） */
     content: HookContent[]
     details: unknown
     isError: boolean

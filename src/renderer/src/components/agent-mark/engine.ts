@@ -1,6 +1,6 @@
 import {
   blendProfile, circleProfile, clamp, easeOutCubic, easeOutQuint, lerp,
-  profilePath, roundedSquareProfile, type Eye,
+  profilePath, shapeProfile, type Eye, type MarkShape,
 } from './geometry'
 import { blendExpression, EXPRESSIONS, type ExpressionId } from './expressions'
 import { RING_SHRINK } from './rings'
@@ -47,6 +47,8 @@ export interface MarkClock {
   prevExpression: ExpressionId | null
   /** 上次切态的时刻，单位秒，和传给 sample 的 t 同一个基准 */
   since: number
+  /** 身体轮廓；不给 = 圆角方 */
+  shape?: MarkShape
 }
 
 export interface MarkFrame {
@@ -67,8 +69,27 @@ export interface MarkFrame {
 }
 
 const TAU = Math.PI * 2
-const SQUARE = roundedSquareProfile()
-export const BODY_NEUTRAL = profilePath(SQUARE)
+
+// 每种轮廓的剖面与中性态路径只算一次：sample 每帧被几十个头像调用，这里不能重新采样
+const PROFILES = new Map<MarkShape, number[]>()
+const NEUTRAL_BODIES = new Map<MarkShape, string>()
+function profileOf(shape: MarkShape): number[] {
+  let profile = PROFILES.get(shape)
+  if (!profile) {
+    profile = shapeProfile(shape)
+    PROFILES.set(shape, profile)
+  }
+  return profile
+}
+/** 某种轮廓的中性态身体路径 */
+export function neutralBody(shape: MarkShape = 'square'): string {
+  let body = NEUTRAL_BODIES.get(shape)
+  if (!body) {
+    body = profilePath(profileOf(shape))
+    NEUTRAL_BODIES.set(shape, body)
+  }
+  return body
+}
 const DOT_RADIUS = 7.5
 const DOT_X = 19
 const MORPH = 0.24
@@ -84,9 +105,10 @@ export function sample(t: number, clock: MarkClock): MarkFrame {
   const from = clock.prevExpression ?? STATE_EXPRESSION[clock.prevState]
   const k = easeOutQuint(clamp((t - clock.since) / MORPH))
   const eyes = blendExpression(from, to, k)
+  const shape = clock.shape ?? 'square'
 
   const f: MarkFrame = {
-    t, body: BODY_NEUTRAL, scaleX: 1, scaleY: 1, scale: 1, rotate: 0,
+    t, body: neutralBody(shape), scaleX: 1, scaleY: 1, scale: 1, rotate: 0,
     eyeSquash: 1, eyeShift: 0, eyeAlpha: 1, propAlpha: 1, ringAlpha: 0,
     dots: [], l: eyes.l, r: eyes.r,
   }
@@ -111,7 +133,7 @@ export function sample(t: number, clock: MarkClock): MarkFrame {
       f.propAlpha = clamp(1 - m * 1.8)
       const mid = dotBump(t, 1)
       // 身体**变成**中间那颗点，morph 全程连续；两侧点从腰上长出来
-      f.body = m > 0.001 ? profilePath(blendProfile(SQUARE, circleProfile(DOT_RADIUS * (1 + 0.22 * mid)), m)) : BODY_NEUTRAL
+      f.body = m > 0.001 ? profilePath(blendProfile(profileOf(shape), circleProfile(DOT_RADIUS * (1 + 0.22 * mid)), m)) : neutralBody(shape)
       if (m > 0.05) {
         f.dots = [-1, 1].map((s) => {
           const hot = dotBump(t, s < 0 ? 0 : 2)
@@ -148,9 +170,9 @@ export function sample(t: number, clock: MarkClock): MarkFrame {
 }
 
 /** 静止帧：捏头像的小格子、列表里的后台 Agent 用这个，不挂 rAF。 */
-export function staticFrame(expression: ExpressionId = 'neutral'): MarkFrame {
+export function staticFrame(expression: ExpressionId = 'neutral', shape: MarkShape = 'square'): MarkFrame {
   return sample(0, {
-    state: 'idle', prevState: 'idle', expression, prevExpression: expression, since: -999,
+    state: 'idle', prevState: 'idle', expression, prevExpression: expression, since: -999, shape,
   })
 }
 

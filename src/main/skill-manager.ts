@@ -39,8 +39,7 @@ import {
   getBuiltInSkillsDir,
   getSkillsConfigPath,
   getUserSkillsDir,
-  listGlobalSkillDirs
-} from './openpipal-skill-sources'
+  listGlobalSkillDirs, isAgentWideSkillFile } from './openpipal-skill-sources'
 import { SKILL_USAGE_NUDGE } from './skill-prompt-policy'
 import { getDataRoot } from './data-root'
 
@@ -136,6 +135,9 @@ function ensureSharedPackageJson(): void {
 function isBuiltInSkill(skill: PiSkill): boolean {
   return skill.filePath.startsWith(getBuiltInSkillsDir())
 }
+
+/** 判据在 openpipal-skill-sources（pi-core 那条运行时也用它）；每轮重读一遍小文件，不另设缓存 */
+const isAgentWideSkill = (skill: PiSkill): boolean => isAgentWideSkillFile(skill.filePath)
 
 /** 从 skill.baseDir 提取 MCP server 名(若 skill 在 ~/.openpipal/skills/_mcp/<serverName>/<skillName>/ 下) */
 function extractMcpServer(skill: PiSkill): string | undefined {
@@ -323,6 +325,8 @@ function scanBuiltInRoleSkills(roleName: string): PiSkill[] {
  *   目录不存在或为空 → 索引为空字符串，零注入。自有目录里的技能不受全局
  *   禁用列表影响——显式装进自己的目录 = 显式启用。想让独立智能体用上某个
  *   全局技能，就把那个技能目录复制/软链进它自己的 skills 目录（文件式而非字段式）。
+ *   唯一例外：技能自己声明 `metadata.agent-scope: all` 的（见 isAgentWideSkill），
+ *   每个独立智能体都看得见，仍受全局禁用列表管；自有目录里同名的优先。
  */
 function resolveSkillScope(options: {
   workspaceId?: string
@@ -331,9 +335,16 @@ function resolveSkillScope(options: {
   // 每轮对话开头重扫——目录小、本地盘、几毫秒可接受；避免"放新技能文件夹后必须重启才生效"
   scanAllSkills()
 
-  // 独立智能体：只看自己的目录，自有技能天然启用
+  // 独立智能体：自己的目录 + 声明了 agent-scope: all 的全局技能
   if (options.workspaceId) {
-    return scanAgentSkills(options.workspaceId).map(skill => ({ skill, enabled: true }))
+    const own = scanAgentSkills(options.workspaceId)
+    const ownNames = new Set(own.map(s => s.name))
+    return [
+      ...own.map(skill => ({ skill, enabled: true })),
+      ...piSkills
+        .filter(s => !ownNames.has(s.name) && isAgentWideSkill(s))
+        .map(skill => ({ skill, enabled: isSkillEnabled(skill.name) }))
+    ]
   }
 
   // built-in role 的专属技能既不受全局开关影响，也不进入其他角色的作用域；同名时它优先

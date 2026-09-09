@@ -1,7 +1,7 @@
 /**
  * NoticeCapsule —— 对话流里"顺手的事"的胶囊：居中、小、不打断主线，长期留在它发生的位置
  * （随会话落盘为 inject-notice 消息，不发给模型、不算对话历史）。
- * 规矩（HookNoticeRow）与记忆（MemoryNoticeRow）共用。tone：brand 正常 / warn 出错 / muted 已撤销等。
+ * 规则（HookNoticeRow）与记忆（MemoryNoticeRow）共用。tone：brand 正常 / warn 出错 / muted 已撤销等。
  */
 import type { ReactNode } from 'react'
 

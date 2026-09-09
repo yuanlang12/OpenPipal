@@ -1161,7 +1161,7 @@ export function classifyToolRisk(
 
   // ---- set_rule → safe（只递交要求；文件由后台 Evolver 在 local-rules 插件目录里写，受它自己的硬边界）----
   if (toolName === 'set_rule') {
-    return { level: 'safe', reason: '递交规矩给后台' }
+    return { level: 'safe', reason: '递交规则给后台' }
   }
 
   // ---- create_artifact / create_visualizer / edit_artifact / render_artifact / update_todos → safe（生成/修改/自检前端预览；edit 只写 artifacts sidecar 目录，render 在隐藏沙箱窗口只读渲染；update_todos 只回写 todos artifact）----
@@ -2047,7 +2047,7 @@ function writeAuditLog(toolName: string, args: Record<string, any>, assessment: 
 }
 
 /**
- * 用户规矩（插件 hooks/）在安全员之前拦下的调用也要进同一份审计：否则"规矩拦了 rm -rf"
+ * 用户规则（插件 hooks/）在安全员之前拦下的调用也要进同一份审计：否则"规则拦了 rm -rf"
  * 在日志里不留痕。参数同样只记类型与长度档，原因截断。
  */
 export function writeHookBlockAudit(toolName: string, args: Record<string, any>, reason: string): void {

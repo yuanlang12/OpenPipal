@@ -8,7 +8,7 @@
  *   save-agent:      从对话创建新 Agent（0→1）
  *   dream:           进化已有 Agent（1→N），夜间深度整理
  *   extract-memory:  每轮对话后的高频短增量记忆提取
- *   set-rule:        把前台递交的一条规矩写成 hook 文件（hooks/rule-writer 排队调用）
+ *   set-rule:        把前台递交的一条规则写成 hook 文件（hooks/rule-writer 排队调用）
  */
 
 import { Agent } from '@earendil-works/pi-agent-core'
@@ -17,7 +17,7 @@ import { app } from 'electron'
 import { existsSync, readFileSync, cpSync, mkdirSync } from 'fs'
 import { basename, join } from 'path'
 import { homedir } from 'os'
-import { getPiModel, ensurePiApiKey, getEffectiveModelConfig, withSessionStreamOptions, createModelPayloadAdapter, resolveAuxThinkingLevel } from './config-manager'
+import { buildModelFromConfig, ensurePiApiKeyFor, isBuiltinModelCredential, resolveConversationModelConfig, withSessionStreamOptions, createModelPayloadAdapter, resolveAuxThinkingLevel } from './config-manager'
 import { isolatedStreamSimple } from './isolated-stream-signal'
 import { loadSkills, formatSkillsForPrompt } from '../../node_modules/@earendil-works/pi-coding-agent/dist/core/skills.js'
 import type { ChatMessage } from './agent-runtime/contracts'
@@ -25,6 +25,8 @@ import { dataPath } from './data-root'
 import { createHardBoundaryHook } from './pi-security'
 import { getBuiltInSkillsDir } from './openpipal-skill-sources'
 import { formatDialogue } from './dialogue-format'
+import { getWorkspaceName } from './agent-workspace-store'
+import { getConversationPinnedPreset } from './conversation-store'
 import type { RuleWriterInput } from './hooks/rule-writer'
 import type { EvolverTaskCandidate } from './evolver-task-migration'
 import { buildEvolverTools } from './evolver-tools'
@@ -114,16 +116,27 @@ async function runEvolver(
   userMessage: string,
   cwd: string,
   taskCandidates: EvolverTaskCandidate[],
-  scope: { assignedRoot: string; workspaceId?: string }
+  scope: { assignedRoot: string; workspaceId?: string; conversationId?: string }
 ): Promise<{ success: boolean; error?: string }> {
   const systemPrompt = buildEvolverPrompt(skillName)
   if (!systemPrompt) {
     return { success: false, error: 'Evolver system prompt is empty' }
   }
 
-  const model = getPiModel()
-  ensurePiApiKey(model.provider)
-  const mc = getEffectiveModelConfig()
+  // 模型路由同子 Agent：来源会话钉住了预设就用它（刚在前台跑通的那个模型），没有才回全局默认。
+  // 独立 Agent 的会话常固定在某个预设上，全局默认可能是另一家端点——那家一断，后台就"Connection error"
+  // 而前台好好的（2026-09-08 实撞）。预设读会话文件（换模型时渲染层当场写盘），四种后台活同一条路。
+  // 失败结论带上模型 id，用户一眼看出是哪家没连上。
+  const pinnedPreset = scope.conversationId ? getConversationPinnedPreset(scope.conversationId) : undefined
+  const route = resolveConversationModelConfig(pinnedPreset)
+  if (route.danglingPresetId) console.warn(`[Evolver] 会话预设 ${route.danglingPresetId} 已不存在，回退全局默认`)
+  const mc = route.config
+  const model = buildModelFromConfig(mc)
+  ensurePiApiKeyFor(model.provider, mc)
+  // 结论会显示在对话胶囊里：内置凭证的模型名不出主进程（红线，与 getEffectiveModelConfigForDisplay 同口径）；
+  // 预设被删了回退的那种要说明，不然用户看到的是回退后的名字、以为路由没变
+  const modelLabel = (isBuiltinModelCredential(mc) ? '内置模型' : model.id) + (route.danglingPresetId ? '（会话预设已不存在，用的全局默认）' : '')
+  const describeFailure = (error: string): { success: false; error: string } => ({ success: false, error: `${modelLabel}：${error}` })
 
   const tools = buildEvolverTools(cwd, taskCandidates)
 
@@ -165,7 +178,7 @@ async function runEvolver(
       if (event.type === 'message_end') {
         const msg = event.message as any
         if (msg?.stopReason === 'error') {
-          finish({ success: false, error: msg.errorMessage || 'Agent error' })
+          finish(describeFailure(msg.errorMessage || 'Agent error'))
         }
       }
     })
@@ -174,7 +187,7 @@ async function runEvolver(
     const timer = setTimeout(() => {
       console.warn('[Evolver] 超时 (180s)')
       agent.abort()
-      finish({ success: false, error: 'Evolver timed out after 180s' })
+      finish(describeFailure('Evolver timed out after 180s'))
     }, 180_000)
 
     agent.prompt({
@@ -186,7 +199,7 @@ async function runEvolver(
       finish({ success: true })
     }).catch((err: any) => {
       console.error(`[Evolver] 失败:`, err.message)
-      finish({ success: false, error: err.message })
+      finish(describeFailure(err.message))
     })
   })
 }
@@ -228,6 +241,7 @@ ${conversationText}`
   return runEvolver('save-agent', userMessage, workspaceDir, candidateTasks || [], {
     assignedRoot: workspaceDir,
     workspaceId,
+    conversationId,
   })
 }
 
@@ -253,6 +267,7 @@ ${conversationText}`
   return runEvolver('dream', userMessage, workspaceDir, [], {
     assignedRoot: workspaceDir,
     workspaceId,
+    conversationId,
   })
 }
 
@@ -296,11 +311,12 @@ ${conversationText}`
   const sandboxRoot = join(memoryDir, '..')
   return runEvolver('extract-memory', userMessage, sandboxRoot, [], {
     assignedRoot: sandboxRoot,
+    conversationId,
   })
 }
 
 /**
- * 把一条规矩写成 hook 文件（前台 set_rule 工具递交，hooks/rule-writer 排队调用；入参形状就是它的 RuleWriterInput）。
+ * 把一条规则写成 hook 文件（前台 set_rule 工具递交，hooks/rule-writer 排队调用；入参形状就是它的 RuleWriterInput）。
  *
  * cwd / assignedRoot 都是 local-rules 插件根：Evolver 只能在这个目录里读写。
  * 类型声明随消息附上——边界之外的文件它读不到，不能让它去翻 hook-creator 的 references。
@@ -309,18 +325,25 @@ export async function evolverSetRule(input: RuleWriterInput): Promise<{ success:
   const previous = input.previousError
     ? `\nPrevious error (the file you wrote last time failed to load — fix exactly this):\n${input.previousError}\n`
     : ''
+  // 独立智能体里提的规则写进它自己的目录：位置即范围，只在跑它时装，文件里不用再判 workspaceId
+  const agentName = input.workspaceId ? (getWorkspaceName(input.workspaceId) || input.workspaceId) : undefined
+  const scope = input.workspaceId
+    ? `\nRequested inside standalone Agent "${agentName}". The rules directory is this Agent's own hooks/ folder:
+rules written there apply only to this Agent. Do not add workspaceId guards and do not append the Agent's name to the description.\n`
+    : ''
   const userMessage = `Skill: set-rule
-Rules directory: ${input.rulesDir}
+Rules directory (the hooks/ folder itself; write one <name>.ts per rule directly in it): ${input.rulesDir}
 Description: ${input.description}
 Details: ${input.details}
 Role: ${input.roleName || 'general'}
-${previous}
+${scope}${previous}
 Type declarations for 'openpipal/hooks' (authoritative; nothing else may be imported):
 
 \`\`\`ts
 ${readHookAuthorTypes()}
 \`\`\``
-  return runEvolver('set-rule', userMessage, input.rulesDir, [], { assignedRoot: input.rulesDir })
+  // workspaceId 必须给：租户边界把 agents/ 下的一切都当别人的，没有它写手在独立智能体目录里一个文件也写不出来
+  return runEvolver('set-rule', userMessage, input.rulesDir, [], { assignedRoot: input.rulesDir, workspaceId: input.workspaceId, conversationId: input.conversationId })
 }
 
 function readHookAuthorTypes(): string {

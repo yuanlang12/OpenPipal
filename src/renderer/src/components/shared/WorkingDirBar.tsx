@@ -42,12 +42,25 @@ function shortParent(dir: string): string {
 export function WorkingDirBar({ placement, className = '', trailing, recents }: WorkingDirBarProps): JSX.Element {
   const { t } = useTranslation()
   const workingDir = useChatStore(s => s.conversationConfig?.workingDir || '')
+  const activeWorkspaceId = useChatStore(s => s.activeWorkspaceId)
   const setConversationWorkingDir = useChatStore(s => s.setConversationWorkingDir)
+  // 没单独选目录时显示实际会用的默认（Pal 自己的 > 设置里选的 > App 自带 workspace），并标一个"默认"——
+  // 不然这一条只写"选择工作目录"，用户不知道不选会在哪干活
+  const [defaultDir, setDefaultDir] = useState<string>('')
   const conversations = useChatStore(s => s.conversations)
   const [rejected, setRejected] = useState<string | null>(null)
   // 这个目录里有没有 AGENTS.md / CLAUDE.md。不给信号的话，"助手知不知道这个项目的规矩"
   // 对用户完全不可见——它表现变了，用户不知道为什么变。
   const [projectRules, setProjectRules] = useState<ProjectRule[]>([])
+
+  useEffect(() => {
+    if (workingDir) return
+    let stale = false
+    void window.api.getDefaultWorkingDir?.(activeWorkspaceId || undefined).then((value: { effective: string } | null) => {
+      if (!stale && value) setDefaultDir(value.effective)
+    }).catch(() => {})
+    return () => { stale = true }
+  }, [workingDir, activeWorkspaceId])
 
   useEffect(() => {
     if (!workingDir) {
@@ -107,7 +120,8 @@ export function WorkingDirBar({ placement, className = '', trailing, recents }: 
   }, [recents, conversations, workingDir])
 
   const above = placement === 'above'
-  const label = workingDir ? workingDir.split('/').pop() || workingDir : t('chat.input.chooseWorkingDirectory')
+  const shownDir = workingDir || defaultDir
+  const label = shownDir ? shownDir.split('/').pop() || shownDir : t('chat.input.chooseWorkingDirectory')
   const ruleNames = projectRules.map(f => f.path.split('/').pop() || f.path)
   // 多份时只报最具体的那一份（离工作目录最近的在最后），完整清单进 tooltip
   const primaryRule = ruleNames.length ? ruleNames[ruleNames.length - 1] : ''
@@ -142,7 +156,7 @@ export function WorkingDirBar({ placement, className = '', trailing, recents }: 
       >
         <button
           onClick={pick}
-          title={workingDir || t('chat.input.chooseWorkingDirectory')}
+          title={shownDir || t('chat.input.chooseWorkingDirectory')}
           // min-w：这一排最多能挂四样（目录名 / 已读徽标 / 权限档位 / 清除），窄窗下总有东西要被截。
           // 目录名截成"che…"什么信息都不剩，徽标截成"已读…"照样读得懂——所以给目录名留个下限，
           // 让徽标先让位。
@@ -150,6 +164,11 @@ export function WorkingDirBar({ placement, className = '', trailing, recents }: 
         >
           <FolderOpen className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">{label}</span>
+          {!workingDir && defaultDir && (
+            <span data-testid="working-dir-default-tag" className="shrink-0 rounded px-1 text-[10px] leading-4 bg-surface-100 text-surface-400">
+              {t('chat.input.defaultWorkingDirectoryTag')}
+            </span>
+          )}
         </button>
         {primaryRule && (
           <span

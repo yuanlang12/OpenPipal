@@ -8,7 +8,7 @@ import { getArtifactStore } from '../artifact-registry'
 import { conversationUploadsDir } from '../chat-uploads'
 import { formatCliPrompt } from '../cli-registry'
 import type { ModelConfig } from '../config-manager'
-import { isAutoMemoryEnabled } from '../config-manager'
+import { getConfiguredWorkingDir, isAutoMemoryEnabled } from '../config-manager'
 import { buildMemoryContext } from '../memory-store'
 import { formatMemoriesForPrompt, getRecentMemories } from '../memory-manager'
 import { getMcpToolIndex, hasVisibleMcpServer } from '../mcp-manager'
@@ -374,8 +374,20 @@ export function resolveOpenPipalWorkingDirectory(overrides?: AgentOverrides): {
   const toolsConfig = workspaceId ? readToolsConfig(workspaceId) : undefined
   return {
     workspaceId,
-    workingDir: overrides?.workingDir || toolsConfig?.workingDir || dataPath('workspace'),
+    workingDir: overrides?.workingDir || defaultWorkingDirFrom(toolsConfig),
     disabledTools: toolsConfig?.disabledTools,
     mcpServers: toolsConfig?.mcpServers
   }
+}
+
+/**
+ * 会话没单独选目录时在哪干活：Pal 自己工具配置（tools/config.json）里设的 > 设置页选的默认 > App 自带的 workspace 目录。
+ * 运行时、提示词里那行"工作目录："、输入框上的目录条、设置页显示的都从这一处取，不各算各的。
+ */
+export function resolveDefaultWorkingDir(workspaceId?: string): string {
+  return defaultWorkingDirFrom(workspaceId ? readToolsConfig(workspaceId) : undefined)
+}
+
+function defaultWorkingDirFrom(toolsConfig: ReturnType<typeof readToolsConfig> | undefined): string {
+  return toolsConfig?.workingDir || getConfiguredWorkingDir() || dataPath('workspace')
 }

@@ -88,6 +88,7 @@ type MarkScope = 'role' | 'agent'
 interface MarkManifest {
   accessory?: string
   hue?: string
+  shape?: string
 }
 
 interface RoleInfo {
@@ -105,7 +106,7 @@ interface RoleInfo {
 interface WorkingDirResult { ok: boolean; code?: string; error?: string; resolved?: string }
 /** 只校验、不落盘的结果（目录条用它，选完先问能不能用） */
 interface WorkingDirVerdict { ok: boolean; code?: string; reason?: string; resolved?: string }
-/** 工作目录里被识别为项目入口文档的 AGENTS.md / CLAUDE.md —— 工作目录条据此告诉用户"这个项目的规矩已经读到了" */
+/** 工作目录里被识别为项目入口文档的 AGENTS.md / CLAUDE.md —— 工作目录条据此告诉用户"这个项目的规则已经读到了" */
 interface ProjectContextSummary {
   repoRoot: string | null
   files: Array<{ path: string; truncated: boolean }>
@@ -300,6 +301,9 @@ interface OpenPipalAPI {
   // 工作目录
   selectDirectory: () => Promise<string | null>
   getWorkingDir: () => Promise<string>
+  /** 默认工作目录：configured = 设置里选的（没选 null）；effective = 会话没单独选时实际用的（Pal 自己的 > 设置 > App 自带 workspace） */
+  getDefaultWorkingDir: (workspaceId?: string) => Promise<{ configured: string | null; effective: string }>
+  resetWorkingDir: () => Promise<{ ok: boolean }>
   setWorkingDir: (dir: string) => Promise<WorkingDirResult>
   validateWorkingDir: (dir: string) => Promise<WorkingDirVerdict>
   describeProjectContext: (dir: string) => Promise<ProjectContextSummary>
@@ -326,9 +330,9 @@ interface OpenPipalAPI {
   }) => void) => () => void
   /** runtime-context 快照原文：渲染层据此落盘隐藏消息，保证下轮回放与实发字节一致 */
   onRuntimeContext?: (callback: (conversationId: string, text: string) => void) => () => void
-  /** 规矩文件写入后加载器的结论（对话流一行提醒的数据源） */
+  /** 规则文件写入后加载器的结论（对话流一行提醒的数据源） */
   onHookNotice?: (callback: (conversationId: string | null, notice: HookNotice) => void) => () => void
-  /** 所有插件里的规矩清单（含被关掉的 .off 与停用插件里的）；拿不到清单的端（浏览器插件）返回 null */
+  /** 所有插件里的规则清单（含被关掉的 .off 与停用插件里的）；拿不到清单的端（浏览器插件）返回 null */
   listHooks?: () => Promise<HookEntry[] | null>
   /** 文件式开关：改名 `<file>` ↔ `<file>.off` */
   setHookEnabled?: (file: string, enabled: boolean) => Promise<HookToggleResult>

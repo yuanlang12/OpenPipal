@@ -1,5 +1,5 @@
 /**
- * 后台写规矩的编排（hooks/rule-writer）：
+ * 后台写规则的编排（hooks/rule-writer）：
  *   写手（Evolver，这里注入假的）写出文件 → 探针给结论 → 加载失败带原因重试一次 → 结论走 notify；
  *   local-rules 的 plugin.json 缺了自动补；写手没产出 / 抛错 / 重试没再动文件各有明确结论；
  *   队列串行，一条失败不影响下一条。
@@ -12,7 +12,7 @@ import { tmpdir } from 'os'
 const HOME = mkdtempSync(join(tmpdir(), 'openpipal-rule-writer-'))
 process.env.OPENPIPAL_ISOLATED_HOME = HOME
 
-const { requestRule, ensureLocalRulesPlugin, isRuleWriteActive, LOCAL_RULES_PLUGIN } = await import('../../src/main/hooks/rule-writer')
+const { requestRule, ensureLocalRulesPlugin, isRuleWriteActive, listPendingRuleDescriptions, LOCAL_RULES_PLUGIN } = await import('../../src/main/hooks/rule-writer')
 const { resetHookCache } = await import('../../src/main/hooks/hook-registry')
 
 const PLUGINS = join(HOME, '.openpipal', 'plugins')
@@ -33,7 +33,7 @@ function writerWriting(contents: Array<string | null>) {
   let call = 0
   return vi.fn(async ({ rulesDir }: { rulesDir: string }) => {
     const content = contents[Math.min(call++, contents.length - 1)]
-    if (content !== null) writeFileSync(join(rulesDir, 'hooks', 'mask.ts'), content, 'utf-8')
+    if (content !== null) writeFileSync(join(rulesDir, 'mask.ts'), content, 'utf-8')
     return { success: true }
   })
 }
@@ -54,9 +54,9 @@ describe('rule-writer', () => {
     const notices = await requestRule(request, { writer, notify })
     expect(JSON.parse(readFileSync(join(PLUGINS, LOCAL_RULES_PLUGIN, 'plugin.json'), 'utf-8')).name).toBe(LOCAL_RULES_PLUGIN)
     expect(writer).toHaveBeenCalledTimes(1)
-    expect(writer.mock.calls[0][0]).toMatchObject({ rulesDir: join(PLUGINS, LOCAL_RULES_PLUGIN), description: request.description, details: request.details, previousError: undefined })
+    expect(writer.mock.calls[0][0]).toMatchObject({ rulesDir: join(PLUGINS, LOCAL_RULES_PLUGIN, 'hooks'), description: request.description, details: request.details, previousError: undefined })
     expect(notices).toHaveLength(1)
-    expect(notices[0]).toMatchObject({ status: 'ok', pluginName: LOCAL_RULES_PLUGIN, description: '读成绩表前先遮名字' })
+    expect(notices[0]).toMatchObject({ status: 'ok', hookId: `${LOCAL_RULES_PLUGIN}/mask`, source: { kind: 'plugin', id: LOCAL_RULES_PLUGIN, name: LOCAL_RULES_PLUGIN }, description: '读成绩表前先遮名字' })
     expect(notify).toHaveBeenCalledWith(request, notices)
   })
 
@@ -81,7 +81,7 @@ describe('rule-writer', () => {
 
   it('写手说成功却什么都没写 / 写手抛错：各自一条失败结论，文件字段为空', async () => {
     const nothing = await requestRule(request, { writer: writerWriting([null]), notify: () => {} })
-    expect(nothing[0]).toMatchObject({ status: 'error', file: '', error: '后台没有写出规矩文件' })
+    expect(nothing[0]).toMatchObject({ status: 'error', file: '', error: '后台没有写出规则文件' })
 
     const thrown = await requestRule(request, { writer: async () => { throw new Error('模型挂了') }, notify: () => {} })
     expect(thrown[0]).toMatchObject({ status: 'error', error: '后台没写成：模型挂了' })
@@ -92,7 +92,7 @@ describe('rule-writer', () => {
     expect(notices[0]).toMatchObject({ status: 'error', error: '后台写手未就绪' })
   })
 
-  it('OPENPIPAL_DISABLE_HOOKS=1：不劳烦写手，直接告诉用户规矩功能被关了', async () => {
+  it('OPENPIPAL_DISABLE_HOOKS=1：不劳烦写手，直接告诉用户规则功能被关了', async () => {
     process.env.OPENPIPAL_DISABLE_HOOKS = '1'
     const writer = writerWriting([GOOD])
     const notices = await requestRule(request, { writer, notify: () => {} })
@@ -107,7 +107,7 @@ describe('rule-writer', () => {
       writer: async ({ rulesDir }) => {
         order.push('first-start')
         await new Promise<void>((resolve) => { releaseFirst = resolve })
-        writeFileSync(join(rulesDir, 'hooks', 'first.ts'), GOOD, 'utf-8')
+        writeFileSync(join(rulesDir, 'first.ts'), GOOD, 'utf-8')
         order.push('first-end')
         return { success: true }
       },
@@ -116,7 +116,7 @@ describe('rule-writer', () => {
     const second = requestRule({ ...request, description: '第二条' }, {
       writer: async ({ rulesDir }) => {
         order.push('second-start')
-        writeFileSync(join(rulesDir, 'hooks', 'second.ts'), GOOD, 'utf-8')
+        writeFileSync(join(rulesDir, 'second.ts'), GOOD, 'utf-8')
         return { success: true }
       },
       notify: () => {}
@@ -131,19 +131,27 @@ describe('rule-writer', () => {
     expect(existsSync(join(PLUGINS, LOCAL_RULES_PLUGIN, 'hooks', 'second.ts'))).toBe(true)
   })
 
-  it('写的期间 isRuleWriteActive 为真（主会话的 shell 探针据此让路），写完即假', async () => {
+  it('写的期间 isRuleWriteActive 为真、描述在「后台正在写」清单里；写完两者都清', async () => {
     let seenDuring: boolean | undefined
+    let pendingDuring: string[] = []
     expect(isRuleWriteActive()).toBe(false)
+    expect(listPendingRuleDescriptions(request.conversationId)).toEqual([])
     await requestRule(request, {
       writer: async ({ rulesDir }) => {
         seenDuring = isRuleWriteActive()
-        writeFileSync(join(rulesDir, 'hooks', 'mask.ts'), GOOD, 'utf-8')
+        pendingDuring = listPendingRuleDescriptions(request.conversationId)
+        // 别的会话看不到这条：清单进的是提规则那个会话的系统提示
+        expect(listPendingRuleDescriptions('another-conv')).toEqual([])
+        expect(listPendingRuleDescriptions(undefined)).toEqual([])
+        writeFileSync(join(rulesDir, 'mask.ts'), GOOD, 'utf-8')
         return { success: true }
       },
       notify: () => {}
     })
     expect(seenDuring).toBe(true)
+    expect(pendingDuring).toEqual([request.description])
     expect(isRuleWriteActive()).toBe(false)
+    expect(listPendingRuleDescriptions(request.conversationId)).toEqual([])
   })
 
   it('ensureLocalRulesPlugin 不覆盖已有的 plugin.json', () => {
@@ -153,5 +161,26 @@ describe('rule-writer', () => {
     ensureLocalRulesPlugin()
     expect(JSON.parse(readFileSync(join(dir, 'plugin.json'), 'utf-8')).description).toBe('用户自己写的')
     expect(existsSync(join(dir, 'hooks'))).toBe(true)
+  })
+})
+
+describe('rule-writer：独立智能体', () => {
+  it('在独立 Agent 里提的规则写进它自己的目录（hooks/ 由代码建好），结论来源是那个 Agent', async () => {
+    const agentDir = join(HOME, '.openpipal', 'agents', 'ws-a')
+    mkdirSync(agentDir, { recursive: true })
+    writeFileSync(join(agentDir, 'meta.json'), JSON.stringify({ id: 'ws-a', name: '物理教案专家', icon: '🤖', description: '', createdAt: 1, updatedAt: 1 }), 'utf-8')
+    const writer = vi.fn(async ({ rulesDir }: { rulesDir: string }) => {
+      // 写手只拿到 hooks/ 本身：独立智能体目录里还有 agent.md / memory / skills，一条规则不该有改人设的权限
+      expect(rulesDir).toBe(join(agentDir, 'hooks'))
+      expect(existsSync(rulesDir)).toBe(true)
+      writeFileSync(join(rulesDir, 'mask.ts'), GOOD, 'utf-8')
+      return { success: true }
+    })
+    const notices = await requestRule({ ...request, workspaceId: 'ws-a' }, { writer, notify: () => {} })
+    expect(writer).toHaveBeenCalledTimes(1)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toMatchObject({ status: 'ok', hookId: 'agent:ws-a/mask', source: { kind: 'agent', id: 'ws-a', name: '物理教案专家' } })
+    // 全局 local-rules 里不会多出文件
+    expect(existsSync(join(PLUGINS, LOCAL_RULES_PLUGIN, 'hooks', 'mask.ts'))).toBe(false)
   })
 })

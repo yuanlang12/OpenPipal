@@ -113,26 +113,42 @@ MCP 工具通过 Pi Agent 的 `beforeToolCall` hook **统一经过分类器检�
 2. **参数中的文件路径同样受 Layer 3 硬性边界约束**
 3. 所有 MCP 工具对所有角色开放（角色白名单不过滤 MCP 工具——这是设计决策，因为 MCP 工具已经有安全分类器保护）
 
-## 用户规矩（hooks）
+## 用户规则（hooks）
 
-> 源文件：`src/main/hooks/`、`src/main/agent-runtime/pi-core-tool-adapter.ts`
+> 源文件：`src/main/hooks/`、`src/main/agent-runtime/pi-core-tool-adapter.ts`、`src/main/evolver-agent.ts`
 
-用户可以让 Agent 把一句话的要求（"以后读成绩表先把学生名字遮掉"）写成插件目录下的一个
-TypeScript 文件（`~/.openpipal/plugins/<name>/hooks/*.ts`）。它们是**用户自己机器上、自己目录里
-的代码**，信任级别与用户装的插件、MCP 服务器相同；在主进程里执行，能改工具入参、拦下调用、
-补改工具结果、追加系统提示。边界：
+用户对助手说一句"以后读成绩表先把学生名字遮掉"，助手把这句话交给后台写手（Evolver 的 `set-rule`
+技能）写成一个 TypeScript 文件。文件放在哪决定它管谁（位置即范围）：
 
-- **规矩在授权器之前跑，授权器审的是改过之后的最终参数**：改出来的参数先按工具 schema 复验，
-  再走同一套分类器 / 确认 / 路径边界。规矩不能放宽任何一层，也不能推翻宿主的 terminate。
-- **规矩自己要用工具（`ctx.callTool`）走同一道授权**，与模型直接调用无差别。
-- **规矩拦下调用写审计**：`RESULT=hook_blocked`，带原因。
-- **规矩出错一律放行**（fail-open）并在对话里报告——规矩是便利层，不是安全层；安全层始终是
+- 全局规则：`~/.openpipal/plugins/local-rules/hooks/*.ts`，每个对话都装；任何插件也可以在自己的
+  `hooks/` 里带规则
+- 某个 Pal 里定的：`~/.openpipal/agents/<id>/hooks/*.ts`，只在跑这个 Pal 时装、跟着它走
+
+它们是**用户自己机器上、自己目录里的代码**，信任级别与用户装的插件、MCP 服务器相同；**在主进程里
+执行，没有沙箱**，能改工具入参、拦下调用、补改工具结果、追加系统提示。边界：
+
+- **规则在授权器之前跑，授权器审的是改过之后的最终参数**：改出来的参数先按工具 schema 复验，
+  再走同一套分类器 / 确认 / 路径边界。规则不能放宽任何一层，也不能推翻宿主的 terminate。
+- **规则自己要用工具（`ctx.callTool`）走同一道授权**，与模型直接调用无差别。
+- **规则拦下调用写审计**：`RESULT=hook_blocked`，带原因。
+- **规则出错一律放行**（fail-open）并在对话里报告——规则是便利层，不是安全层；安全层始终是
   分类器与沙箱。
-- **规矩文件不能 import 任何值模块**（`require` 直接抛错），只做纯逻辑；每次调用带独立超时。
-- 关闭：文件改名加 `.off`（插件页的开关就是这样做的），或环境变量 `OPENPIPAL_DISABLE_HOOKS=1`
+- **写手的边界只有那个 `hooks/` 目录**：Evolver 只有文件工具、没有 shell、没有权限弹窗，`assignedRoot`
+  就是规则文件所在的 `hooks/`（不是 Pal 的整个目录——那里还有 agent.md / memory / skills，一条规则
+  不该有改人设的权限）；在 Pal 里写要带 `workspaceId`，否则租户边界把 `agents/` 下的一切当别人的。
+- **写完当场加载、结论只来自加载器**：工具刚写完的文件若落在上面两种位置，注册表立刻编译加载，
+  成功 / 失败（带原因）以胶囊显示给用户、同一句话回给模型。探针的范围与本会话装规则的范围一致：
+  写进别的 Pal 目录的文件对本会话不生效，不会得到"从下一轮开始执行"的结论。
+- **模型每轮看到规则清单**（系统提示末尾的 `<rules>` 块：生效 / 没生效带原因 / 后台正在写），
+  清单来自本会话刚装的那份；只给事实，不给"该怎么答"的指令。
+- **规则文件里 `require` 直接抛错**——这是防误用（规则该是纯逻辑），**不是隔离**：`vm.compileFunction`
+  在主进程上下文里跑，`process` 等全局照样可达。别把这条当安全边界；安全边界是"文件来自用户自己的
+  目录"这一前提。每次调用带独立超时。
+- 关闭：文件改名加 `.off`（规则页的开关就是这样做的），或环境变量 `OPENPIPAL_DISABLE_HOOKS=1`
   整体停用。
 
-回归：`tests/unit/pi-core-hook-composition.test.ts`、`tests/unit/hook-chain.test.ts`
+回归：`tests/unit/pi-core-hook-composition.test.ts`、`tests/unit/hook-chain.test.ts`、
+`tests/unit/hook-registry.test.ts`（范围与野目录）、`tests/unit/rule-writer.test.ts`（写手根目录）
 
 ## 权限审批流程
 
@@ -284,7 +300,7 @@ objects.githubusercontent.com、raw.githubusercontent.com、pypi.org、files.pyt
 ```
 [2026-03-31T10:00:00.000Z] TOOL=bash ARGS={"command":"ls -la"} RESULT=safe SANDBOX=true
 [2026-03-31T10:00:01.000Z] TOOL=write ARGS={"path":"./test.ts"} RESULT=safe SANDBOX=true
-[2026-09-07T10:00:02.000Z] TOOL=read ARGS={"path":"./grades.xlsx"} RESULT=hook_blocked REASON=被规矩「读成绩表前先遮名字」拦下 SANDBOX=true
+[2026-09-07T10:00:02.000Z] TOOL=read ARGS={"path":"./grades.xlsx"} RESULT=hook_blocked REASON=被规则「读成绩表前先遮名字」拦下 SANDBOX=true
 ```
 
 日志使用非阻塞写入（`appendFile`），不影响工具执行性能。

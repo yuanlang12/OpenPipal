@@ -44,8 +44,8 @@ describe('接线', () => {
     for (const role of ['design', 'teacher', 'general']) {
       expect(skills.buildSkillIndexForContext({ roleName: role })).not.toContain('repo-onboarding')
     }
-    // 独立 workspace Agent 只看自己的目录，不继承角色技能
-    expect(skills.buildSkillIndexForContext({ workspaceId: 'iso', roleName: 'coding' })).toBe('')
+    // 独立 workspace Agent 只看自己的目录，不继承角色技能（声明了 agent-scope: all 的产品能力技能除外）
+    expect(skills.buildSkillIndexForContext({ workspaceId: 'iso', roleName: 'coding' })).not.toContain('repo-onboarding')
   })
 
   it('pi-core 与 legacy 两条运行时看到的是同一份', async () => {
@@ -71,7 +71,7 @@ describe('description（每轮都在上下文里，所以要短且带反向触�
 
   it('说清什么时候用、什么时候不用', () => {
     expect(frontmatter).toContain('AGENTS.md')
-    // 反向触发：项目规矩已注入且没人要写文档时不该加载它
+    // 反向触发：项目规则已注入且没人要写文档时不该加载它
     expect(frontmatter).toMatch(/不需要这个技能|无需(加载|读)/)
   })
 })
@@ -81,13 +81,13 @@ describe('三分支纪律', () => {
     expect(body).toContain('不要再 read')
   })
 
-  // 这条规矩的前提（同目录只取优先级最高的那一份）由
+  // 这条规则的前提（同目录只取优先级最高的那一份）由
   // project-context-injection.test.ts 的「AGENTS.md 与 CLAUDE.md 同在时只取 AGENTS.md」钉住。
   // 哪天改成"两份都注入"，这里的禁令就该跟着改，那条测试会先红。
   it('只有 CLAUDE.md：绝不新建 AGENTS.md 去遮蔽它', () => {
     expect(body).toContain('绝不新建 AGENTS.md')
     expect(body).toMatch(/遮蔽/)
-    // 补规矩的正确做法必须一起写出来，否则模型只知道禁止、不知道走哪
+    // 补规则的正确做法必须一起写出来，否则模型只知道禁止、不知道走哪
     expect(body).toMatch(/edit.*CLAUDE\.md/)
   })
 

@@ -23,7 +23,8 @@ const SIN = ANGLES.map(Math.sin)
 
 export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 export const clamp = (v: number, lo = 0, hi = 1): number => (v < lo ? lo : v > hi ? hi : v)
-const r2 = (n: number): number => Math.round(n * 100) / 100
+/** 路径数字统一两位小数：字符串短、同一帧比较稳定 */
+export const r2 = (n: number): number => Math.round(n * 100) / 100
 
 /**
  * 圆角方的解析剖面：射线打在 4 条直边和 4 段角弧上，取最远的那个交点。
@@ -120,4 +121,59 @@ export function radiusAtAngle(radii: number[], angle: number): number {
   const t = ((((angle / TAU) % 1) + 1) % 1) * SAMPLES
   const i = Math.floor(t)
   return lerp(radii[i % SAMPLES], radii[(i + 1) % SAMPLES], t - i)
+}
+
+// ---- 轮廓：身体的形状 ----
+//
+// 所有形状都是同一套 64 根射线上的半径，所以任意两个形状之间照样能 morph（blendProfile），
+// 思考态"身体缩成一颗点"的动画对每种形状都成立。角度按 ANGLES：0 在右、π/2 在下（SVG y 朝下）、
+// 3π/2 在上。眼睛是 mask 挖在身体上的洞，换轮廓不用动眼睛。
+
+export const MARK_SHAPES = ['square', 'circle', 'drop', 'hexagon', 'cloud', 'triangle'] as const
+export type MarkShape = (typeof MARK_SHAPES)[number]
+
+export const isMarkShape = (value: unknown): value is MarkShape =>
+  typeof value === 'string' && (MARK_SHAPES as readonly string[]).includes(value)
+
+const TOP = (3 * Math.PI) / 2
+const BOTTOM = Math.PI / 2
+
+/** 正 n 边形的极坐标半径：circumradius 是顶点到中心的距离，vertexAt 是第一个顶点的角度 */
+function polygonRadius(theta: number, sides: number, circumradius: number, vertexAt: number): number {
+  const step = (2 * Math.PI) / sides
+  const local = (((theta - vertexAt) % step) + step) % step
+  return (circumradius * Math.cos(step / 2)) / Math.cos(local - step / 2)
+}
+
+/** 相对"顶部"的角差，折到 [0, π]：0 = 正上方，π = 正下方 */
+function fromTop(theta: number): number {
+  const d = Math.abs((((theta - TOP) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI))
+  return d > Math.PI ? 2 * Math.PI - d : d
+}
+
+export function shapeProfile(shape: MarkShape): number[] {
+  switch (shape) {
+    case 'circle':
+      return circleProfile(HALF - 1)
+    case 'drop': {
+      // 盾牌 / 倒水滴：上圆下尖。眼睛固定在上半身（右眼还上翘），窄的一头只能朝下——
+      // 尖朝上的水滴无论怎么放宽，右眼角都会从斜边露出去（两轮截图都露）
+      return ANGLES.map((theta) => {
+        const s = (1 - Math.cos(fromTop(theta))) / 2   // 0 = 顶，1 = 底
+        return HALF * (1 - 0.42 * Math.pow(s, 1.6))
+      })
+    }
+    case 'hexagon':
+      return ANGLES.map((theta) => polygonRadius(theta, 6, HALF + 1, TOP))
+    case 'cloud':
+      // 五个鼓包：|cos(2.5θ)| 一圈正好五个峰，贝塞尔平滑后就是云边
+      // 相位对准顶部：一个鼓包正对上方，左右才对称
+      return ANGLES.map((theta) => HALF * (0.84 + 0.14 * Math.abs(Math.cos(2.5 * (theta - TOP)))))
+    case 'triangle':
+      // 顶点朝下：同上，眼睛在上半身，宽的一边得在上面
+      return ANGLES.map((theta) => polygonRadius(theta, 3, HALF + 6, BOTTOM))
+    case 'square':
+    default:
+      return roundedSquareProfile()
+  }
 }

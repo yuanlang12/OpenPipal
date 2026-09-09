@@ -5,6 +5,7 @@ import { useAppStore } from '../stores/appStore'
 import { useChatStore } from '../stores/chatStore'
 import { useAgentStore } from '../stores/agentStore'
 import { Bot, Focus } from 'lucide-react'
+import { WorkspaceAvatar } from './agent-mark'
 import { countDialogueMessages, isRegeneratableAssistantMessage } from '../chat/messages'
 import { groupTurns } from '../chat/groupTurns'
 import { ProcessGroup } from './ProcessGroup'
@@ -301,7 +302,7 @@ export function ChatPanel({ appName }: ChatPanelProps) {
       )}
       {messages.length === 0 && !isStreaming && activeWorkspace && (
         <div className="flex flex-col items-center justify-center h-full px-4 pb-4 max-w-lg mx-auto" data-testid="agent-onboarding">
-          <span className="text-5xl mb-3">{activeWorkspace.icon}</span>
+          <WorkspaceAvatar workspaceId={activeWorkspace.id} icon={activeWorkspace.icon} size={56} className="text-5xl mb-3" />
           <p className="font-display text-[17px] font-bold text-surface-700 tracking-tight mb-1">
             {activeWorkspace.name}
           </p>

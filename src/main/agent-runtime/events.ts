@@ -68,7 +68,7 @@ export type AgentEvent =
    */
   | { type: 'runtime_context'; text: string }
   /**
-   * 规矩文件刚被工具写入，加载器当场给出的结论。渲染层落成对话流里一行
+   * 规则文件刚被工具写入，加载器当场给出的结论。渲染层落成对话流里一行
    * messageKind='inject-notice' / messageSubtype='hook' 的提醒（持久化、不发给模型）。
    */
   | { type: 'hook_notice'; notice: HookNotice }

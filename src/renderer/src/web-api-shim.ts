@@ -368,7 +368,7 @@ export function installWebApiShim(): void {
     onContextUsage: (cb: Callback) => on('context-usage', cb),
     onRuntimeContext: (cb: Callback) => on('runtime-context', cb),
     onHookNotice: (cb: Callback) => on('hook-notice', cb),
-    // 规矩清单与开关是桌面端的事（文件在用户机器上）；浏览器端只收提醒，不管理。
+    // 规则清单与开关是桌面端的事（文件在用户机器上）；浏览器端只收提醒，不管理。
     // 返回 null 而不是 []：空数组会被当成"清单里没有这条 = 文件已删除"
     listHooks: async () => null,
     setHookEnabled: async () => ({ ok: false as const, error: 'unsupported' }),

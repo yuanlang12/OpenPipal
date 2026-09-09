@@ -87,6 +87,7 @@ import {
 } from './design-system-resource'
 import { getLocaleState, updateLocalePreference } from './locale-manager'
 import { isLocalePreference } from '../shared/i18n/contract'
+import { PAL_BASE_ROLE } from '../shared/pal-contract'
 
 // Agent Runtime 全栈懒加载（同 ipc-handlers.ts），由 router 统一缓存与失败重试。
 const agentService = getAgentRuntime
@@ -544,8 +545,9 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       try {
         const body = JSON.parse(await readBody(req))
         // Stage 8: 接受 agentId / workspaceId,让 openpipal-acp 等外部 client 能创建关联自定义 Agent 的会话
+        // Pal / 模板的会话用中性角色（见 pal-contract）；显式给了 role 的照给
         const conv = await createConversation(
-          body.role || getCurrentRole().name,
+          body.role || ((body.workspaceId || body.agentId) ? PAL_BASE_ROLE : getCurrentRole().name),
           body.title,
           body.agentId,
           body.workspaceId,
@@ -1136,7 +1138,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
               })
             }
             for (const entry of transcript) {
-              // ACP 会话里定下的规矩也要留那行提醒（带撤销入口）
+              // ACP 会话里定下的规则也要留那行提醒（带撤销入口）
               if (entry.kind === 'hook') { toAppend.push(hookNoticeToStoredMessage(entry.notice, now)); continue }
               toAppend.push(entry.kind === 'tool'
                 ? {

@@ -395,7 +395,7 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
   // 消息插队 turn 边界通知:左对齐细灰字一行
   // Phase E:无 avatar 后,缩进 pl-3 即可贴左,跟其他 timeline 节点对齐
   if (messageKind === 'inject-notice') {
-    // 胶囊提醒（居中、长期可见、不算对话历史）：规矩带"查看 / 撤销"且状态渲染时算；记忆只展示
+    // 胶囊提醒（居中、长期可见、不算对话历史）：规则带"查看 / 撤销"且状态渲染时算；记忆只展示
     if (message.messageSubtype === 'hook' && message.hookNotice) {
       return <HookNoticeRow message={message} />
     }

@@ -1,3 +1,4 @@
+import { r2 } from './geometry'
 /**
  * 执行态的环绕彩环 —— 真 3D 圆做正交投影，按 z 劈成前后两段：
  * 后半段画在身体之前（被身体挡住），前半段画在身体之后。这个前后分层才是它读起来
@@ -10,7 +11,6 @@
 
 const TAU = Math.PI * 2
 const SAMPLES = 72
-const r2 = (n: number): number => Math.round(n * 100) / 100
 
 interface RingSpec {
   radius: number

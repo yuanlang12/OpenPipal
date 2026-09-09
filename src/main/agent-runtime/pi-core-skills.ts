@@ -10,6 +10,7 @@ import { SKILL_USAGE_NUDGE } from '../skill-prompt-policy'
 import {
   getAgentSkillsDir,
   getBuiltInRoleSkillsDir,
+  isAgentWideSkillFile,
   listGlobalSkillDirs,
   readDisabledSkillNames
 } from '../openpipal-skill-sources'
@@ -77,7 +78,16 @@ export async function loadPiCoreSkillCatalog(options: {
   try {
     let skills: Skill[]
     if (options.workspaceId) {
-      skills = await mergeFirstWins(env, [getAgentSkillsDir(options.workspaceId)], diagnostics)
+      // 独立智能体：自己的目录 + 声明了 agent-scope: all 的全局技能（同名自己的优先；全局禁用照样禁）。
+      // 与 skill-manager.resolveSkillScope 同一条规则——菜单里列的和模型看到的必须是同一份
+      const own = await mergeFirstWins(env, [getAgentSkillsDir(options.workspaceId)], diagnostics)
+      const global = await mergeFirstWins(env, listGlobalSkillDirs(), diagnostics)
+      const disabled = new Set(readDisabledSkillNames())
+      const ownNames = new Set(own.map((skill) => skill.name))
+      skills = [
+        ...own,
+        ...global.filter((skill) => !ownNames.has(skill.name) && !disabled.has(skill.name) && isAgentWideSkillFile(skill.filePath))
+      ]
     } else {
       const global = await mergeFirstWins(env, listGlobalSkillDirs(), diagnostics)
       const disabled = new Set(readDisabledSkillNames())

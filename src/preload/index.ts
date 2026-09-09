@@ -169,7 +169,7 @@ const api = {
     ipcRenderer.on('runtime-context', handler)
     return () => ipcRenderer.removeListener('runtime-context', handler)
   },
-  // 规矩（插件 hooks/）：加载器的结论 → 对话流一枚胶囊（本轮探针带 cid；后台 set_rule 写的 cid 可为空 = 当前会话）；
+  // 规则（插件 hooks/）：加载器的结论 → 对话流一枚胶囊（本轮探针带 cid；后台 set_rule 写的 cid 可为空 = 当前会话）；
   // 插件页清单与文件式开关
   onHookNotice: (callback: (conversationId: string | null, notice: any) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, cid: string | null, notice: any): void => callback(cid, notice)
@@ -402,6 +402,9 @@ const api = {
   // 工作目录
   selectDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:select-directory'),
   getWorkingDir: (): Promise<string> => ipcRenderer.invoke('config:get-working-dir'),
+  getDefaultWorkingDir: (workspaceId?: string): Promise<{ configured: string | null; effective: string }> =>
+    ipcRenderer.invoke('config:get-default-working-dir', workspaceId),
+  resetWorkingDir: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('config:reset-working-dir'),
   setWorkingDir: (dir: string): Promise<{ ok: boolean; code?: string; error?: string; resolved?: string }> =>
     ipcRenderer.invoke('config:set-working-dir', dir),
   validateWorkingDir: (dir: string): Promise<{ ok: boolean; code?: string; reason?: string; resolved?: string }> =>

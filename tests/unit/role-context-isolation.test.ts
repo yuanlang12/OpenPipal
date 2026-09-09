@@ -60,6 +60,8 @@ vi.mock('../../src/main/agent-workspace-store', () => ({
 }))
 
 vi.mock('../../src/main/agent-template-manager', () => ({ getAgentTemplate: () => null }))
+// DC 闸门的拒绝文案带 dc-authoring 的绝对路径（要读 electron app 路径）；这里只看闸门开不开，不看路径
+vi.mock('../../src/main/openpipal-skill-sources', () => ({ getBuiltInSkillsDir: () => '/app/resources/skills' }))
 // 记忆总开关的产品默认已改为关闭；本文件测的是"记忆快照是否按会话角色隔离"，
 // 与默认值无关，故显式打开，避免用例被产品默认值静默架空
 vi.mock('../../src/main/config-manager', async (importOriginal) => ({

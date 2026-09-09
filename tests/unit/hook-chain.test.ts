@@ -1,7 +1,7 @@
 /**
  * hook-chain 单测——串行语义与 fail-open。
  *
- * tool_call：原地改参流到后面的 handler；第一个 block 赢且 reason 带规矩描述。
+ * tool_call：原地改参流到后面的 handler；第一个 block 赢且 reason 带规则描述。
  * tool_result：部分补丁按字段替换，后面的 handler 看到前面改过的；非法 content 被忽略并上报。
  * before_agent_start：系统提示逐个串起来。
  * 可靠性：抛错 / 超时 的 handler 被跳过并上报，链继续；已 abort 的信号直接不跑。
@@ -33,7 +33,7 @@ function chain(hooks: LoadedHook[], extra: Partial<HookChain> = {}): HookChain &
 }
 
 describe('tool_call 链', () => {
-  it('原地改参流到后面的 handler；第一个 block 赢，reason 带规矩描述', async () => {
+  it('原地改参流到后面的 handler；第一个 block 赢，reason 带规则描述', async () => {
     const seen: string[] = []
     const c = chain([
       hook('rewrite', { tool_call: [(e) => { e.input.command = 'pnpm ' + String(e.input.command).replace(/^npm /, '') }] }, '把 npm 换成 pnpm'),
@@ -47,24 +47,24 @@ describe('tool_call 链', () => {
 
     seen.length = 0
     const blocked = await runToolCallHooks(c, { type: 'tool_call', toolName: 'bash', toolCallId: 'c2', input: { command: 'npm rm -rf /' } })
-    expect(blocked).toEqual({ block: true, reason: '被规矩「禁止 rm -rf」拦下：危险' })
+    expect(blocked).toEqual({ block: true, reason: '被规则「禁止 rm -rf」拦下：危险' })
     expect(seen).toEqual(['pnpm rm -rf /'])
   })
 
   it('拦下的 handler 顺手改的参数不提交：审计记的是模型原本发的', async () => {
     const c = chain([hook('g', { tool_call: [(e) => { e.input.command = '[redacted]'; return { block: true, reason: '不行' } }] }, '禁')])
     const event = { type: 'tool_call' as const, toolName: 'bash', toolCallId: 'c', input: { command: 'rm -rf /' } }
-    await expect(runToolCallHooks(c, event)).resolves.toEqual({ block: true, reason: '被规矩「禁」拦下：不行' })
+    await expect(runToolCallHooks(c, event)).resolves.toEqual({ block: true, reason: '被规则「禁」拦下：不行' })
     expect(event.input).toEqual({ command: 'rm -rf /' })
   })
 
   it('抛错的 handler 被跳过并上报，链继续', async () => {
     const c = chain([
       hook('bad', { tool_call: [() => { throw new Error('oops') }] }),
-      hook('good', { tool_call: [() => ({ block: true })] }, '好规矩')
+      hook('good', { tool_call: [() => ({ block: true })] }, '好规则')
     ])
     const result = await runToolCallHooks(c, { type: 'tool_call', toolName: 'read', toolCallId: 'c', input: {} })
-    expect(result).toEqual({ block: true, reason: '被规矩「好规矩」拦下：这次不允许用这个工具' })
+    expect(result).toEqual({ block: true, reason: '被规则「好规则」拦下：这次不允许用这个工具' })
     expect(c.errors).toEqual([{ hookId: 'bad', event: 'tool_call', error: 'oops' }])
   })
 

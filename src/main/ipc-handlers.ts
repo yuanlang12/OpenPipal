@@ -25,7 +25,7 @@ import { saveConversationAttachment, loadConversationAttachment, type Attachment
 import type { ConversationGoal } from './goal-checker'
 import {
   getEffectiveModelConfig, saveModelConfig, getProviders, testConnection, hasApiKey, isUserCustomConfig, clearModelConfig, supportsEffortDial, thinkingCannotBeDisabled, resolveThinkingLevels,
-  ModelConfig, getWorkingDir, setWorkingDir,
+  ModelConfig, getWorkingDir, setWorkingDir, clearWorkingDir, getConfiguredWorkingDir,
   getAvailableModels, listModelPresets, saveModelPreset, deleteModelPreset, switchToPreset,
   listModelProviders, updateModelProvider, getModelProviderFull,
   getModelPresetFull, updateModelPreset,
@@ -71,6 +71,7 @@ import {
 } from './pi-security'
 import { syncSandboxWorkspaceRoots } from './sandbox-manager'
 import { invalidateProjectContextSnapshots, loadProjectContext } from './agent-runtime/project-context'
+import { resolveDefaultWorkingDir } from './agent-runtime/openpipal-prompt-core'
 import type { PermissionHandler, PermissionRequest, SessionApprovalScope } from './pi-security'
 import { isBrowserWriteTool, targetHostForCommand, grantSessionHost } from './browser-policy-store'
 import { detectGitRemoteUse } from './git-policy'
@@ -226,7 +227,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   // 并在选中的 Runtime 可用后统一装配。
   setAgentRuntimePermissionHandler(createDesktopPermissionHandler(getWindow))
 
-  // 后台写规矩：写手是 Evolver 的 set-rule 技能（惰性加载，同 evolverSaveAgent 的口径）；
+  // 后台写规则：写手是 Evolver 的 set-rule 技能（惰性加载，同 evolverSaveAgent 的口径）；
   // 结论走与本轮探针同一条通道（chat:hook-notice）→ 渲染层落成胶囊；cid 为空时落当前会话
   setRuleWriter((input) => import('./evolver-agent').then((m) => m.evolverSetRule(input)))
   setRuleNoticeSink((request, notices) => {
@@ -520,7 +521,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
             mainWindow.webContents.send('runtime-context', cid, event.text)
             break
           case 'hook_notice':
-            // 规矩文件刚写入、加载器给出的结论 → 对话流里一行「已定下规矩 / 规矩没生效」
+            // 规则文件刚写入、加载器给出的结论 → 对话流里一行「已定下规则 / 规则没生效」
             mainWindow.webContents.send('chat:hook-notice', cid, event.notice)
             break
         }
@@ -926,6 +927,22 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return getWorkingDir()
   })
 
+  // 设置页与输入框的目录条共用：configured = 用户明确选的（没选为 null），effective = 这条会话没单独选时实际用的
+  ipcMain.handle('config:get-default-working-dir', (_event, workspaceId?: string) => ({
+    configured: getConfiguredWorkingDir() ?? null,
+    effective: resolveDefaultWorkingDir(typeof workspaceId === 'string' && workspaceId ? workspaceId : undefined)
+  }))
+
+  // 「恢复默认」：删配置项，沙箱根与项目入口快照同 set 那条一起换
+  ipcMain.handle('config:reset-working-dir', async () => {
+    clearWorkingDir()
+    invalidateWorkspaceRootCache()
+    replaceGlobalWorkspaceRoot(getWorkingDir())
+    invalidateProjectContextSnapshots()
+    await syncSandboxWorkspaceRoots()
+    return { ok: true }
+  })
+
   // 选目录与"能不能在这个目录里干活"是两件事：选择器只管选，能不能用由安全层判。
   // 分开一个只读校验入口，让 UI 在写进配置之前就能把原因显示出来——历史行为是
   // 选完照常显示成功，然后每个文件工具都被硬拒且无声。
@@ -934,7 +951,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return { ok: verdict.ok, code: verdict.code, reason: verdict.reason, resolved: verdict.resolved }
   })
 
-  // 工作目录条要能告诉用户"这个项目的规矩我读到了没有"。不给信号的话，AGENTS.md
+  // 工作目录条要能告诉用户"这个项目的规则我读到了没有"。不给信号的话，AGENTS.md
   // 生效与否对用户完全不可见——模型表现变了，用户不知道为什么。
   ipcMain.handle('config:describe-project-context', (_event, dir: string) => {
     const ctx = loadProjectContext(dir)
@@ -1044,7 +1061,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle('skills:import-apply', (_event, payload: ImportApplyPayload) => importApply(payload))
   ipcMain.handle('skills:delete', (_event, name: string) => deleteUserSkill(name))
 
-  // ---- 规矩（插件 hooks/）：清单 + 文件式开关 ----
+  // ---- 规则（插件 hooks/）：清单 + 文件式开关 ----
   ipcMain.handle('hooks:list', () => listHookEntries())
   ipcMain.handle('hooks:set-enabled', (_event, file: string, enabled: boolean) => setHookFileEnabled(file, enabled))
 

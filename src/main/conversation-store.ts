@@ -97,7 +97,7 @@ export interface StoredMessage {
   screenshotRef?: string
   /** mcpAppPayload 已卸载的附件文件名（payload 本身经 normalizeStoredMessage 透传，此处不建模） */
   mcpAppRef?: string
-  /** 规矩文件写入后加载器的结论（inject-notice/hook 那一行的数据）；纯展示，不进模型载荷 */
+  /** 规则文件写入后加载器的结论（inject-notice/hook 那一行的数据）；纯展示，不进模型载荷 */
   hookNotice?: HookNotice
   /** 记忆提取 / 整理的结论（inject-notice/memory 胶囊的数据）；纯展示，不进模型载荷 */
   memoryNotice?: MemoryNotice
@@ -520,6 +520,11 @@ export function rehydrateRecentConversationAttachments(
     }
   }
   return msgs
+}
+
+/** 会话钉住的模型预设（后台 Evolver 路由用）：只读配置，不把整份消息规范化一遍 */
+export function getConversationPinnedPreset(id: string): string | undefined {
+  return readConversation(id)?.config?.modelPresetId
 }
 
 /**

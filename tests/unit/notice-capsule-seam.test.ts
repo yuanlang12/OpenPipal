@@ -1,5 +1,5 @@
 /**
- * 胶囊提醒（规矩 / 记忆）的两条约定，按源码钉住：
+ * 胶囊提醒（规则 / 记忆）的两条约定，按源码钉住：
  *   1. 长期可见：落成 inject-notice 消息、留在它发生的会话与位置——记忆不再是 8 秒消失的浮条；
  *   2. 不算对话历史：不进模型载荷（既有 inject-notice 规则）、不进"对话较长 / 保存为 Agent"的计数、
  *      不进 Evolver（记忆提取 / 保存 Agent / dream）看的对话正文。
@@ -14,7 +14,7 @@ import { formatDialogue, isDialogueMessage } from '../../src/main/dialogue-forma
 const read = (rel: string): string => readFileSync(join(__dirname, '../..', rel), 'utf-8')
 
 describe('胶囊提醒', () => {
-  it('记忆结论落成 inject-notice/memory 消息，与规矩胶囊走同一个 persistNoticeMessage；浮条时代的状态没了', () => {
+  it('记忆结论落成 inject-notice/memory 消息，与规则胶囊走同一个 persistNoticeMessage；浮条时代的状态没了', () => {
     const store = read('src/renderer/src/stores/chatStore.ts')
     expect(store).toMatch(/onMemoryUpdated\(\(cid: string \| null, notice: MemoryNotice\)/)
     expect(store).toMatch(/messageKind: 'inject-notice',\s*messageSubtype: 'memory',\s*memoryNotice: notice/)
@@ -39,7 +39,7 @@ describe('胶囊提醒', () => {
     const messages = [
       { role: 'user', content: 'hi' },
       { role: 'assistant', content: 'ok' },
-      { role: 'assistant', content: '规矩', messageKind: 'inject-notice', messageSubtype: 'hook' },
+      { role: 'assistant', content: '规则', messageKind: 'inject-notice', messageSubtype: 'hook' },
       { role: 'assistant', content: '记住', messageKind: 'inject-notice', messageSubtype: 'memory' }
     ] as never[]
     expect(countDialogueMessages(messages)).toBe(2)

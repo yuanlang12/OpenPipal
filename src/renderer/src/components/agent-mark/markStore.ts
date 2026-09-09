@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { AccessoryId, MarkHue } from './accessories'
+import type { MarkShape } from './geometry'
 
 /**
  * 捏头像配置的渲染层缓存 —— 两种 Agent 共用一张表，键是 `${scope}:${id}`。
@@ -18,6 +19,8 @@ export type MarkScope = 'role' | 'agent'
 export interface MarkOverride {
   accessory?: AccessoryId
   hue?: MarkHue
+  /** 身体轮廓；不给 = 圆角方 */
+  shape?: MarkShape
 }
 
 const overrides = new Map<string, MarkOverride>()
@@ -26,7 +29,17 @@ const listeners = new Set<() => void>()
 let version = 0
 
 const keyOf = (scope: MarkScope, id: string): string => `${scope}:${id}`
-const emit = (): void => { version += 1; listeners.forEach((fn) => fn()) }
+/** 同一轮里多次写入只通知一次：首屏几十个头像各自 loadMark 回来，不该每个都让全部头像重画一遍 */
+let emitScheduled = false
+const emit = (): void => {
+  if (emitScheduled) return
+  emitScheduled = true
+  queueMicrotask(() => {
+    emitScheduled = false
+    version += 1
+    listeners.forEach((fn) => fn())
+  })
+}
 
 export function getMarkOverride(scope: MarkScope, id: string): MarkOverride | undefined {
   return overrides.get(keyOf(scope, id))

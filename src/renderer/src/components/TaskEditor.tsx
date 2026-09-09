@@ -16,6 +16,12 @@ import { useTranslation } from 'react-i18next'
 import type { Task, TaskTrigger, ScheduleConfig } from '../types'
 import type { WorkspaceSummary, AgentTemplateSummary } from '../stores/agentStore'
 import { TaskTemplates } from './TaskTemplates'
+import { WorkspaceAvatar } from './agent-mark'
+
+/** Pal 的身份一律走头像组件（捏过就是 Mark，没捏过是它的 emoji），不拼成字符串——拼了就又回到"这里更新了那里没有" */
+const palLabel = (ws: WorkspaceSummary): React.ReactNode => (
+  <><span className="mr-1.5 inline-flex align-middle"><WorkspaceAvatar workspaceId={ws.id} icon={ws.icon} size={14} /></span>{ws.name}</>
+)
 
 interface Props {
   task?: Task
@@ -154,14 +160,14 @@ export function TaskEditor({ task, lockedWorkspaceId, workspaces = [], agents = 
     }
   }
 
-  const scopeLabel = (): string => {
+  const scopeLabel = (): React.ReactNode => {
     if (lockedWorkspaceId) {
       const ws = workspaces.find(w => w.id === lockedWorkspaceId)
-      return ws ? `${ws.icon || '🤖'} ${ws.name}` : t('tasks.editor.scope.currentAgent')
+      return ws ? palLabel(ws) : t('tasks.editor.scope.currentAgent')
     }
     if (workspaceId) {
       const ws = workspaces.find(w => w.id === workspaceId)
-      return ws ? `${ws.icon || '🤖'} ${ws.name}` : 'Workspace'
+      return ws ? palLabel(ws) : 'Workspace'
     }
     if (agentId) {
       const a = agents.find(x => x.id === agentId)
@@ -411,7 +417,7 @@ function ScopeMenu({
               onClick={() => onPickWs(w.id)}
               className={`w-full px-3 py-1.5 text-left text-[12px] hover:bg-surface-50 dark:hover:bg-surface-100 ${selectedWs === w.id ? 'text-brand-600' : 'text-surface-600'}`}
             >
-              <span className="mr-1.5">{w.icon || '🤖'}</span>{w.name}
+              {palLabel(w)}
             </button>
           ))}
         </>

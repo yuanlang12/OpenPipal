@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { ACCESSORIES, ACCESSORY_BY_ID, MARK_HUES, hueVar, type AccessoryId, type MarkHue } from './accessories'
 import { AgentMark } from './AgentMark'
 import type { MarkState } from './engine'
+import { MARK_SHAPES, r2, type MarkShape } from './geometry'
 
 /**
  * 捏头像 —— 弹窗。
@@ -54,9 +55,20 @@ export interface AgentMarkStudioProps {
   scope?: 'role' | 'agent'
   roleName: string
   displayName?: string
-  initial?: { accessory?: AccessoryId; hue?: MarkHue }
+  initial?: { accessory?: AccessoryId; hue?: MarkHue; shape?: MarkShape }
   onClose: () => void
-  onSaved?: (config: { accessory: AccessoryId; hue: MarkHue }) => void
+  onSaved?: (config: { accessory: AccessoryId; hue: MarkHue; shape: MarkShape }) => void
+}
+
+/**
+ * 导出用的取景框：把实际边界框撑成正方形、四边各留 pad，正方形才不会把 1024×1024 的 PNG 拉变形。
+ * 不小于 mark 本体的 ±32——没配饰时导出尺寸和屏幕一致。
+ */
+export function exportViewBox(box: { x: number; y: number; width: number; height: number }, pad = 3): string {
+  const side = Math.max(box.width, box.height, 64) + pad * 2
+  const cx = box.x + box.width / 2
+  const cy = box.y + box.height / 2
+  return `${r2(cx - side / 2)} ${r2(cy - side / 2)} ${r2(side)} ${r2(side)}`
 }
 
 export function AgentMarkStudio({
@@ -65,6 +77,7 @@ export function AgentMarkStudio({
   const { t } = useTranslation()
   const [accessory, setAccessory] = useState<AccessoryId>(initial?.accessory ?? 'none')
   const [hue, setHue] = useState<MarkHue>(initial?.hue ?? 'ink')
+  const [shape, setShape] = useState<MarkShape>(initial?.shape ?? 'square')
   const [state, setState] = useState<MarkState>('idle')
   const [saving, setSaving] = useState(false)
   const previewRef = useRef<HTMLDivElement>(null)
@@ -78,13 +91,17 @@ export function AgentMarkStudio({
   const save = async (): Promise<void> => {
     setSaving(true)
     try {
-      await window.api?.saveMark?.(scope, roleName, { accessory, hue })
-      onSaved?.({ accessory, hue })
+      await window.api?.saveMark?.(scope, roleName, { accessory, hue, shape })
+      onSaved?.({ accessory, hue, shape })
       onClose()
     } finally { setSaving(false) }
   }
 
-  /** 导出前把 CSS 变量解析成字面色 —— 导出的文件要能脱离 App 打开 */
+  /**
+   * 导出前把 CSS 变量解析成字面色 —— 导出的文件要能脱离 App 打开。
+   * 取景框按实际画了多大来定：屏幕上配饰挂在身体外沿（±36～±46），靠 overflow 可见；
+   * 导出用固定的 ±32 取景框就会把配饰裁掉（所有者 2026-09-08 实撞）。
+   */
   const serialized = (): string | null => {
     const svg = previewRef.current?.querySelector('svg')
     if (!svg) return null
@@ -93,6 +110,10 @@ export function AgentMarkStudio({
     clone.setAttribute('width', '512')
     clone.setAttribute('height', '512')
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    try {
+      const box = (svg as SVGGraphicsElement).getBBox()
+      if (box.width > 0 && box.height > 0) clone.setAttribute('viewBox', exportViewBox(box))
+    } catch { /* 无布局环境（单测）拿不到 bbox，保留原取景框 */ }
     clone.querySelectorAll('*').forEach((el) => {
       for (const attr of ['fill', 'stroke']) {
         const v = el.getAttribute(attr)
@@ -163,7 +184,7 @@ export function AgentMarkStudio({
           <div className="shrink-0 w-[210px] flex flex-col items-center gap-4">
             {/* 盒子留足余量：配饰和执行态彩环都画在瓷砖外沿，mark 本体只占盒子的六成 */}
             <div ref={previewRef} className="w-[200px] h-[190px] grid place-items-center">
-              <AgentMark state={state} accessory={accessory} hue={hue} size={118} animated
+              <AgentMark state={state} accessory={accessory} hue={hue} shape={shape} size={118} animated
                 ariaLabel={`${displayName ?? roleName} · ${t(`agentMark.state.${state}`)}`} />
             </div>
             <div className="grid grid-cols-3 gap-1.5 w-full">
@@ -180,6 +201,22 @@ export function AgentMarkStudio({
           </div>
 
           <div className="flex-1 min-w-0">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-surface-400 mb-2.5">
+              {t('agentMark.sections.shape')}
+            </h3>
+            {/* 轮廓格子里画的是**这个轮廓 + 眼睛**，不带配饰：选的是身体形状，就该看清形状 */}
+            <div className="grid grid-cols-6 gap-1.5 mb-6" data-testid="mark-shapes">
+              {MARK_SHAPES.map((s) => (
+                <button key={s} type="button" onClick={() => setShape(s)} title={t(`agentMark.shape.${s}`)}
+                  aria-label={t(`agentMark.shape.${s}`)} aria-pressed={shape === s}
+                  className={`aspect-square grid place-items-center rounded-lg border transition-colors ${
+                    shape === s ? 'border-ink-primary bg-surface-50'
+                      : 'border-transparent hover:border-surface-100 hover:bg-surface-50'}`}>
+                  <AgentMark shape={s} hue={hue} size={30} ariaLabel={t(`agentMark.shape.${s}`)} />
+                </button>
+              ))}
+            </div>
+
             <h3 className="text-[11px] font-semibold uppercase tracking-wider text-surface-400 mb-2.5">
               {t('agentMark.sections.accessory')}
             </h3>

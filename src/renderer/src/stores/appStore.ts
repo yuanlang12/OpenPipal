@@ -3,6 +3,8 @@ import { RoleInfo } from '../types'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type ActiveView = 'chat' | 'tools' | 'settings' | 'agents' | 'tasks' | 'artifacts'
+/** 插件页的四个标签；对话胶囊的「查看」要能直达「规则」，所以标签状态住在这里而不是页面本地 */
+export type ToolsHubTab = 'plugins' | 'skills' | 'tools' | 'rules'
 
 interface AppState {
   initialized: boolean
@@ -12,6 +14,7 @@ interface AppState {
   showConversations: boolean
   theme: ThemeMode
   activeView: ActiveView
+  toolsHubTab: ToolsHubTab
   /** Agent workspace panel 是否展开（仅在 activeWorkspaceId 存在时生效） */
   workspacePanelOpen: boolean
   /** Focus 模式:turn 完成后台面只留 user/过程摘要条/交付物/结论,收起中间过程消息。默认开。 */
@@ -25,6 +28,9 @@ interface AppActions {
   setShowConversations: (v: boolean) => void
   setTheme: (theme: ThemeMode) => void
   setActiveView: (view: ActiveView) => void
+  setToolsHubTab: (tab: ToolsHubTab) => void
+  /** 切到插件页并停在指定标签（胶囊「查看」→ 规则） */
+  openToolsHub: (tab: ToolsHubTab) => void
   toggleWorkspacePanel: () => void
   setWorkspacePanelOpen: (open: boolean) => void
   toggleFocusStream: () => void
@@ -43,6 +49,7 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   showConversations: false,
   theme: (readPref('openpipal-theme') as ThemeMode) || 'system',
   activeView: 'chat' as ActiveView,
+  toolsHubTab: 'plugins' as ToolsHubTab,
   workspacePanelOpen: readPref('openpipal-workspace-panel') !== 'false',
   focusStream: readPref('openpipal-focus-stream') !== 'false',
 
@@ -66,6 +73,8 @@ export const useAppStore = create<AppState & AppActions>((set) => ({
   setShowSettings: (v) => set({ showSettings: v }),
   setShowConversations: (v) => set({ showConversations: v }),
   setActiveView: (view) => set({ activeView: view }),
+  setToolsHubTab: (tab) => set({ toolsHubTab: tab }),
+  openToolsHub: (tab) => set({ activeView: 'tools', toolsHubTab: tab }),
   setTheme: (theme) => {
     localStorage.setItem('openpipal-theme', theme)
     set({ theme })

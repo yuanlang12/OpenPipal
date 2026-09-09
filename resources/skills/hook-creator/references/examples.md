@@ -1,4 +1,4 @@
-# 规矩范例
+# 规则范例
 
 三条都是纯逻辑，可以直接照抄改条件。
 
@@ -108,11 +108,11 @@ export default function (hook: HookAPI) {
       const r = await ctx.callTool('bash', { command: 'pytest -q 2>&1 | tail -5', timeout: 120 })
       summary = r.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n').trim()
     } catch (error) {
-      // 被安全审核拒绝等情况：不让规矩因此失效，把原因告诉模型就行
+      // 被安全审核拒绝等情况：不让规则因此失效，把原因告诉模型就行
       summary = `没跑成：${(error as Error).message}`
     }
     return {
-      content: [...event.content, { type: 'text', text: `\n[规矩：改完自动跑测试]\n${summary}` }]
+      content: [...event.content, { type: 'text', text: `\n[规则：改完自动跑测试]\n${summary}` }]
     }
   })
 }

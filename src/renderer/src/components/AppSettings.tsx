@@ -21,8 +21,12 @@ export function AppSettings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [followingError, setFollowingError] = useState<'load' | 'save' | null>(null)
-  const [workingDir, setWorkingDirState] = useState<string>('')
+  // configured = 用户选的；effective = 没选时 App 实际用的（显示出来，用户才知道"默认"到底是哪）
+  const [workingDir, setWorkingDirState] = useState<{ configured: string | null; effective: string }>({ configured: null, effective: '' })
   const [workingDirError, setWorkingDirError] = useState<string | null>(null)
+  const loadWorkingDir = (): void => {
+    window.api.getDefaultWorkingDir?.().then((value: { configured: string | null; effective: string } | null) => { if (value) setWorkingDirState(value) }).catch(() => {})
+  }
   const settingsEpoch = useRef(0)
 
   useEffect(() => {
@@ -44,7 +48,7 @@ export function AppSettings() {
       .finally(() => {
         if (settingsEpoch.current === epoch) setLoading(false)
       })
-    window.api.getWorkingDir?.().then((dir: string) => setWorkingDirState(dir)).catch(() => {})
+    loadWorkingDir()
     return () => {
       // Invalidate both the initial load and any later save that may still be
       // settling. A save owns a newer epoch, so conditioning this on the load
@@ -69,7 +73,13 @@ export function AppSettings() {
       return
     }
     setWorkingDirError(null)
-    setWorkingDirState(dir)
+    loadWorkingDir()
+  }
+
+  const handleResetDir = async () => {
+    await window.api.resetWorkingDir?.()
+    setWorkingDirError(null)
+    loadWorkingDir()
   }
 
   const toggleApp = async (app: string) => {
@@ -143,8 +153,8 @@ export function AppSettings() {
         <h3 className="text-xs font-medium text-surface-400 uppercase tracking-wider mb-2">{t('settings.apps.workingDirectory.title')}</h3>
         <p className="text-[11px] text-surface-400 mb-2">{t('settings.apps.workingDirectory.description')}</p>
         <div className="flex items-center gap-2">
-          <div className="flex-1 text-[12px] text-surface-600 bg-surface-50 px-2.5 py-1.5 rounded-lg border border-surface-100 truncate">
-            {workingDir || '~/Documents'}
+          <div className="flex-1 text-[12px] text-surface-600 bg-surface-50 px-2.5 py-1.5 rounded-lg border border-surface-100 truncate" data-testid="default-working-dir" title={workingDir.configured ?? workingDir.effective}>
+            {workingDir.configured ?? workingDir.effective}
           </div>
           <button
             onClick={handleSelectDir}
@@ -152,7 +162,19 @@ export function AppSettings() {
           >
             {t('settings.apps.workingDirectory.choose')}
           </button>
+          {workingDir.configured && (
+            <button
+              onClick={handleResetDir}
+              data-testid="default-working-dir-reset"
+              className="text-[12px] px-3 py-1.5 rounded-lg border border-surface-100 text-surface-500 hover:text-surface-700 hover:border-surface-200 transition-colors"
+            >
+              {t('settings.apps.workingDirectory.reset')}
+            </button>
+          )}
         </div>
+        {!workingDir.configured && (
+          <p className="mt-1.5 text-[11px] text-surface-300">{t('settings.apps.workingDirectory.unsetHint')}</p>
+        )}
         {workingDirError && (
           <p role="alert" data-testid="working-dir-error" className="mt-2 text-[11px] text-red-500 break-words">
 

@@ -102,7 +102,6 @@ export interface WorkspaceSummary {
   description: string
   createdAt: number
   updatedAt: number
-  hasAgentMd: boolean
   memoryCount: number
   skillCount: number
   taskCount: number
@@ -137,6 +136,21 @@ function workspaceDir(id: string): string {
 /** 获取 workspace 目录的绝对路径（供 UI 展示和 reveal in Finder 使用） */
 export function getWorkspaceDir(id: string): string {
   return workspaceDir(id)
+}
+
+/** 所有独立智能体目录的父目录（规则注册表按 `agents/<id>/hooks/` 定位文件） */
+export function getWorkspacesRootDir(): string {
+  return WORKSPACES_DIR
+}
+
+/** 只读 meta.json 拿名字，不像 getWorkspace 那样把 agent.md 和记忆全读出来 */
+export function getWorkspaceName(id: string): string | undefined {
+  try {
+    const meta: WorkspaceMeta = JSON.parse(readFileSync(metaPath(id), 'utf-8'))
+    return typeof meta.name === 'string' && meta.name.trim() ? meta.name : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function metaPath(id: string): string {
@@ -301,7 +315,6 @@ export function listWorkspaces(): WorkspaceSummary[] {
 
     try {
       const meta: WorkspaceMeta = JSON.parse(readFileSync(mp, 'utf-8'))
-      const amdPath = join(WORKSPACES_DIR, entry.name, 'agent.md')
       const memDir = join(WORKSPACES_DIR, entry.name, 'memory')
 
       let memoryCount = 0
@@ -333,7 +346,6 @@ export function listWorkspaces(): WorkspaceSummary[] {
         description: meta.description,
         createdAt: meta.createdAt,
         updatedAt: meta.updatedAt,
-        hasAgentMd: existsSync(amdPath),
         memoryCount,
         skillCount,
         taskCount

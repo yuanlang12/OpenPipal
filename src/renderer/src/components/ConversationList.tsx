@@ -4,8 +4,8 @@ import { ChatMessage } from '../types'
 import { getTranscriptText, shouldIncludeInTranscriptExport } from '../chat/messages'
 import { useTranslation } from 'react-i18next'
 import { useAgentStore } from '../stores/agentStore'
-import { RoleAvatar } from './shared/RoleAvatar'
-import { useAgentMarkStudio, MarkStudioAffordance, WorkspaceAvatar } from './agent-mark'
+import { ConversationAvatar } from './shared/ConversationAvatar'
+import { useAgentMarkStudio, MarkStudioAffordance } from './agent-mark'
 import { ConvStatusDot } from './shared/ConvStatusDot'
 
 interface ConversationSummary {
@@ -207,13 +207,13 @@ export function ConversationList({ conversations, activeId, onSelect, onDelete, 
                       onClick={() => onSelect(conv.id)}
                     >
                       <span className="relative mt-0.5 shrink-0 flex items-center">
-                        {conv.workspaceId
-                          ? <WorkspaceAvatar
-                              workspaceId={conv.workspaceId}
-                              icon={getWorkspaceIcon(conv.workspaceId)?.icon}
-                              size={15}
-                            />
-                          : <RoleAvatar role={{ name: conv.role }} size={15} className="text-surface-400" />}
+                        <ConversationAvatar
+                          workspaceId={conv.workspaceId}
+                          role={conv.role}
+                          icon={getWorkspaceIcon(conv.workspaceId)?.icon}
+                          size={15}
+                          className="text-sm text-surface-400"
+                        />
                         <MarkStudioAffordance
                           size={14}
                           label={t('agentMark.entry')}

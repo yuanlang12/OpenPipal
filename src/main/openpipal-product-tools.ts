@@ -62,6 +62,7 @@ import { sliceArtifactContent, formatArtifactReadHeader, formatArtifactTruncatio
 import type { ChatSource } from './agent-runtime/contracts'
 import { createSetRuleTool } from './hooks/set-rule-tool'
 import { dataPath } from './data-root'
+import { getBuiltInSkillsDir } from './openpipal-skill-sources'
 import { resolveCodeExecutionLanguage } from './code-execution-language'
 import { isRenderArtifactConsoleNoise } from './render-artifact-diagnostics'
 
@@ -1062,7 +1063,8 @@ function createArtifactTool(
           return reject('用户在新建对话时已点选模板=**动画**——首个交付物必须是动画 DC，不是静态页面/幻灯片。先 read 技能索引里 animation-basics 的 SKILL.md，按"场景 jsx + 薄壳 x-import"两步节奏产出；若用户已在对话中明确改口要非动画产物，在文件首行加 <!-- non-anim: 原因 --> 后重试。')
         }
         if (/<html[\s>]/i.test(c) && !/<x-dc[\s>]/i.test(c) && !/<!--\s*non-dc\b/i.test(c)) {
-          return reject('整页 HTML 交付物必须是 Design Component（.dc.html）格式。先 read 技能索引里 dc-authoring 的 SKILL.md，按其文件骨架重写内容后用相同参数重新调用 create_artifact。若确属纯 canvas/WebGL 例外，在文件首行加 <!-- non-dc: 原因 --> 后重试。')
+          // 给绝对路径而不是"技能索引里的"：独立 Pal 的索引里没有 dc-authoring，模型会去猜路径、翻目录、要搜全盘（2026-09-09 实撞）
+          return reject(`整页 HTML 交付物必须是 Design Component（.dc.html）格式。先 read ${path.join(getBuiltInSkillsDir(), 'dc-authoring', 'SKILL.md')}，按其文件骨架重写内容后用相同参数重新调用 create_artifact。若确属纯 canvas/WebGL 例外，在文件首行加 <!-- non-dc: 原因 --> 后重试。`)
         }
         if (/<x-dc[\s>]/i.test(c)) {
           // 截断检测：实测模型超长生成会在字符串中途被切断（错误边界虽兜底但交付物残缺）
@@ -1902,8 +1904,8 @@ export function buildOpenPipalProductTools(
     createWebSearchTool(),
     createAskUserTool(askUserResolver),
     createQuestionsV2Tool(),
-    // 定规矩：只递交要求，文件由后台 Evolver 写（hooks/set-rule-tool）
-    createSetRuleTool({ conversationId: overrides?.conversationId, roleName }),
+    // 定规则：只递交要求，文件由后台 Evolver 写（hooks/set-rule-tool）
+    createSetRuleTool({ conversationId: overrides?.conversationId, roleName, workspaceId: overrides?.workspaceId }),
     createGenerateDocumentTool(overrides?.workspaceId),
     createVisualizerTool(),
     createArtifactTool(overrides?.conversationId, roleName, overrides?.roleBrief),

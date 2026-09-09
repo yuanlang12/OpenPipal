@@ -122,7 +122,7 @@ describe('secondary renderer surfaces i18n', () => {
     expect(editor).toContain('value={cron}')
     expect(editor).toContain('value={webhookSecret}')
     expect(editor).toContain('value={webhookUrl}')
-    expect(editor).toContain('{w.name}')
+    expect(editor).toContain('{ws.name}')   // Pal 的名字经 palLabel 原样渲染（身份走头像组件，不进翻译）
     expect(editor).toContain('{a.name}')
     expect(templates).toContain('getBuiltinTaskTemplates(t)')
     expect(templates).toContain('onPick(tpl)')
