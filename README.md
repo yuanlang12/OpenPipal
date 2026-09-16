@@ -193,7 +193,7 @@ Anything that speaks the OpenAI-compatible protocol works. Presets included:
 ~/.openpipal/
 ├── config.json     # model presets and app settings
 ├── memory/         # long-term memory, one folder per agent
-├── outputs/        # files the model produced
+├── outputs/<conversation>/  # files the model produced in that conversation
 ├── sessions-v4/    # chat history, append-only JSONL
 ├── conversations/  # attachments, plus history from older versions
 └── skills/         # your own skills

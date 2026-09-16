@@ -29,9 +29,9 @@ import { decideForCommand } from './browser-policy-store'
 import { getWorkingDir } from './config-manager'
 import { decideGitAccess, detectGitRemoteUse } from './git-policy'
 import { grantSessionProject, hasGitGrant, resolveProjectKey } from './git-policy-store'
-import { containsReceiptPlaceholder } from './tool-content-compactor'
 import { dataPath, getDataRoot } from './data-root'
 import { normalizeCodeExecutionLanguage } from './code-execution-language'
+import type { McpToolAnnotations } from './mcp-tool-annotations'
 import {
   deniedWorkspaceRootsFor,
   isCaseInsensitivePathPlatform,
@@ -54,12 +54,13 @@ import {
 
 const HOME = os.homedir()
 
-/** artifact sidecar 根目录——write/edit 直写这里会绕过 edit_artifact/create_artifact 的截断检测与 jsx 重编译（Workstream B1） */
+/** artifact sidecar 根目录——租户边界用（自己会话的随便读写，别的会话的不许碰） */
 const ARTIFACTS_SIDECAR_ROOT = dataPath('conversations', 'artifacts')
 const OPENPIPAL_ROOT = getDataRoot()
 const OPENPIPAL_AGENTS_ROOT = dataPath('agents')
 const OPENPIPAL_CONVERSATIONS_ROOT = dataPath('conversations')
 const OPENPIPAL_OUTPUTS_ROOT = dataPath('outputs')
+const OPENPIPAL_TEAMS_ROOT = dataPath('teams')
 
 /**
  * 模拟 pi-coding-agent write/edit 工具的 resolveToCwd：~ 展开 + 相对路径按 agent 当前工作目录解析。
@@ -264,14 +265,6 @@ function resolveRealPath(filePath: string): string {
 /** @internal Deterministic test seam for the hard path boundary. */
 export function canonicalizeSecurityPath(filePath: string): string {
   return resolveRealPath(filePath)
-}
-
-/** Canonical product-integrity guard; the optional root is an isolated test seam. */
-export function isArtifactSidecarPath(
-  filePath: string,
-  artifactRoot = ARTIFACTS_SIDECAR_ROOT
-): boolean {
-  return pathWithin(resolveRealPath(filePath), resolveRealPath(artifactRoot))
 }
 
 /**
@@ -601,11 +594,24 @@ export interface RiskAssessment {
 export interface ToolScope {
   conversationId?: string
   workspaceId?: string
+  /** 团队话题：本团队的 teams/<id>/ 可读；写只许 memory/ 与 shared/（含频道的）。别的团队一律不可见 */
+  teamId?: string
   workingDir?: string
   /** Canonical filesystem capability root for unattended internal agents. */
   assignedRoot?: string
   /** Remote MCP names are untrusted and must not inherit built-in semantics. */
   origin?: 'local' | 'mcp'
+  /** MCP 工具在 tools/list 里自述的副作用（只对 origin 'mcp' 有意义；没写就按未知处理） */
+  mcpAnnotations?: McpToolAnnotations
+}
+
+/**
+ * 会话 → 团队的反查（同频道话题的产物目录互相可读，设计稿 §4.1）。安全员不直接依赖会话存储模块，
+ * 由启动代码把查询函数塞进来（与 setInlinePermissionSender 同一种接缝）；没塞就只认自己会话的目录。
+ */
+let conversationTeamResolver: ((conversationId: string) => string | undefined) | null = null
+export function setConversationTeamResolver(resolver: ((conversationId: string) => string | undefined) | null): void {
+  conversationTeamResolver = resolver
 }
 
 export interface OpenPipalTenantRoots {
@@ -614,6 +620,8 @@ export interface OpenPipalTenantRoots {
   conversations: string
   artifacts: string
   outputs: string
+  /** 团队目录根（teams/）；测试用隔离 home 时可省略，省略 = 不判团队边界 */
+  teams?: string
 }
 
 const DEFAULT_TENANT_ROOTS: OpenPipalTenantRoots = {
@@ -621,7 +629,26 @@ const DEFAULT_TENANT_ROOTS: OpenPipalTenantRoots = {
   agents: OPENPIPAL_AGENTS_ROOT,
   conversations: OPENPIPAL_CONVERSATIONS_ROOT,
   artifacts: ARTIFACTS_SIDECAR_ROOT,
-  outputs: OPENPIPAL_OUTPUTS_ROOT
+  outputs: OPENPIPAL_OUTPUTS_ROOT,
+  teams: OPENPIPAL_TEAMS_ROOT
+}
+
+/**
+ * 团队目录里 Pal 能写的只有记忆与共享文件夹（团队的，或某个频道的）。章程 / 规则 / 工具边界 / 桥接
+ * 只有人在 App 里能改（设计稿 §5 第④层）——和 Evolver 只能写 hooks/ 是同一种边界。
+ */
+function teamWritableRelative(relative: string): boolean {
+  const segments = relative.split(path.sep).filter(Boolean)
+  if (segments.length === 0) return false
+  if (segments[0] === 'memory' || segments[0] === 'shared') return true
+  return segments[0] === 'channels' && segments.length >= 3 && (segments[2] === 'memory' || segments[2] === 'shared')
+}
+
+/** shell 文本里"会改文件"的信号：重定向、tee、原地 sed，以及删 / 移 / 拷 / 建这几类命令 */
+const SHELL_WRITE_INTENT_RE = /(?:>>?|\btee\b|\bsed\b[^|;&]*\s-[a-zA-Z]*i|\b(?:rm|mv|cp|touch|mkdir|rmdir|ln|truncate|chmod|chown|install|rsync)\b)/
+
+function isDirectorySafe(filePath: string): boolean {
+  try { return fs.statSync(filePath).isDirectory() } catch { return false }
 }
 
 function expandHome(input: string): string {
@@ -684,8 +711,8 @@ export function detectHomeWideScan(
     const usersRoot = win32 ? fold(resolved) === fold(p.dirname(home)) : resolved === '/Users'
     if (wholeMachine || usersRoot || fold(resolved) === fold(home)) {
       return win32
-        ? `命令要遍历用户目录/整块磁盘（${t}）——会触达桌面、文档、下载等隐私目录。如确有必要请确认；若在找随消息发来的图片，存盘路径已在消息中注明，无需搜索`
-        : `命令要遍历主目录/全盘（${t}）——会触达桌面、iCloud、照片、音乐等隐私目录并触发系统授权弹窗。如确有必要请确认；若在找随消息发来的图片，存盘路径已在消息中注明，无需搜索`
+        ? `命令要遍历用户目录/整块磁盘（${t}）——会触达桌面、文档、下载等隐私目录。如确有必要请确认；若在找随消息发来的图片，存盘路径已在消息中注明，无需搜索；若在找 support.js / deck-stage.js 这类预制件，它们不在工作区里，调 copy_starter_component 拷进来即可`
+        : `命令要遍历主目录/全盘（${t}）——会触达桌面、iCloud、照片、音乐等隐私目录并触发系统授权弹窗。如确有必要请确认；若在找随消息发来的图片，存盘路径已在消息中注明，无需搜索；若在找 support.js / deck-stage.js 这类预制件，它们不在工作区里，调 copy_starter_component 拷进来即可`
     }
   }
   return null
@@ -709,8 +736,24 @@ export function assessToolScopeWithRoots(
   const discoveryTool = ['find', 'grep', 'ls'].includes(toolName)
   const requestedPath = extractPath(args)
   const directPath = requestedPath || (discoveryTool ? (scope.workingDir || getWorkingDir()) : null)
-  const checkInternalPath = (candidate: string): RiskAssessment | null => {
+  const checkInternalPath = (candidate: string, writes: boolean): RiskAssessment | null => {
     const p = expandHome(candidate)
+    if (roots.teams && inside(p, roots.teams, scope.workingDir)) {
+      const own = scope.teamId ? path.join(roots.teams, scope.teamId) : ''
+      if (!own || !inside(p, own, scope.workingDir)) {
+        return { level: 'risky', reason: scope.teamId
+          ? '禁止读取其他团队的目录；团队话题只能看自己团队的 teams/<id>/'
+          : '禁止读取团队目录；只有团队话题里的成员能看自己团队的 teams/<id>/' }
+      }
+      if (writes) {
+        const ownReal = resolveRealPath(own)
+        const target = resolveRealPath(resolveAgentPath(p, scope.workingDir))
+        const relative = path.relative(ownReal, target)
+        if (!teamWritableRelative(relative)) {
+          return { level: 'risky', reason: `团队的章程 / 规则 / 工具边界只有人在 App 里能改；你只能写团队的 memory/ 与 shared/（本团队目录 ${own}/）` }
+        }
+      }
+    }
     if (inside(p, roots.agents, scope.workingDir)) {
       const own = scope.workspaceId ? path.join(roots.agents, scope.workspaceId) : ''
       if (!own || !inside(p, own, scope.workingDir)) {
@@ -726,20 +769,44 @@ export function assessToolScopeWithRoots(
       const allowed = (ownArtifacts && inside(p, ownArtifacts, scope.workingDir)) ||
         (ownConvJson && resolveRealPath(resolveAgentPath(p, scope.workingDir)) === resolveRealPath(ownConvJson))
       if (!allowed) {
-        return { level: 'risky', reason: '禁止扫描其他对话数据；历史对话不会自动挂载到当前任务' }
+        // 拒绝要带替代路径：模型多半是在找自己的产物文件（create_artifact 结果里已带路径）
+        const own = ownArtifacts ? `。本会话自己的产物在 ${ownArtifacts}/，create_artifact 结果里也带文件路径` : ''
+        return { level: 'risky', reason: `禁止扫描其他对话数据；历史对话不会自动挂载到当前任务${own}` }
       }
     }
     return null
   }
 
+  // outputs 按会话分目录（outputs/<conversationId>/，见 data-root.ts outputsDirFor）：自己的目录随便列，
+  // 根与别的会话的目录和 conversations/artifacts 同一口径——别的任务的产物不属于本次。拒绝文案带自己的目录。
+  const ownOutputs = scope.conversationId ? path.join(roots.outputs, scope.conversationId) : ''
+  // outputs/<会话id>/ 的主人：自己的会话，或同一个团队里别的话题（团队话题之间产物目录互通，对话记录仍不通）
+  const insideOwnOutputs = (candidate: string): boolean => {
+    const real = resolveRealPath(resolveAgentPath(expandHome(candidate), scope.workingDir))
+    const base = resolveRealPath(roots.outputs)
+    if (!pathWithin(real, base)) return false
+    const owner = path.relative(base, real).split(path.sep)[0]
+    if (!owner) return false
+    if (scope.conversationId && owner === scope.conversationId) return true
+    return !!scope.teamId && !!conversationTeamResolver && conversationTeamResolver(owner) === scope.teamId
+  }
+  const outputsDeny = (): RiskAssessment => ({
+    level: 'risky',
+    reason: ownOutputs
+      ? `禁止枚举所有历史 outputs（根下和别的会话目录里是别的任务的产物）；本会话自己的产物在 ${ownOutputs}/，export_artifact / generate_document / render_artifact 的结果里都带文件路径`
+      : '禁止枚举所有历史 outputs；用当前任务已知的具体产物路径（export_artifact / generate_document / render_artifact 的结果里都带文件路径）'
+  })
+
   if (directPath && typeof directPath === 'string') {
-    const denied = checkInternalPath(directPath)
+    const denied = checkInternalPath(directPath, WRITE_FILE_TOOLS.has(toolName))
     if (denied) return denied
-    if (discoveryTool && (
-      inside(directPath, roots.outputs, scope.workingDir)
-      || resolveRealPath(resolveAgentPath(directPath, scope.workingDir)) === resolveRealPath(roots.root)
-    )) {
-      return { level: 'risky', reason: '禁止枚举 OpenPipal 的共享历史目录；请使用当前任务已知的具体路径' }
+    if (discoveryTool) {
+      if (resolveRealPath(resolveAgentPath(directPath, scope.workingDir)) === resolveRealPath(roots.root)) {
+        return { level: 'risky', reason: '禁止枚举 OpenPipal 的共享历史目录；请使用当前任务已知的具体路径' }
+      }
+      if (inside(directPath, roots.outputs, scope.workingDir) && !insideOwnOutputs(directPath)) {
+        return outputsDeny()
+      }
     }
   }
 
@@ -751,19 +818,32 @@ export function assessToolScopeWithRoots(
   // Bash 参数不是结构化路径，针对 OpenPipal 自有根目录做明确的租户边界判定。
   // 先抓绝对/~ 路径；命令里只写 `.openpipal/...` 的情况再用关键目录兜底。
   const pathTokens = command.match(/(?:~|\/Users\/[^/\s"'`|;&]+|\/home\/[^/\s"'`|;&]+)?\/?\.openpipal\/[^\s"'`|;&]*/g) || []
+  const shellWrites = SHELL_WRITE_INTENT_RE.test(command)
   for (const token of pathTokens) {
     const candidate = token.startsWith('.openpipal/') ? path.join(HOME, token) : token
     if (broadDiscovery && resolveRealPath(resolveAgentPath(candidate, scope.workingDir)) === resolveRealPath(roots.root)) {
-      return { level: 'risky', reason: '禁止枚举整个 OpenPipal 数据目录；请使用当前任务挂载的工作区或具体路径' }
+      // 2026-09-11 实撞：模型来这里是想"看看有哪些技能"，其实清单和路径早在系统提示里；拒绝要把这个事实说出来
+      return { level: 'risky', reason: '禁止枚举整个 OpenPipal 数据目录。技能清单和每个 SKILL.md 的路径已在系统提示的 <available_skills> 里，按 location 直接 read；工作区文件用当前任务的工作目录或具体路径' }
     }
-    const denied = checkInternalPath(candidate)
+    const denied = checkInternalPath(candidate, shellWrites)
     if (denied) return denied
   }
 
-  // outputs 目前没有会话子目录；允许读取明确文件，但禁止 find/rg/grep/ls 之类枚举整个共享根。
-  // 这切断截图中的“顺手把所有历史产物拉回上下文”，同时保留已知导出文件的后续处理。
-  if (broadDiscovery && (command.includes(roots.outputs) || command.includes('~/.openpipal/outputs'))) {
-    return { level: 'risky', reason: '禁止枚举所有历史 outputs；请使用当前任务已知的具体产物路径' }
+  // outputs：本会话自己的目录（outputs/<conversationId>/）随便列；根、根下的历史遗留子目录、别的会话目录
+  // 禁止 find/rg/grep/ls 枚举，明确文件照常可读——切断"顺手把所有历史产物拉回上下文"，保留已知文件的后续处理。
+  // 判定看命令里 outputs 路径指向的是目录还是文件，不看命令里有没有 ls——
+  // 2026-09-11 实撞：`cp …/outputs/.self-check/x.png shot.png && ls -la shot.png` 被整条拦下，模型以为路径带 outputs 就不能碰。
+  if (broadDiscovery) {
+    for (const marker of [roots.outputs, '~/.openpipal/outputs']) {
+      for (let idx = command.indexOf(marker); idx >= 0; idx = command.indexOf(marker, idx + marker.length)) {
+        const rest = command.slice(idx + marker.length).match(/^[^\s"'`|;&)]*/)?.[0] ?? ''
+        if (rest && !rest.startsWith('/')) continue // outputs-old 之类同前缀的别的名字
+        if (insideOwnOutputs(path.join(roots.outputs, rest))) continue
+        const target = path.join(roots.outputs, rest)
+        const isDir = rest === '' || rest.endsWith('/') || isDirectorySafe(resolveRealPath(target))
+        if (isDir) return outputsDeny()
+      }
+    }
   }
   return null
 }
@@ -807,10 +887,12 @@ function atCommandPosition(word: string, flags = ''): RegExp {
 }
 
 /**
- * 危险命令分两档——依据是 CLAUDE.md 的判定公式「如果模型是完美的，这机制还需要吗？」
+ * 危险命令分三档——依据是 CLAUDE.md 的判定公式「如果模型是完美的，这机制还需要吗？」
  *
  * blocked（永久硬边界）：不可逆、或越过沙箱的信任模型。完美的模型也不该在别人机器上
  * 干这些，所以不给放行通道。
+ *
+ * indirect（转手执行，见下方 INDIRECT_EXEC_COMMANDS）：沙箱在就交用户裁决，没沙箱才硬拒。
  *
  * confirm（交给用户裁决）：在编码工作里是**日常操作**——回滚一次失败的改动、清掉
  * node_modules 重装、强推一个自己的分支。硬拒它们不是安全，是让 agent 在需要回滚时
@@ -824,20 +906,14 @@ const IRREVERSIBLE_COMMANDS: Array<[RegExp, string]> = [
   [/\bdd\s+if=/, 'dd 裸设备写入'],
   [/\b(curl|wget)\b[^\n]*\|\s*(ba|z|k)?sh\b/, '把下载内容直接喂给 shell'],
   [/\b(chmod|chown)\b.*\b777\b/, '把权限改成 777'],
-  [atCommandPosition('eval'), 'shell eval'],
-  [atCommandPosition('exec'), 'shell exec'],
   // ---- PowerShell / cmd（Windows 的 powershell 工具，以及 bash 里嵌的 `pwsh -c` 同一张表）----
-  // 对应关系：Format-Volume ≈ mkfs、`irm … | iex` ≈ `curl | sh`、Invoke-Expression ≈ eval、
-  // RunAs/runas ≈ sudo、icacls Everyone ≈ chmod 777。HKLM 是机器级注册表，删了整机受影响。
+  // 对应关系：Format-Volume ≈ mkfs、`irm … | iex` ≈ `curl | sh`、RunAs/runas ≈ sudo、
+  // icacls Everyone ≈ chmod 777。HKLM 是机器级注册表，删了整机受影响。
   [/\b(?:Format-Volume|Clear-Disk|Remove-Partition|Initialize-Disk)\b/i, '格式化或抹掉磁盘分区'],
   // `format` 只认后面直接跟盘符的写法：python 的 `format(x)` 也会出现在行首
   [/(?:^|[\n;&|(])\s*format(?:\.com)?\s+[A-Za-z]:/i, '格式化磁盘（format）'],
   [/(?:^|[\n;&|(])\s*diskpart\b/i, '改动磁盘分区（diskpart）'],
   [/\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest|curl|wget)\b[^\n]*\|\s*(?:iex|Invoke-Expression|pwsh|powershell)\b/i, '把下载内容直接喂给 PowerShell'],
-  [atCommandPosition('Invoke-Expression', 'i'), 'PowerShell Invoke-Expression'],
-  // `iex` 别名只认 PowerShell 的用法（后面跟 $var / ( / 引号 / -Command，或直接收尾如 `… | iex`）：
-  // Elixir 的 REPL 也叫 iex，`iex -S mix` 是日常命令，不能一并硬拒
-  [/(?:^|[\n;&|(])\s*iex(?:\s+[($"'`]|\s+-Command\b|(?=\s*(?:$|[\n;&|)])))/i, 'PowerShell Invoke-Expression（iex）'],
   [/\bStart-Process\b[^\n]*-Verb\s+RunAs\b/i, '提权运行（Start-Process -Verb RunAs）'],
   [/(?:^|[\n;&|(])\s*runas(?:\.exe)?\s/i, '提权运行（runas）'],
   [/\breg(?:\.exe)?\s+delete\s+HKLM\b/i, '删机器级注册表（reg delete HKLM）'],
@@ -868,7 +944,23 @@ const DESTRUCTIVE_COMMANDS: Array<[RegExp, string]> = [
   [/\bClear-RecycleBin\b/i, '清空回收站'],
 ]
 
-export type DestructiveTier = 'blocked' | 'confirm'
+/**
+ * indirect（转手执行）：eval / exec / Invoke-Expression 本身不可逆也不越权，它们的问题是
+ * 命令真正跑什么在文本里看不见，上面两张表的判据会被整个绕开。所以它跟着沙箱走：
+ * 沙箱在 → 交用户裁决（完全允许档也问，否则 `eval "rm -rf x"` 就绕过了 rm 那一档）；
+ * 没沙箱 → 文本判据是唯一边界，照旧硬拒。以前一律硬拒，`exec node server.js` 这种
+ * 日常写法也没有放行通道（2026-09-12 规则盘点降档）。
+ */
+const INDIRECT_EXEC_COMMANDS: Array<[RegExp, string]> = [
+  [atCommandPosition('eval'), 'shell eval'],
+  [atCommandPosition('exec'), 'shell exec'],
+  [atCommandPosition('Invoke-Expression', 'i'), 'PowerShell Invoke-Expression'],
+  // `iex` 别名只认 PowerShell 的用法（后面跟 $var / ( / 引号 / -Command，或直接收尾如 `… | iex`）：
+  // Elixir 的 REPL 也叫 iex，`iex -S mix` 是日常命令，不能一并算进来
+  [/(?:^|[\n;&|(])\s*iex(?:\s+[($"'`]|\s+-Command\b|(?=\s*(?:$|[\n;&|)])))/i, 'PowerShell Invoke-Expression（iex）'],
+]
+
+export type DestructiveTier = 'blocked' | 'indirect' | 'confirm'
 export interface DestructiveVerdict { tier: DestructiveTier; label: string }
 
 /**
@@ -887,6 +979,9 @@ export function assessDestructiveCommand(text: string, isShell: boolean): Destru
   for (const [re, label] of IRREVERSIBLE_COMMANDS) {
     if (re.test(text)) return { tier: 'blocked', label }
   }
+  for (const [re, label] of INDIRECT_EXEC_COMMANDS) {
+    if (re.test(text)) return { tier: 'indirect', label }
+  }
   const scanned = isShell ? [text] : [text, flattenArgvLiterals(text)]
   for (const [re, label] of DESTRUCTIVE_COMMANDS) {
     if (scanned.some(candidate => re.test(candidate))) return { tier: 'confirm', label }
@@ -894,14 +989,7 @@ export function assessDestructiveCommand(text: string, isShell: boolean): Destru
   return null
 }
 
-// ---- bash 直写 artifact sidecar 旁路封锁 ----
-// write/edit 工具已锁死 ARTIFACTS_SIDECAR_ROOT（见下方 write/edit 分支），但 bash 里的
-// cp/重定向/sed -i 能绕过 edit_artifact 的截断检测 + create_artifact 的 jsx 重编译。
-// 必须识别真正的写入目标，不能只看整条命令里是否同时出现 sidecar 路径和写命令：
-// `cp sidecar/source.png /tmp/review.png` 的 sidecar 只是只读来源，误拦会把模型逼进 OCR/沙箱绕路。
-// 宁可漏拦（变量拼接的怪写法）不可误拦（误拦会把模型逼向更怪的绕路）。
-const ARTIFACT_SIDECAR_PATH_RE = /conversations[\\/]+artifacts\b/i
-
+/** 有界 shell 分词：引号成对的当一个 token，其余按空白切；不扩成全 shell AST */
 function shellTokens(segment: string): string[] {
   return (segment.match(/"(?:\\.|[^"])*"|'[^']*'|[^\s]+/g) || [])
     .map(token => {
@@ -910,54 +998,6 @@ function shellTokens(segment: string): string[] {
       }
       return token
     })
-}
-
-function artifactPathIn(value: string | undefined): boolean {
-  return Boolean(value && ARTIFACT_SIDECAR_PATH_RE.test(value))
-}
-
-function commandWritesArtifactSidecar(command: string): boolean {
-  // 仅做有界 shell 解析：按常见控制符拆成简单命令，再检查每个写命令的目标参数。
-  // 引号内含控制符属于少见动态写法，按上方"宁可漏拦不可误拦"原则不扩成全 shell AST。
-  const segments = command.split(/&&|\|\||[;|\n]/)
-  for (const segment of segments) {
-    const tokens = shellTokens(segment)
-    if (tokens.length === 0) continue
-
-    // `>` / `>>`（含 `2>/path`、`>/path`）的下一个 token或同 token 尾部就是写入目标。
-    for (let i = 0; i < tokens.length; i++) {
-      const redirect = tokens[i].match(/^\d*(>>?)(.*)$/)
-      if (!redirect) continue
-      const target = redirect[2] || tokens[i + 1]
-      if (artifactPathIn(target)) return true
-    }
-
-    let commandIndex = tokens.findIndex(token => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token))
-    if (commandIndex < 0) continue
-    if (path.basename(tokens[commandIndex]) === 'env') {
-      commandIndex++
-      while (commandIndex < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[commandIndex])) commandIndex++
-    }
-    // PowerShell 的 cmdlet 与别名不分大小写；把 `Copy-Item` / `Set-Content` 这类写命令
-    // 折成小写后和 cp/tee 走同一套"目标操作数"判定（Windows 上 bash 与 powershell 都要拦）
-    const executable = path.basename(tokens[commandIndex] || '').toLowerCase()
-    const args = tokens.slice(commandIndex + 1)
-    const operands = args.filter(arg => arg !== '--' && !arg.startsWith('-'))
-
-    if (['cp', 'mv', 'copy', 'move', 'copy-item', 'move-item', 'cpi', 'mi'].includes(executable)) {
-      // cp/mv 的最后一个操作数是目标；前面的 sidecar 路径都只是来源。
-      if (artifactPathIn(operands.at(-1))) return true
-    } else if ([
-      'tee', 'mkdir', 'touch', 'rm',
-      'set-content', 'sc', 'add-content', 'ac', 'out-file', 'new-item', 'ni', 'remove-item', 'ri', 'del', 'md'
-    ].includes(executable)) {
-      if (operands.some(artifactPathIn)) return true
-    } else if (executable === 'sed' && args.some(arg => arg === '-i' || arg.startsWith('-i'))) {
-      // sed -i 会原地改写文件，出现的 sidecar 文件就是写入目标。
-      if (args.some(artifactPathIn)) return true
-    }
-  }
-  return false
 }
 
 /**
@@ -1041,12 +1081,25 @@ function extractPath(args: any): string | null {
 export function classifyToolRisk(
   toolName: string,
   args: any,
-  scope: Pick<ToolScope, 'workingDir' | 'origin'> = {}
+  scope: Pick<ToolScope, 'workingDir' | 'origin' | 'mcpAnnotations'> = {}
 ): RiskAssessment {
   // A remote MCP server controls both the name and implementation of its
   // tools. Never let a name such as `read`, `save_memory`, or `get_account`
   // inherit a built-in auto-approval branch.
+  //
+  // 分级只看服务器在 tools/list 里**自述**的注解（协议字段，不是名字）：
+  //   readOnlyHint 且没说 destructive → 免确认（只读工具每次弹卡是打扰，不是安全）
+  //   destructiveHint → 需确认，文案带"删除"让确认卡走红色那档
+  //   没写注解 → 未知，照旧每次问
+  // 注解来自用户自己装/连的服务器，它撒谎能做的事本来就不止这些，所以按它说的分级不扩大信任面。
   if (scope.origin === 'mcp') {
+    const a = scope.mcpAnnotations
+    if (a?.readOnlyHint === true && a.destructiveHint !== true) {
+      return { level: 'safe', reason: `MCP 工具自述只读（readOnlyHint）: ${toolName}` }
+    }
+    if (a?.destructiveHint === true) {
+      return { level: 'needs_confirmation', reason: `MCP 工具自述可能删除或覆盖数据（destructiveHint）: ${toolName}` }
+    }
     return { level: 'needs_confirmation', reason: `远程 MCP 工具需确认: ${toolName}` }
   }
   // mcp_execute: 沙箱隔离，内部 MCP 调用由 pi-mcp-bridge 的 buildToolsApi 安全检查
@@ -1091,10 +1144,6 @@ export function classifyToolRisk(
   // ---- bash/shell/powershell 命令检查 ----
   if (toolName === 'bash' || toolName === 'shell' || toolName === 'powershell') {
     const command: string = args?.command || ''
-    // artifact sidecar 旁路封锁（Layer 3 硬性边界，沙箱与否都拦）：见上方常量定义注释
-    if (commandWritesArtifactSidecar(command)) {
-      return { level: 'risky', reason: 'artifact 内容必须走 edit_artifact / create_artifact；bash 直写 sidecar 会绕过编译与完整性护栏（grep/cat/ls 只读核查不受限）' }
-    }
     const destructive = assessDestructiveCommand(command, true)
     if (destructive?.tier === 'blocked') {
       // 不可逆 / 越过沙箱信任模型的那一档：有沙箱也拦（Layer 3 硬性边界）
@@ -1117,6 +1166,19 @@ export function classifyToolRisk(
       const credentialRef = detectCredentialPathReference(command)
       if (credentialRef) {
         return { level: 'risky', reason: `命令触到了凭据路径（${credentialRef}）。没有系统沙箱兜底时禁止执行；请换一个不涉及凭据文件的做法。` }
+      }
+    }
+    // 转手执行（eval / exec / Invoke-Expression）：命令真正跑什么，上面的文本判据看不见。
+    // 沙箱在 → 交用户裁决，且完全允许档也问（不然 `eval "rm -rf x"` 就绕过了 rm 那一档）；
+    // 没沙箱（只剩 Windows 这一种情况能走到这）→ 文本判据是唯一边界，照旧硬拒
+    if (destructive?.tier === 'indirect') {
+      if (unsandboxed) {
+        return { level: 'risky', reason: `检测到危险命令（${destructive.label}）: ${command.substring(0, 80)}——没有系统沙箱时安全检查只能看命令文本，转手执行会让它看不见真正跑的是什么` }
+      }
+      return {
+        level: 'needs_confirmation',
+        reason: `${destructive.label}（命令转手执行，安全检查看不到它真正跑什么；沙箱在，由你裁决）: ${command.substring(0, 80)}`,
+        alwaysConfirm: true
       }
     }
     // 破坏性但可逆的那一档放在沙箱判定之后：沙箱故障时 shell 整条已被禁，
@@ -1182,6 +1244,12 @@ export function classifyToolRisk(
     return { level: 'safe', reason: 'OpenPipal 展示工具（环境查询 / 内容推送）' }
   }
 
+  // ---- copy_starter_component → safe：只把 OpenPipal 自带的 dc-runtime 预制件拷进工作目录，
+  //      目标目录由工具自身钉在工作目录之内；内容是冻结的运行时，不是模型生成的代码 ----
+  if (toolName === 'copy_starter_component') {
+    return { level: 'safe', reason: '拷贝 OpenPipal 自带预制件到工作区' }
+  }
+
   // ---- subagent → safe（subagent 工具本身只是委派，真正执行子任务的工具由 child Agent
   //      自己经过同一套 classifyToolRisk 分级；这里把"委派"动作本身视为零副作用）----
   if (toolName === 'subagent') {
@@ -1211,13 +1279,9 @@ export function classifyToolRisk(
 
   // ---- execute_code → 沙箱可用时 safe，否则需确认 ----
   // 实案（2026-07-26）：bash rm 被危险命令拦截后，模型改用 python shutil.rmtree 清场，
-  // 把前一会话的组件三件套删了；write 被回执门闩拦截后也曾改走 python 写文件。
-  // 这里把删除类 API 与回执门闩提到 isSandboxed 之前——python/js 通道与 bash/write 同权。
+  // 把前一会话的组件三件套删了。这里把删除类 API 提到 isSandboxed 之前——python/js 通道与 bash 同权。
   if (toolName === 'execute_code') {
     const code = String(args?.code || '')
-    if (containsReceiptPlaceholder(code)) {
-      return { level: 'risky', reason: `已拒绝：code 里包含"[内容已保存…]"占位回执——那是上下文压缩标记不是正文，请先 read 取回真实内容再写入。` }
-    }
     const lang = normalizeCodeExecutionLanguage(args?.language)
     if (!lang) {
       return { level: 'risky', reason: `不支持的代码语言: ${String(args?.language || '(空)')}` }
@@ -1240,6 +1304,17 @@ export function classifyToolRisk(
       const credentialRef = detectCredentialPathReference(code)
       if (credentialRef) {
         return { level: 'risky', reason: `代码触到了凭据路径（${credentialRef}）。没有系统沙箱兜底时禁止执行；请换一个不涉及凭据文件的做法。` }
+      }
+    }
+    // 转手执行与 bash 分支同一套：沙箱在交用户裁决（完全允许档也问），没沙箱硬拒
+    if (destructiveCode?.tier === 'indirect') {
+      if (unsandboxedCode) {
+        return { level: 'risky', reason: `代码包含危险操作（${destructiveCode.label}），没有系统沙箱时安全检查只能看代码文本，转手执行会让它看不见真正跑的是什么` }
+      }
+      return {
+        level: 'needs_confirmation',
+        reason: `代码里有${destructiveCode.label}（转手执行，安全检查看不到它真正跑什么；沙箱在，由你裁决）`,
+        alwaysConfirm: true
       }
     }
     if (destructiveCode?.tier === 'confirm' || DESTRUCTIVE_CODE_RE.test(code)) {
@@ -1267,6 +1342,17 @@ export function classifyToolRisk(
     return { level: 'safe', reason: '任务元数据管理（写 OpenPipal 数据目录）' }
   }
 
+  // ---- manage_team → safe（只写本团队的 team.md、在 agents/ 下建成员；只在人在场的 Lead 话题里存在）----
+  if (toolName === 'manage_team') {
+    return { level: 'safe', reason: '团队元数据管理（写 OpenPipal 数据目录）' }
+  }
+
+  // ---- conversations → safe（跨会话列 / 读 / 发：只经会话存储 API，团队话题不在范围；
+  //      send 让对方在它自己的对话里跑一轮，那一轮的工具各自过各自的权限链路）----
+  if (toolName === 'conversations') {
+    return { level: 'safe', reason: '跨会话读写（经会话存储 API）' }
+  }
+
   // ---- 文件读写操作：按路径判断（分组定义见 READONLY_FILE_TOOLS / WRITE_FILE_TOOLS）----
   if (READONLY_FILE_TOOLS.has(toolName) || WRITE_FILE_TOOLS.has(toolName)) {
     const readOnly = READONLY_FILE_TOOLS.has(toolName)
@@ -1292,38 +1378,8 @@ export function classifyToolRisk(
     if (READONLY_FILE_TOOLS.has(toolName)) {
       return { level: 'safe', reason: '只读文件访问（路径已验证）' }
     }
-    // 回执门闩补齐文件通道：实案——上下文压缩把历史 write 的 content 换成回执后，模型照抄回执
-    // 当正文重写文件（bow-os tokens ×2、教案 21552 字符被覆写成一行占位）。artifact 三工具已在
-    // pi-tools 拦截（7313616），write/edit 是当时漏掉的第四扇门。edit 只检 newText：oldText 匹配
-    // 回执是合法的修复动作（把已污染文件改回正文）。
-    let parsedEdits: unknown = args?.edits
-    if (typeof parsedEdits === 'string') {
-      try { parsedEdits = JSON.parse(parsedEdits) } catch { parsedEdits = undefined }
-    }
-    const nestedReceipt = Array.isArray(parsedEdits)
-      && parsedEdits.some((edit) => (
-        !!edit
-        && typeof edit === 'object'
-        && typeof (edit as any).newText === 'string'
-        && containsReceiptPlaceholder((edit as any).newText)
-      ))
-    const receiptField = typeof args?.content === 'string' && containsReceiptPlaceholder(args.content)
-      ? 'content'
-      : typeof args?.newText === 'string' && containsReceiptPlaceholder(args.newText)
-        ? 'newText'
-        : nestedReceipt ? 'edits[].newText' : null
-    if (receiptField) {
-      return { level: 'risky', reason: `已拒绝：${receiptField} 里包含"[内容已保存…]"占位回执——那是上下文压缩标记不是正文，文件真实内容仍在磁盘上。请先 read 该文件取回原文再修改；若要全新创作请直接写完整内容。` }
-    }
-    // 封死通用 write/edit 直写 artifact sidecar（Workstream B1）：实案——模型误诊后用 write 直写
-    // .jsx，绕过 edit_artifact 的截断检测/dc 逻辑校验，也不触发 create_artifact 的 jsx 重编译，
-    // .compiled.js 停在旧版。bash 路径先不拦（滑坡大、误伤多，留给按需收紧）。
-    if (filePath && WRITE_FILE_TOOLS.has(toolName)) {
-      const resolved = resolvedFilePath!
-      if (isArtifactSidecarPath(resolved)) {
-        return { level: 'risky', reason: 'artifact 内容必须走 edit_artifact / create_artifact（带编译与完整性护栏；write 直写会绕过截断检测且不重编译 sidecar）' }
-      }
-    }
+    // 直写本会话的 artifact sidecar 不再拦（2026-09-12）：产物库按 mtime 自愈——工具跑完
+    // artifact-reconcile 把改过的产物同步到面板、jsx 重编译（见 pi-core-runtime probeWrittenFile）。
     // 沙箱可用时，文件写入降级为 safe（沙箱已限制 allowWrite 范围）
     if (isSandboxed()) {
       return { level: 'safe', reason: `沙箱保护下写入: ${filePath || '(未指定路径)'}` }
@@ -1721,9 +1777,10 @@ export async function authorizeToolCall(
     ? { namespace: 'mcp:unscoped', argumentScoped: true }
     : localSessionApprovalScope(scope?.workingDir)
 
+  const actor: AuditActor = { conversationId, workspaceId: scope?.workspaceId, teamId: scope?.teamId }
   const scopeAssessment = assessToolScope(toolName, args, { ...scope, conversationId })
     if (scopeAssessment) {
-      writeAuditLog(toolName, args, scopeAssessment)
+      writeAuditLog(toolName, args, scopeAssessment, actor)
       console.warn(`[Security] 任务边界阻止: ${toolName} — ${scopeAssessment.reason}`)
       return { block: true, reason: scopeAssessment.reason }
     }
@@ -1734,7 +1791,7 @@ export async function authorizeToolCall(
     // 于是它会去汇报发现而不是换个工具再试一遍。
     if (tier === 'readonly' && !READONLY_TIER_TOOLS.includes(toolName)) {
       const reason = `只读档：${toolName} 会改动东西，本档只放行读取类工具。把结论告诉用户，需要动手就请用户切到"自动审核"。`
-      writeAuditLog(toolName, args, { level: 'risky', reason })
+      writeAuditLog(toolName, args, { level: 'risky', reason }, actor)
       console.warn(`[Security] 只读档阻止: ${toolName}`)
       return { block: true, reason }
     }
@@ -1749,7 +1806,7 @@ export async function authorizeToolCall(
     const assessment = classifyToolRisk(toolName, args, scope)
 
     // 审计日志（非阻塞）
-    writeAuditLog(toolName, args, assessment)
+    writeAuditLog(toolName, args, assessment, actor)
 
     switch (assessment.level) {
       case 'safe':
@@ -2034,14 +2091,31 @@ export function summarizeAuditArgs(args: Record<string, any>): string {
   }
 }
 
-function writeAuditLog(toolName: string, args: Record<string, any>, assessment: RiskAssessment): void {
+/** 审计行末尾的"谁在哪条会话里做的"：团队话题里成员各自留名（设计稿 §3 第 3 段：audit 条目带 team / thread / actor） */
+export interface AuditActor {
+  conversationId?: string
+  workspaceId?: string
+  teamId?: string
+}
+
+function auditActorSuffix(actor?: AuditActor): string {
+  if (!actor) return ''
+  const short = (v?: string): string | undefined => (typeof v === 'string' && v ? v.slice(0, 8) : undefined)
+  const parts: string[] = []
+  const conv = short(actor.conversationId); if (conv) parts.push(`CONV=${conv}`)
+  const agent = short(actor.workspaceId); if (agent) parts.push(`AGENT=${agent}`)
+  const team = short(actor.teamId); if (team) parts.push(`TEAM=${team}`)
+  return parts.length ? ` ${parts.join(' ')}` : ''
+}
+
+function writeAuditLog(toolName: string, args: Record<string, any>, assessment: RiskAssessment, actor?: AuditActor): void {
   const timestamp = new Date().toISOString()
   const sandboxed = isSandboxed()
   // Keep only argument type and coarse length buckets. Exact lengths and
   // unhashed/unsalted fingerprints can disclose or enable guessing low-entropy
   // values such as PINs and phone numbers, so neither is persisted.
   const argsStr = summarizeAuditArgs(args).substring(0, 1000)
-  const line = `[${timestamp}] TOOL=${toolName} ARGS=${argsStr} RESULT=${assessment.level} SANDBOX=${sandboxed}\n`
+  const line = `[${timestamp}] TOOL=${toolName} ARGS=${argsStr} RESULT=${assessment.level} SANDBOX=${sandboxed}${auditActorSuffix(actor)}\n`
   // appendFile 非阻塞，不等待结果
   void appendPrivateAuditLogLine(AUDIT_LOG_PATH, line)
 }

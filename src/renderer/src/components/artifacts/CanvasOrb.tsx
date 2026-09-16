@@ -38,7 +38,7 @@ export function CanvasOrb({ getEngine }: CanvasOrbProps): JSX.Element {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
-  const roleName = useAppStore(s => s.currentRole?.name || 'learner')
+  const roleName = useAppStore(s => s.currentRole?.name || 'general')
   const sendMessage = useChatStore(s => s.sendMessage)
   const isStreaming = useChatStore(s => s.isStreaming)
   const commands = getCanvasOrbCommands(t)

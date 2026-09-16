@@ -27,6 +27,7 @@ window.api = {
   getAllRoles: async () => [${JSON.stringify(role(roleName, roleName === 'coding' ? '编码助手' : '学习助手'))}],
   getCurrentRole: async () => (${JSON.stringify(role(roleName, roleName === 'coding' ? '编码助手' : '学习助手'))}),
   switchRole: async () => (${JSON.stringify(role(roleName, roleName === 'coding' ? '编码助手' : '学习助手'))}),
+  listAgents: async () => [{ id: '${roleName}', kind: 'builtin', name: '${roleName === 'coding' ? '编码助手' : '学习助手'}', ...(${JSON.stringify(roleName === 'coding')} ? { permissionTier: 'allowed' } : {}) }],
   listConversations: async () => [],
   createConversation: async (r) => ({ id: 'conv-tier', title: '权限档位', role: r, createdAt: Date.now(), updatedAt: Date.now(), messageCount: 0 }),
   getConversationMessages: async () => [],

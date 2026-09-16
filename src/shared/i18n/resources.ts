@@ -18,10 +18,16 @@ export function getBuiltinRoleNameKey(roleId: string): string | undefined {
     : undefined
 }
 
+/** 内置角色的显示名：有译文用译文，否则用主进程给的名字（Pal 的名字直接就是显示名，不经过这里） */
+export function builtinDisplayName(t: (key: string) => string, roleId: string, fallback: string): string {
+  const key = getBuiltinRoleNameKey(roleId)
+  return key ? t(key) : fallback
+}
+
 export const LEGACY_CONVERSATION_GROUP_KEYS = {
   今天: 'shell.history.groups.today',
   昨天: 'shell.history.groups.yesterday',
-  本周: 'shell.history.groups.thisWeek',
+  '过去 7 天': 'shell.history.groups.pastWeek',
   更早: 'shell.history.groups.earlier',
 } as const
 
@@ -547,11 +553,9 @@ export const ZH_CN_MESSAGES = {
       useTemplate: '使用模板',
       scope: {
         currentAgent: '当前 Pal',
-        agentTemplate: 'Pal 模板',
         selectAgent: '选择 Pal',
         globalCurrentRole: '全局（使用当前角色）',
         workspaceAgents: '我的 Pal',
-        agentTemplates: 'Pal 模板',
       },
       conversation: {
         persistentShort: '持续会话',
@@ -696,12 +700,15 @@ export const ZH_CN_MESSAGES = {
   },
 
   agents: {
+    team: {
+      leadTag: 'Lead',
+    },
     creating: {
       name: '创建中…',
       description: '正在从对话提取',
     },
     title: '我的 Pal',
-    description: '从对话中保存的 Pal 和手动创建的模板。',
+    description: '从对话里保存的 Pal，和从内置助手复制出来的。',
     loading: '加载中…',
     empty: {
       title: '还没有保存的 Pal',
@@ -713,38 +720,40 @@ export const ZH_CN_MESSAGES = {
       memories_other: '{{count}} 条记忆',
       tasks_one: '{{count}} 个自动化',
       tasks_other: '{{count}} 个自动化',
+      members_one: '{{count}} 个成员',
+      members_other: '{{count}} 个成员',
+      channels_one: '{{count}} 个频道',
+      channels_other: '{{count}} 个频道',
+    },
+    sections: {
+      builtin: 'OpenPipal 官方',
+      teams: '团队',
+      mine: '我的 Pal',
+      other: '其他',
+    },
+    search: {
+      placeholder: '搜索 Pal 的名字或介绍',
+      empty: '没有匹配的 Pal',
+    },
+    category: {
+      general: '通用',
+      education: '教育',
+      office: '办公',
+      language: '语言',
+      design: '设计',
+      coding: '编码',
     },
     actions: {
       create: '创建',
+      createTeam: '组建团队',
+      openThread: '开个话题',
       tryIt: '试一下',
+      copyAsPal: '复制为我的 Pal',
+      copyAsPalNamed: '把“{{name}}”复制为我的 Pal',
       editNamed: '编辑 Pal“{{name}}”',
       deleteNamed: '删除 Pal“{{name}}”',
       confirmDelete: '确认删除',
       confirmDeleteNamed: '确认删除 Pal“{{name}}”',
-    },
-    editor: {
-      createTitle: '创建 Pal',
-      editTitle: '编辑 Pal',
-      fields: {
-        icon: '图标',
-        name: '名称',
-        description: '描述',
-        workingDirectory: '工作目录',
-        systemPrompt: '系统提示词',
-      },
-      placeholders: {
-        name: '例如：代码助手',
-        description: '简要说明这个 Pal 的用途',
-        workingDirectory: '留空则使用全局工作目录',
-        systemPrompt: '定义这个 Pal 的角色、行为和专业能力…',
-      },
-      actions: {
-        close: '关闭 Pal 编辑器',
-        chooseWorkingDirectory: '选择工作目录',
-        cancel: '取消',
-        save: '保存',
-        create: '创建',
-      },
     },
   },
 
@@ -850,6 +859,36 @@ export const ZH_CN_MESSAGES = {
     },
   },
 
+  teamInspector: {
+    loading: '加载中…',
+    loadError: '无法加载团队',
+    lead: 'Lead',
+    current: '当前',
+    sections: { members: '成员', channels: '频道', memory: 'memory/', rules: 'rules/', shared: 'shared/', tasks: 'tasks/' },
+    empty: {
+      members: '还没有成员',
+      memory: '还没有团队记忆',
+      rules: '还没有团队规则',
+      shared: '共享文件夹是空的',
+      tasks: '无自动化',
+    },
+    actions: {
+      revealInFinder: '在 Finder 中打开',
+      close: '关闭面板',
+      edit: '编辑',
+      save: '保存',
+      cancel: '取消',
+      markEntry: '捏团队头像',
+      addRetro: '加一条每周复盘',
+    },
+    retro: {
+      name: '每周复盘',
+      prompt: '每周复盘：1）read 团队记忆索引与每条记忆，过期的删掉、重复或矛盾的合并成一条并写清为什么；2）看共享文件夹里最近一周新增或改过的文件，值得全团队记住的写成记忆（一事一文件，frontmatter 写 description / type / modified）；3）最后用三五句话汇报改了什么。只动 memory/ 与 shared/，别的不碰；没什么可改就说没有。',
+    },
+    charterLong: '章程有 {{count}} 行——成员每次开工都会整篇读，建议精简到 200 行以内',
+    notText: '（不是文本文件，去 Finder 里看）',
+  },
+
   agentMark: {
     title: '捏头像',
     entry: '捏头像',
@@ -859,6 +898,11 @@ export const ZH_CN_MESSAGES = {
       accessory: '配饰',
       color: '颜色',
       preview: '状态预览',
+    },
+    colorOf: {
+      body: '身体',
+      accessory: '配饰',
+      hint: '配饰色不选就跟着身体色自动搭一个；想换随便点，不设限。',
     },
     shape: {
       square: '方',
@@ -1006,7 +1050,6 @@ export const ZH_CN_MESSAGES = {
       removeFile: '移除文件',
       send: '发送',
     },
-    templatesTitle: '使用模板',
   },
 
   settings: {
@@ -1548,7 +1591,7 @@ export const ZH_CN_MESSAGES = {
         todayEmpty: '今天还没有调用',
       },
       compactedSuffix: '（已压缩生效）',
-      dropFiles: '松开上传文件...',
+      dropFiles: '松手，文件就进输入框',
       selectedElement: '已选中元素',
       placeholder: '输入问题...（/ 唤起技能）',
       chooseWorkingDirectory: '选择工作目录',
@@ -1726,6 +1769,7 @@ export const ZH_CN_MESSAGES = {
       analyzeFiles: '请分析这些文件',
       injectSteered: '↳ 已引导对话',
       injectQueued: '↳ 已加入跟单队列',
+      fromPeer: '来自另一条对话 {{from}}',
       hookRuleSet: '已定下规则：{{description}}',
       hookRuleFailed: '规则没生效：{{error}}',
       hookRuleRevoked: '（已撤销）',
@@ -1756,6 +1800,10 @@ export const ZH_CN_MESSAGES = {
       organized_other: '记忆整理完成（{{count}} 项操作）',
       organizedWithSummary_one: '记忆整理完成（{{count}} 项操作：{{summary}}）',
       organizedWithSummary_other: '记忆整理完成（{{count}} 项操作：{{summary}}）',
+      teamOrganized_one: '团队「{{team}}」记了 {{count}} 条团队记忆',
+      teamOrganized_other: '团队「{{team}}」记了 {{count}} 条团队记忆',
+      teamOrganizedWithSummary_one: '团队「{{team}}」记了 {{count}} 条团队记忆：{{summary}}',
+      teamOrganizedWithSummary_other: '团队「{{team}}」记了 {{count}} 条团队记忆：{{summary}}',
     },
     streamingPreview: {
       phases: {
@@ -1833,12 +1881,18 @@ export const ZH_CN_MESSAGES = {
       previewInWorkspace: '在工作空间预览',
       openExternal: '外部应用',
     },
+    team: {
+      lead: 'Lead',
+      ready: '说说要做什么。{{lead}} 先接，需要时交给成员做。',
+      founding: '团队刚成立。跟{{lead}}聊聊：这个团队做什么、需要哪些角色、有什么规矩。聊清楚了它会起名字、写章程、建成员。',
+    },
     subagent: {
       status: {
         completed: '已完成',
         failed: '失败',
       },
       label: '子 Agent',
+      handoff: '交接给',
       unknownProfile: '（未知）',
       via: '使用',
       turns_one: '{{count}} 轮',
@@ -2003,6 +2057,7 @@ export const ZH_CN_MESSAGES = {
     rules: {
       intro: '在对话里说"以后都要…"，助手会把它写成一条规则，每次调用工具时由代码强制执行。放在某个 Pal 名下的只对它生效，并跟着它走。',
       allAgents: '所有 Pal',
+      teamRules: '团队「{{name}}」',
       fromPlugin: '来自插件 {{name}}',
       empty: '还没有规则',
       emptyHint: '在对话里说一句"以后读成绩表先把学生名字遮掉"试试',
@@ -2293,9 +2348,20 @@ export const ZH_CN_MESSAGES = {
       groups: {
         today: '今天',
         yesterday: '昨天',
-        thisWeek: '本周',
+        pastWeek: '过去 7 天',
         earlier: '更早',
       },
+      teams: '团队',
+      conversations: '对话',
+      newThread: '开个话题',
+      newThreadIn: '在「{{name}}」开个话题',
+      deletedTeam: '（团队已删除）',
+      collapseTeam: '收起团队',
+      expandTeam: '展开团队',
+      noThreads: '还没有话题',
+      noTeams: '还没有团队，点 ＋ 组一个',
+      createTeam: '组建团队',
+      foundingTitle: '组建团队',
       relative: {
         justNow: '刚刚',
         minutesAgo_one: '{{count}} 分钟前',
@@ -2433,6 +2499,7 @@ export const ZH_CN_MESSAGES = {
     },
     agentSwitcher: {
       selectAgent: '选择 Pal',
+      builtins: 'OpenPipal 官方',
       globalRoles: '全局角色',
       noIndependentAgents: '暂无独立 Pal',
       menuLabel: '切换 Pal',
@@ -2947,11 +3014,9 @@ export const EN_MESSAGES = {
       useTemplate: 'Use template',
       scope: {
         currentAgent: 'Current Pal',
-        agentTemplate: 'Pal template',
         selectAgent: 'Select a Pal',
         globalCurrentRole: 'Global (use current role)',
         workspaceAgents: 'My Pals',
-        agentTemplates: 'Pal templates',
       },
       conversation: {
         persistentShort: 'Persistent conversation',
@@ -3096,12 +3161,15 @@ export const EN_MESSAGES = {
   },
 
   agents: {
+    team: {
+      leadTag: 'Lead',
+    },
     creating: {
       name: 'Creating…',
       description: 'Extracting from the conversation',
     },
     title: 'My Pals',
-    description: 'Pals saved from conversations and templates you created manually.',
+    description: 'Pals saved from conversations, or copied from a built-in assistant.',
     loading: 'Loading…',
     empty: {
       title: 'No saved Pals yet',
@@ -3113,38 +3181,40 @@ export const EN_MESSAGES = {
       memories_other: '{{count}} memories',
       tasks_one: '{{count}} automation',
       tasks_other: '{{count}} automations',
+      members_one: '{{count}} member',
+      members_other: '{{count}} members',
+      channels_one: '{{count}} channel',
+      channels_other: '{{count}} channels',
+    },
+    sections: {
+      builtin: 'From OpenPipal',
+      teams: 'Teams',
+      mine: 'My Pals',
+      other: 'Other',
+    },
+    search: {
+      placeholder: 'Search Pals by name or description',
+      empty: 'No matching Pals',
+    },
+    category: {
+      general: 'General',
+      education: 'Education',
+      office: 'Office',
+      language: 'Language',
+      design: 'Design',
+      coding: 'Coding',
     },
     actions: {
       create: 'Create',
+      createTeam: 'Form a team',
+      openThread: 'New thread',
       tryIt: 'Try it',
+      copyAsPal: 'Copy as my Pal',
+      copyAsPalNamed: 'Copy “{{name}}” as my Pal',
       editNamed: 'Edit Pal “{{name}}”',
       deleteNamed: 'Delete Pal “{{name}}”',
       confirmDelete: 'Confirm delete',
       confirmDeleteNamed: 'Confirm deletion of Pal “{{name}}”',
-    },
-    editor: {
-      createTitle: 'Create Pal',
-      editTitle: 'Edit Pal',
-      fields: {
-        icon: 'Icon',
-        name: 'Name',
-        description: 'Description',
-        workingDirectory: 'Working folder',
-        systemPrompt: 'System prompt',
-      },
-      placeholders: {
-        name: 'For example: Code Assistant',
-        description: 'Briefly describe what this Pal does',
-        workingDirectory: 'Leave blank to use the global working folder',
-        systemPrompt: 'Define this Pal’s role, behavior, and expertise…',
-      },
-      actions: {
-        close: 'Close Pal editor',
-        chooseWorkingDirectory: 'Choose working folder',
-        cancel: 'Cancel',
-        save: 'Save',
-        create: 'Create',
-      },
     },
   },
 
@@ -3250,6 +3320,36 @@ export const EN_MESSAGES = {
     },
   },
 
+  teamInspector: {
+    loading: 'Loading…',
+    loadError: 'Could not load the team',
+    lead: 'Lead',
+    current: 'current',
+    sections: { members: 'Members', channels: 'Channels', memory: 'memory/', rules: 'rules/', shared: 'shared/', tasks: 'tasks/' },
+    empty: {
+      members: 'No members yet',
+      memory: 'No team memory yet',
+      rules: 'No team rules yet',
+      shared: 'Shared folder is empty',
+      tasks: 'No automations',
+    },
+    actions: {
+      revealInFinder: 'Reveal in Finder',
+      close: 'Close panel',
+      edit: 'Edit',
+      save: 'Save',
+      cancel: 'Cancel',
+      markEntry: 'Customize team mark',
+      addRetro: 'Add a weekly retro',
+    },
+    retro: {
+      name: 'Weekly retro',
+      prompt: 'Weekly retro: 1) read the team memory index and every memory file; delete stale ones, merge duplicates or contradictions into one entry and say why; 2) look at files added or changed in the shared folder this week and write down what the whole team should remember (one file per fact, frontmatter description / type / modified); 3) report in a few sentences what changed. Touch only memory/ and shared/; if nothing needs changing, say so.',
+    },
+    charterLong: 'The charter is {{count}} lines. Every member reads all of it on every run; keep it under 200 lines.',
+    notText: '(not a text file; open it in Finder)',
+  },
+
   agentMark: {
     title: 'Customize avatar',
     entry: 'Customize',
@@ -3259,6 +3359,11 @@ export const EN_MESSAGES = {
       accessory: 'Accessory',
       color: 'Color',
       preview: 'State preview',
+    },
+    colorOf: {
+      body: 'Body',
+      accessory: 'Accessory',
+      hint: 'The accessory colour matches the body automatically until you pick one. Any pair goes.',
     },
     shape: {
       square: 'Square',
@@ -3406,7 +3511,6 @@ export const EN_MESSAGES = {
       removeFile: 'Remove file',
       send: 'Send',
     },
-    templatesTitle: 'Use a template',
   },
 
   settings: {
@@ -3946,7 +4050,7 @@ export const EN_MESSAGES = {
         todayEmpty: 'No calls yet today',
       },
       compactedSuffix: ' (compression active)',
-      dropFiles: 'Drop files to upload...',
+      dropFiles: 'Drop to add to your message',
       selectedElement: 'Selected element',
       placeholder: 'Ask a question... (/ for skills)',
       chooseWorkingDirectory: 'Choose working folder',
@@ -4124,6 +4228,7 @@ export const EN_MESSAGES = {
       analyzeFiles: 'Please analyze these files',
       injectSteered: '↳ Conversation steered',
       injectQueued: '↳ Added to the follow-up queue',
+      fromPeer: 'From another conversation: {{from}}',
       hookRuleSet: 'Rule set: {{description}}',
       hookRuleFailed: 'Rule not active: {{error}}',
       hookRuleRevoked: ' (revoked)',
@@ -4154,6 +4259,10 @@ export const EN_MESSAGES = {
       organized_other: 'Memory organization complete ({{count}} actions)',
       organizedWithSummary_one: 'Memory organization complete ({{count}} action: {{summary}})',
       organizedWithSummary_other: 'Memory organization complete ({{count}} actions: {{summary}})',
+      teamOrganized_one: 'Team "{{team}}" saved {{count}} team memory',
+      teamOrganized_other: 'Team "{{team}}" saved {{count}} team memories',
+      teamOrganizedWithSummary_one: 'Team "{{team}}" saved {{count}} team memory: {{summary}}',
+      teamOrganizedWithSummary_other: 'Team "{{team}}" saved {{count}} team memories: {{summary}}',
     },
     streamingPreview: {
       phases: {
@@ -4231,12 +4340,18 @@ export const EN_MESSAGES = {
       previewInWorkspace: 'Preview in Workspace',
       openExternal: 'Open externally',
     },
+    team: {
+      lead: 'Lead',
+      ready: "Say what needs doing. {{lead}} picks it up first and hands off to members when needed.",
+      founding: 'The team was just formed. Talk with {{lead}}: what the team does, which roles it needs, any ground rules. It will name the team, write the charter and create members as you go.',
+    },
     subagent: {
       status: {
         completed: 'Completed',
         failed: 'Failed',
       },
       label: 'Subagent',
+      handoff: 'Handed off to',
       unknownProfile: '(unknown)',
       via: 'via',
       turns_one: '{{count}} turn',
@@ -4401,6 +4516,7 @@ export const EN_MESSAGES = {
     rules: {
       intro: 'Say "from now on…" in a conversation and the assistant writes it down as a rule, enforced by code on every tool call. Rules under a Pal apply to that Pal only and travel with it.',
       allAgents: 'All Pals',
+      teamRules: 'Team "{{name}}"',
       fromPlugin: 'From plugin {{name}}',
       empty: 'No rules yet',
       emptyHint: 'Try saying "from now on, mask student names before reading a grade sheet" in a conversation',
@@ -4691,9 +4807,20 @@ export const EN_MESSAGES = {
       groups: {
         today: 'Today',
         yesterday: 'Yesterday',
-        thisWeek: 'This week',
+        pastWeek: 'Past 7 days',
         earlier: 'Earlier',
       },
+      teams: 'Teams',
+      conversations: 'Conversations',
+      newThread: 'New thread',
+      newThreadIn: 'New thread in "{{name}}"',
+      deletedTeam: '(team deleted)',
+      collapseTeam: 'Collapse team',
+      expandTeam: 'Expand team',
+      noThreads: 'No threads yet',
+      noTeams: 'No teams yet. Press + to form one',
+      createTeam: 'Form a team',
+      foundingTitle: 'Forming the team',
       relative: {
         justNow: 'Just now',
         minutesAgo_one: '{{count}} minute ago',
@@ -4831,6 +4958,7 @@ export const EN_MESSAGES = {
     },
     agentSwitcher: {
       selectAgent: 'Select a Pal',
+      builtins: 'From OpenPipal',
       globalRoles: 'Global roles',
       noIndependentAgents: 'No independent Pals yet',
       menuLabel: 'Switch agent',

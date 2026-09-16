@@ -66,12 +66,27 @@ function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+/**
+ * 消息 id 在一条会话里必须唯一——落盘的 JSONL 存储对重复 id 直接拒绝，而且拒绝是永久的：渲染层每次重试
+ * 都会再撞一次，这条会话就再也存不进去，连"新建对话 / 切换会话"都会因为等落盘而卡住（2026-09-10 实撞，
+ * deepseek 官方端点在同一轮里给了两个工具调用同一个 call id）。工具卡 id 来自 provider 的 toolCallId，
+ * 所以入库前先在这里去重：撞了就加 -2 / -3 后缀（工具结束事件按 toolCallId 字段找卡，不看 id，不受影响）。
+ */
+export function uniqueMessageId(messages: ReadonlyArray<Pick<ChatMessage, 'id'>>, base: string): string {
+  const taken = new Set(messages.map(m => m.id))
+  if (!taken.has(base)) return base
+  let n = 2
+  while (taken.has(`${base}-${n}`)) n += 1
+  return `${base}-${n}`
+}
+
 function withMessageMeta(message: ChatMessage, explicitKind?: ChatMessageKind): ChatMessage {
   const messageKind = explicitKind || inferMessageKind(message)
   return {
     ...message,
     messageVersion: message.messageVersion ?? CHAT_MESSAGE_VERSION,
-    messageKind,
+    // peer-message 归类成 user 只是分组 / 渲染逻辑的口径；落盘字段照留，来源小字与正文拆分都靠它
+    messageKind: message.messageKind === 'peer-message' ? message.messageKind : messageKind,
     messageSubtype: message.messageSubtype ?? inferMessageSubtype(messageKind, message)
   }
 }
@@ -84,6 +99,8 @@ function inferMessageSubtype(messageKind: ChatMessageKind, message: ChatMessage)
 }
 
 export function inferMessageKind(message: ChatMessage): ChatMessageKind {
+  // 别的对话发来的消息就是一条用户消息（开新 turn、可编辑重发），来源标签由 MessageBubble 另画
+  if (message.messageKind === 'peer-message') return 'user'
   if (message.messageKind) return message.messageKind
   if (message.permissionRequest) return 'permission_request'
   if (message.askFields?.length || message.askOptions?.length || message.askQuestion) return 'ask_user'

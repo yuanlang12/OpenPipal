@@ -23,6 +23,8 @@ declare module 'openpipal/hooks' {
     roleName?: string
     /** 当前对话属于哪个独立智能体（我的 Pal）；全局助手与内置角色没有。放在智能体自己目录里的规则不用判它（位置即范围）；只有插件里的全局规则想区别对待某个智能体时才用 */
     workspaceId?: string
+    /** 统一的 Agent 身份：内置名（general / design / coding …）或 Pal 的 id。只对某个 Agent 生效的全局规则判它（`if (ctx.agentId !== 'coding') return`） */
+    agentId?: string
     source: 'desktop' | 'extension' | 'acp' | 'scheduler'
     /** 这次调用的信号：用户点停止、或这个处理函数超时，都会 abort */
     signal: AbortSignal

@@ -151,10 +151,11 @@ export interface PiCoreAfterToolCallComposition {
   hookChain?: HookChain
   onInterrupt: () => void
   /**
-   * 写文件类工具成功之后的探针：命中规则文件就返回要回给模型的那句话（追加进工具结果），
-   * 对话流提醒由实现方自己发。工具出错时不调用——文件没写成。
+   * 写文件类工具成功之后的探针：命中规则文件 / 直写了产物文件就返回要回给模型的那句话
+   * （追加进工具结果），对话流提醒由实现方自己发。工具出错时不调用——文件没写成。
+   * toolCallId 给产物事件落锚点用。
    */
-  probeWrittenFile?: (toolName: string, args: Record<string, unknown>) => Promise<string | undefined>
+  probeWrittenFile?: (toolName: string, args: Record<string, unknown>, toolCallId?: string) => Promise<string | undefined>
 }
 
 const QUESTION_INTERRUPT_RESULT: BeforeToolCallResult = {
@@ -244,7 +245,7 @@ export function composePiCoreAfterToolCall(
       // 探针自己出错不能连累工具结果：Agent 循环会把 afterToolCall 的异常折成"工具失败"回给模型
       let note: string | undefined
       try {
-        note = await probeWrittenFile(toolName, context.args)
+        note = await probeWrittenFile(toolName, context.args, context.toolCall?.id)
       } catch (error) {
         console.warn('[Hooks] 规则探针出错，忽略:', error instanceof Error ? error.message : String(error))
       }

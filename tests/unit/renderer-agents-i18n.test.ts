@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest'
 import { createRendererI18n } from '../../src/renderer/src/i18n'
 
 const AGENTS_PANEL_PATH = 'src/renderer/src/components/AgentsPanel.tsx'
-const AGENT_EDITOR_PATH = 'src/renderer/src/components/AgentTemplateEditor.tsx'
 
 const read = (path: string): string => readFileSync(resolve(path), 'utf8')
 
@@ -27,7 +26,6 @@ describe('renderer Agents i18n', () => {
     expect(english.t('agents.metrics.memories', { count: 3 })).toBe('3 memories')
     expect(english.t('agents.metrics.tasks', { count: 1 })).toBe('1 automation')
     expect(english.t('agents.metrics.tasks', { count: 3 })).toBe('3 automations')
-    expect(english.t('agents.editor.placeholders.workingDirectory')).toContain('global working folder')
     expect(english.t('agents.actions.editNamed', { name: '用户 Agent 🌟' })).toBe(
       'Edit Pal “用户 Agent 🌟”'
     )
@@ -35,11 +33,10 @@ describe('renderer Agents i18n', () => {
     expect(chinese.t('agents.actions.create')).toBe('创建')
     expect(chinese.t('agents.actions.tryIt')).toBe('试一下')
     expect(chinese.t('agents.metrics.memories', { count: 3 })).toBe('3 条记忆')
-    expect(chinese.t('agents.editor.actions.chooseWorkingDirectory')).toBe('选择工作目录')
   })
 
-  it('removes hard-coded product Chinese from both migrated components', () => {
-    const source = stripComments([AGENTS_PANEL_PATH, AGENT_EDITOR_PATH].map(read).join('\n'))
+  it('removes hard-coded product Chinese from the panel', () => {
+    const source = stripComments(read(AGENTS_PANEL_PATH))
     const migratedLiterals = [
       '编辑 Agent',
       '我的 Agents',
@@ -61,30 +58,17 @@ describe('renderer Agents i18n', () => {
 
   it('keeps Agent content, prompts, paths, icons, and names outside translation lookup', () => {
     const panel = read(AGENTS_PANEL_PATH)
-    const editor = read(AGENT_EDITOR_PATH)
 
-    expect(panel).toContain('{template.icon}')
-    expect(panel).toContain('name={template.name}')
-    expect(panel).toContain('description={template.description}')
-    expect(panel).toContain("template.workingDir.split('/').pop()")
     expect(panel).toContain('name={w.name}')
     expect(panel).toContain('description={w.description}')
-    expect(panel).toContain('newConversationFromAgent(PAL_BASE_ROLE, agentId, agentName)')
-    expect(panel).toContain('newConversationFromWorkspace(PAL_BASE_ROLE, w.id, w.name)')
+    // 模板已并入 Pal：面板里没有模板行、没有模板编辑器；Pal 会话的 role 槽位由 chatStore 固定
+    expect(panel).not.toMatch(/template/i)
+    expect(panel).toContain("startConversationWith({ id: w.id, kind: 'pal', name: w.name })")
     // 「创建」去通用助手：在那里聊完"保存为 Pal"才是新建的路，不是在当前角色下开空对话
-    expect(panel).toContain('const CREATE_ROLE = PAL_BASE_ROLE')
+    expect(panel).toContain('const CREATE_ROLE = DEFAULT_AGENT_ID')
     expect(panel).toContain('newConversation(CREATE_ROLE)')
-    expect(editor).toContain("useState(initial?.name || '')")
-    expect(editor).toContain("useState(initial?.description || '')")
-    expect(editor).toContain("useState(initial?.systemPrompt || '')")
-    expect(editor).toContain("useState(initial?.workingDir || '')")
-    expect(editor).toContain('name: name.trim()')
-    expect(editor).toContain('description: description.trim()')
-    expect(editor).toContain('systemPrompt,')
-    expect(editor).toContain('workingDir: workingDir || undefined')
 
-    expect(panel).not.toMatch(/translate\(\s*(?:template|w)\.(?:icon|description|workingDir)\b/)
-    expect(editor).not.toMatch(/\bt\(\s*(?:name|description|icon|systemPrompt|workingDir)\b/)
+    expect(panel).not.toMatch(/translate\(\s*w\.(?:icon|description|workingDir)\b/)
   })
 
   it('never freezes Chinese date output（列表版不再显示创建日期，但也不许再出现写死的 zh-CN 格式化）', () => {
@@ -95,16 +79,11 @@ describe('renderer Agents i18n', () => {
 
   it('localizes icon-button labels and leaves room for translated or long user text', () => {
     const panel = read(AGENTS_PANEL_PATH)
-    const editor = read(AGENT_EDITOR_PATH)
-    const source = `${panel}\n${editor}`
+    const source = panel
 
-    expect(panel).toContain("aria-label={translate('agents.actions.editNamed', { name })}")
     expect(panel).toContain("aria-label={translate('agents.actions.deleteNamed', { name })}")
-    expect(panel).toContain("{translate('agents.actions.tryIt')}")
-    expect(editor).toContain("aria-label={t('agents.editor.actions.close')}")
-    expect(editor).toContain("aria-label={t('agents.editor.actions.chooseWorkingDirectory')}")
-    expect(editor).toContain('htmlFor="agent-template-system-prompt"')
-    expect(editor).toContain('required')
+    // 团队行把悬停按钮文字换成"开个话题"，缺省仍是本地化的"试一下"
+    expect(panel).toContain("tryLabel ?? translate('agents.actions.tryIt')")
     expect(source).toContain('flex-wrap')
     expect(source).toContain('break-words')
     expect(source).toContain('min-w-0')

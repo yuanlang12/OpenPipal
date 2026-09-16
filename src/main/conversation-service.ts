@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import * as legacy from './conversation-store'
+import { DEFAULT_AGENT_ID, resolveAgentId } from '../shared/agent-identity'
+import { palIdOf } from './pal-id'
+import { resolveTeamScope } from './team-store'
 import type {
   Conversation,
   ConversationConfig,
   ConversationSummary,
   StoredMessage,
+  TeamBinding,
 } from './conversation-store'
 import { publishConversationChange } from './conversation-events'
 import { PiV4JsonlSessionStore } from './session'
@@ -67,6 +71,9 @@ function buildSummary(conversation: Conversation): ConversationSummary {
     role: conversation.role,
     ...(conversation.agentId ? { agentId: conversation.agentId } : {}),
     ...(conversation.workspaceId ? { workspaceId: conversation.workspaceId } : {}),
+    agent: resolveAgentId(conversation),
+    ...(conversation.teamId ? { teamId: conversation.teamId } : {}),
+    ...(conversation.channel ? { channel: conversation.channel } : {}),
     ...(conversation.config ? { config: conversation.config } : {}),
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
@@ -93,6 +100,7 @@ function rememberJsonlSummary(summary: ConversationSummary): void {
       role: summary.role,
       ...(summary.agentId ? { agentId: summary.agentId } : { agentId: undefined }),
       ...(summary.workspaceId ? { workspaceId: summary.workspaceId } : { workspaceId: undefined }),
+      agent: resolveAgentId(summary),
       ...(summary.config ? { config: summary.config } : { config: undefined }),
       updatedAt: summary.updatedAt,
     })
@@ -200,6 +208,9 @@ export function peekConversation(conversationId: string): Conversation | null {
     role: summary.role,
     ...(summary.agentId ? { agentId: summary.agentId } : {}),
     ...(summary.workspaceId ? { workspaceId: summary.workspaceId } : {}),
+    agent: resolveAgentId(summary),
+    ...(summary.teamId ? { teamId: summary.teamId } : {}),
+    ...(summary.channel ? { channel: summary.channel } : {}),
     ...(summary.config ? { config: summary.config } : {}),
     createdAt: summary.createdAt,
     updatedAt: summary.updatedAt,
@@ -240,22 +251,36 @@ async function makeConversation(
   role: string,
   title?: string,
   agentId?: string,
-  workspaceId?: string
+  workspaceIdArg?: string,
+  team?: TeamBinding
 ): Promise<Conversation> {
   const now = Date.now()
-  const { loadConfig } = await import('./config-manager')
-  const activePresetId = loadConfig().activePresetId
+  // agentId 是老字段（曾指模板）：能认出是 Pal 就并进 workspaceId，不再单独落盘
+  const workspaceId = palIdOf({ workspaceId: workspaceIdArg, agentId })
+  // 出生不钉模型（见 conversation-store.createConversation 同一处注释）
   return {
     id: randomUUID(),
     title: title || NEW_CONVERSATION_TITLE,
-    role,
-    ...(agentId ? { agentId } : {}),
+    // Pal 的会话 role 槽位一律中性（默认角色），与 conversation-store 同一条不变量
+    role: workspaceId ? DEFAULT_AGENT_ID : role,
     ...(workspaceId ? { workspaceId } : {}),
-    ...(activePresetId ? { config: { modelPresetId: activePresetId } } : {}),
+    agent: resolveAgentId({ workspaceId, role }),
+    ...(team ? { teamId: team.teamId, ...(team.channel ? { channel: team.channel } : {}) } : {}),
     createdAt: now,
     updatedAt: now,
     messages: [],
   }
+}
+
+/**
+ * 团队话题的绑定要经过校验：团队 / 频道得存在，而且话题永远由 Lead 跑——渲染层 / 外部客户端
+ * 传来的 workspaceId 一律换成频道的 Lead，不让"以 X 成员的身份开团队话题"这条路存在。
+ */
+function bindTeam(team: TeamBinding | undefined): { binding?: TeamBinding; lead?: string } {
+  if (!team) return {}
+  const scope = resolveTeamScope(team.teamId, team.channel)
+  if (!scope) throw new Error(team.channel ? `团队 ${team.teamId} 没有频道 ${team.channel}` : `团队不存在或没有成员: ${team.teamId}`)
+  return { binding: { teamId: team.teamId, ...(team.channel ? { channel: team.channel } : {}) }, lead: scope.lead }
 }
 
 export async function createConversation(
@@ -263,15 +288,18 @@ export async function createConversation(
   title?: string,
   agentId?: string,
   workspaceId?: string,
-  createdBy: OpenPipalSessionCreatedBy = 'desktop'
+  createdBy: OpenPipalSessionCreatedBy = 'desktop',
+  teamArg?: TeamBinding
 ): Promise<Conversation> {
   await ensureInitialized()
+  const { binding: team, lead } = bindTeam(teamArg)
+  if (lead) workspaceId = lead
   const store = currentJsonlStore()
   if (configuredStorage !== 'pi-jsonl-v4' || !store) {
-    return legacy.createConversation(role, title, agentId, workspaceId)
+    return legacy.createConversation(role, title, agentId, workspaceId, team)
   }
 
-  const conversation = await makeConversation(role, title, agentId, workspaceId)
+  const conversation = await makeConversation(role, title, agentId, workspaceId, team)
   await serialize(conversation.id, async () => {
     await store.create({ conversation, createdBy })
     rememberJsonlConversation(conversation)

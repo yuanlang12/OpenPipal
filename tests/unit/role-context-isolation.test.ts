@@ -37,15 +37,9 @@ const state = vi.hoisted(() => {
 })
 
 vi.mock('../../src/main/role-manager', () => ({
-  getCurrentRole: () => state.roles[state.currentRole],
+  // 没有全局当前角色了：这里的 state.currentRole 模拟的是"默认角色在两次调用之间变了"，隔离结论不变
+  getDefaultRole: () => state.roles[state.currentRole],
   getRoleConfig: (roleName: string) => state.roles[roleName] || null,
-  switchRole: (roleName: string) => {
-    const role = state.roles[roleName]
-    if (!role) return null
-    state.currentRole = roleName
-    return role
-  },
-  isToolAllowed: (toolName: string) => state.roles[state.currentRole].tools.includes(toolName),
   getDsReview: () => undefined
 }))
 
@@ -56,12 +50,21 @@ vi.mock('../../src/main/conversation-store', () => ({
 vi.mock('../../src/main/agent-workspace-store', () => ({
   getWorkspace: () => null,
   readMeMd: () => '',
-  readToolsConfig: () => ({})
+  readToolsConfig: () => ({}),
+  // 注册表（统一身份）按 id 解析 Pal 时要看这些；本文件只有内置角色，给空实现
+  getWorkspaceDir: (id: string) => `/home/.openpipal/agents/${id}`,
+  getWorkspacesRootDir: () => '/home/.openpipal/agents',
+  readWorkspaceMeta: () => undefined,
+  listWorkspaces: () => []
 }))
 
-vi.mock('../../src/main/agent-template-manager', () => ({ getAgentTemplate: () => null }))
+vi.mock('../../src/main/pal-id', () => ({ isPalId: () => false, palIdOf: (r: { workspaceId?: string }) => r.workspaceId }))
 // DC 闸门的拒绝文案带 dc-authoring 的绝对路径（要读 electron app 路径）；这里只看闸门开不开，不看路径
-vi.mock('../../src/main/openpipal-skill-sources', () => ({ getBuiltInSkillsDir: () => '/app/resources/skills' }))
+vi.mock('../../src/main/openpipal-skill-sources', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/openpipal-skill-sources')>()),
+  getBuiltInSkillsDir: () => '/app/resources/skills',
+  getBuiltInRoleSkillsDir: (roleName: string) => `/app/resources/system-agents/${roleName}/skills`
+}))
 // 记忆总开关的产品默认已改为关闭；本文件测的是"记忆快照是否按会话角色隔离"，
 // 与默认值无关，故显式打开，避免用例被产品默认值静默架空
 vi.mock('../../src/main/config-manager', async (importOriginal) => ({
@@ -99,6 +102,7 @@ vi.mock('../../src/main/subagent-manager', () => ({
 }))
 vi.mock('../../src/main/artifact-store', () => ({
   listConversationArtifacts: () => [],
+  artifactFilePath: () => '/tmp/x.html',
   compileJsxArtifact: () => ({ error: '' }),
   findSimilarArtifact: () => undefined,
   coarseTypeFromFile: () => 'html',
@@ -166,7 +170,7 @@ describe('conversation-scoped role execution context', () => {
     state.currentRole = 'teacher'
     const prompt = prepared.render('SKILL:design')
 
-    expect(prepared.skillContext).toEqual({ workspaceId: undefined, roleName: 'design' })
+    expect(prepared.skillContext).toEqual({ workspaceId: undefined, roleName: 'design', agentId: 'design' })
     expect(prompt).toContain('SYSTEM:design')
     expect(prompt).not.toContain('SYSTEM:teacher')
     expect(prompt).toContain('assets/design/')

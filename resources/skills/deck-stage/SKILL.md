@@ -59,6 +59,7 @@ DC 文件本身的骨架、`{{ }}` 空穴、`sc-for`/`sc-if`、逻辑块、调�
 
 硬点：
 
+- **舞台文件先拷进项目：`copy_starter_component(kind: "deck-stage.js")`**（写工作区文件、要本地打开时；走 `create_artifact` 交付则宿主自动内联，不用拷）。它不在工作区里，别去磁盘上搜。拷完 HTML 里 `<script src="./support.js">` 之前**再加一行 `<script src="./deck-stage.js"></script>`**——support.js 不会自己去取 from 指向的文件，少这行本地打开是一片空白且无报错；`from="./deck-stage.js"` 照写不删。
 - **`from="./deck-stage.js"` 必须逐字出现。** 宿主用 `from="…deck-stage.js"` 或字面量 `<deck-stage` 这一组
   正则认定「这是一份 deck」，它是 PPTX 导出门闩与交接包分类的唯一判据。写错路径 = 导不出 PPTX。
 - **`hint-size="100%,100%"` 要写。** 这是舞台就绪前的占位尺寸；不写会先塌成一个默认小占位框，运行时还会告警。

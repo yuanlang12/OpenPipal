@@ -267,7 +267,10 @@ function buildToolsApi(
       if (!resolvedServer || !describeMcpTool(toolName, conversationId, scope)) {
         throw new Error(`工具 "${toolName}" 不存在或不允许当前 Agent 使用。请先用 tools.search() 搜索。`)
       }
-      const risk = classifyToolRisk(toolName, args, { origin: 'mcp' })
+      const risk = classifyToolRisk(toolName, args, {
+        origin: 'mcp',
+        ...(resolvedServer.annotations ? { mcpAnnotations: resolvedServer.annotations } : {})
+      })
       if (risk.level === 'risky') {
         throw new Error(`工具 "${toolName}" 被安全策略阻止: ${risk.reason}`)
       }

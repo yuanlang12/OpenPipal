@@ -934,12 +934,18 @@ function RulesTab() {
   const groups = useMemo(() => {
     const global: HookEntry[] = []
     const agents = new Map<string, { name: string; rules: HookEntry[] }>()
+    const teams = new Map<string, { name: string; rules: HookEntry[] }>()
     const plugins = new Map<string, HookEntry[]>()
     for (const rule of entries) {
       if (rule.source.kind === 'agent') {
         const group = agents.get(rule.source.id) ?? { name: rule.source.name, rules: [] }
         group.rules.push(rule)
         agents.set(rule.source.id, group)
+      } else if (rule.source.kind === 'team') {
+        // 频道规则的 source.name 是「团队 › 频道」，分组标题只取团队名（第一段）
+        const group = teams.get(rule.source.id) ?? { name: rule.source.name.split(' › ')[0], rules: [] }
+        group.rules.push(rule)
+        teams.set(rule.source.id, group)
       } else if (rule.source.id === LOCAL_RULES_PLUGIN) {
         global.push(rule)
       } else {
@@ -951,6 +957,7 @@ function RulesTab() {
     const sections: { key: string; title: string; rules: HookEntry[] }[] = []
     if (global.length) sections.push({ key: 'global', title: t('toolsHub.rules.allAgents'), rules: global })
     for (const [id, group] of Array.from(agents.entries())) sections.push({ key: `agent:${id}`, title: group.name, rules: group.rules })
+    for (const [id, group] of Array.from(teams.entries())) sections.push({ key: `team:${id}`, title: t('toolsHub.rules.teamRules', { name: group.name }), rules: group.rules })
     for (const [name, rules] of Array.from(plugins.entries())) sections.push({ key: `plugin:${name}`, title: t('toolsHub.rules.fromPlugin', { name }), rules })
     return sections
   }, [entries, t])

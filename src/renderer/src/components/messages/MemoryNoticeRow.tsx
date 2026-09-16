@@ -33,7 +33,7 @@ export function MemoryNoticeRow({ message }: { message: ChatMessage }) {
         {notice.type === 'extracted' ? (
           <ExtractedContent memories={notice.memories} t={t} />
         ) : (
-          <DreamedContent actionsApplied={notice.actionsApplied} summary={notice.summary} t={t} />
+          <DreamedContent team={notice.team} actionsApplied={notice.actionsApplied} summary={notice.summary} t={t} />
         )}
       </span>
     </NoticeCapsule>
@@ -60,10 +60,10 @@ function ExtractedContent({ memories, t }: { memories: MemoryNotice['memories'];
   return <span>📝 {t('chat.memoryNotice.rememberedMany', { parts: parts.join(' + ') })}</span>
 }
 
-function DreamedContent({ actionsApplied, summary, t }: { actionsApplied?: number; summary?: string; t: TFunction }) {
+/** 整理完成。团队话题（team 有值）落的是团队记忆：说清是哪个团队、记了什么（summary = 文件名列表） */
+function DreamedContent({ team, actionsApplied, summary, t }: { team?: string; actionsApplied?: number; summary?: string; t: TFunction }) {
   const count = actionsApplied || 0
-  const text = summary
-    ? t('chat.memoryNotice.organizedWithSummary', { count, summary })
-    : t('chat.memoryNotice.organized', { count })
-  return <span>🌙 {text}</span>
+  const base = team ? 'chat.memoryNotice.teamOrganized' : 'chat.memoryNotice.organized'
+  const text = t(summary ? `${base}WithSummary` : base, { team, count, summary })
+  return <span data-testid={team ? 'team-memory-notice' : undefined}>🌙 {text}</span>
 }

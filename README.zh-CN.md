@@ -163,7 +163,7 @@ Windows 版是后来的那个，还没有代码签名，*Windows* 一节写了�
 ~/.openpipal/
 ├── config.json     # 模型预设与应用设置
 ├── memory/         # 长期记忆，按 Agent 分目录
-├── outputs/        # 模型产出的文件
+├── outputs/<会话id>/  # 模型在该会话里产出的文件
 ├── sessions-v4/    # 对话历史，只追加的 JSONL
 ├── conversations/  # 附件，以及旧版本留下的历史
 └── skills/         # 你自己的技能

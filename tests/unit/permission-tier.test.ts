@@ -178,13 +178,21 @@ describe('只读白名单本身', () => {
 describe('接线', () => {
   it('档位只在编码助手的会话上生效 —— 外部客户端能 PATCH 会话 config，放宽必须有门', () => {
     const src = fs.readFileSync('src/main/agent-overrides.ts', 'utf8')
-    expect(src).toContain("roleName === 'coding'")
+    // 放宽的门按档案声明（permission-tier: allowed，今天只有编码助手），不再按角色名认
+    expect(src).toContain("getAgent(executionAgentId)?.policies.permissionTier === 'allowed'")
     expect(src).toContain('conversationConfig?.permissionTier')
   })
 
-  it('界面只给编码助手渲染档位控件 —— 别的角色不该被迫理解工具风险分级', () => {
-    const src = fs.readFileSync('src/renderer/src/components/InputBar.tsx', 'utf8')
-    expect(src).toMatch(/roleName === 'coding' && <PermissionTierControl/)
+  it('界面只给档案声明了 permission-tier: allowed 的 Agent 渲染档位控件（内置编码助手、从它复制的 Pal）——别的不该被迫理解工具风险分级', () => {
+    const input = fs.readFileSync('src/renderer/src/components/InputBar.tsx', 'utf8')
+    expect(input).toMatch(/const tierAllowed = agents\.find\(a => a\.id === \(activeWorkspaceId \?\? roleName\)\)\?\.permissionTier === 'allowed'/)
+    expect(input).toMatch(/\{tierAllowed && <PermissionTierControl/)
+    expect(input).not.toMatch(/roleName === 'coding'/)
+    const preflow = fs.readFileSync('src/renderer/src/components/RolePreflowPanel.tsx', 'utf8')
+    expect(preflow).toMatch(/trailing=\{tierAllowed \? <PermissionTierControl/)
+    expect(preflow).not.toMatch(/roleName === 'coding'/)
+    // 摘要里带声明：主进程 agents:list 是界面的唯一事实源
+    expect(fs.readFileSync('src/shared/agent-identity.ts', 'utf8')).toContain("permissionTier?: 'allowed'")
   })
 
   it('三档的名字和说明都走 i18n，中英都有', () => {

@@ -55,7 +55,7 @@ export function CanvasArtifact({ artifactId, content, onSave }: CanvasArtifactPr
   const [size, setSize] = useState<number>(SIZES[1].value)
   const [history, setHistory] = useState({ canUndo: false, canRedo: false })
 
-  const roleName = useAppStore(s => s.currentRole?.name || 'learner')
+  const roleName = useAppStore(s => s.currentRole?.name || 'general')
   const getEngine = useCallback((): CanvasEngine | null => engine, [engine])
   useCaveStateMachine(engine, { artifactId, roleName, getEngine })
 

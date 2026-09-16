@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { DEFAULT_AGENT_ID } from '../../../shared/agent-identity'
 import { ChatMessage, ChatMessageKind, VoiceTranscriptItem, FileAttachmentData, PermissionRequestData, HookNoticePayload, MemoryNotice } from '../types'
 import { useArtifactStore } from './artifactStore'
 import { useHookStore } from './hookStore'
@@ -62,7 +63,8 @@ import {
   normalizeChatMessage,
   normalizeChatMessages,
   shouldSendMessageToModel,
-  stripOffloadedInline
+  stripOffloadedInline,
+  uniqueMessageId
 } from '../chat/messages'
 
 export interface ConversationSummary {
@@ -71,6 +73,9 @@ export interface ConversationSummary {
   role: string
   agentId?: string
   workspaceId?: string
+  /** 团队话题：属于哪个团队 / 频道（建时定、不可改；workspaceId 就是这条话题的 Lead） */
+  teamId?: string
+  channel?: string
   createdAt: number
   updatedAt: number
   messageCount: number
@@ -656,8 +661,6 @@ interface ChatState {
   unreadDoneConvIds: Record<string, true>
   conversations: ConversationSummary[]
   activeConversationId: string | null
-  /** 新建对话计数器(仅 newConversation 递增)——WelcomePage 用它精确侦测"新建对话",与切角色(initConversations 改 activeConversationId)区分 */
-  welcomeNonce: number
   convLoading: boolean
   pendingPermission: PermissionRequestData | null
   // 内联权限请求（会话流中显示）
@@ -666,10 +669,11 @@ interface ChatState {
   pendingFileAttachments: FileAttachmentData[]
   // 用户在 agent 跑的时候挂起的待发消息（输入框上方的卡片堆叠）
   pendingMessages: PendingMessage[]
-  // Agent 模板关联
-  activeAgentId: string | null
   // Workspace Agent 关联
   activeWorkspaceId: string | null
+  // 团队话题：当前会话属于哪个团队 / 频道（中栏面板与聊天页徽标据此切换）
+  activeTeamId: string | null
+  activeChannel: string | null
   // 对话级配置（工作目录 + 通用前置信息桶）
   conversationConfig: {
     workingDir?: string
@@ -726,10 +730,12 @@ interface ChatState {
 
 interface ChatActions {
   // 对话管理
-  initConversations: (role: string) => Promise<void>
+  initConversations: () => Promise<void>
   newConversation: (role: string) => Promise<void>
-  newConversationFromAgent: (role: string, agentId: string, agentName: string) => Promise<void>
-  newConversationFromWorkspace: (role: string, workspaceId: string, workspaceName: string) => Promise<void>
+  /** 用一个 Pal 开一条会话；role 槽位固定默认角色（人设在 Pal 自己的目录里，槽位只是老结构的技术字段） */
+  newConversationFromWorkspace: (workspaceId: string, workspaceName: string) => Promise<void>
+  /** 在团队（频道）里开一条话题：主进程把 workspaceId 换成频道的 Lead，话题永远由 Lead 跑 */
+  newConversationInTeam: (teamId: string, channel?: string, title?: string) => Promise<void>
   switchConversation: (id: string) => Promise<ChatMessage[]>
   deleteConversation: (id: string) => Promise<void>
   ensureConversation: (role: string) => Promise<string>
@@ -879,10 +885,23 @@ async function performSave(expectedConversationId?: string): Promise<void> {
       dirty = false
     }
   } else if (messages.length > persistedCount) {
-    const result = await window.api.appendMessages(activeConversationId, stripOffloadedInline(normalizeChatMessages(messages.slice(persistedCount))))
-    assertPersistenceSucceeded(result, 'append active conversation messages')
+    let appended = true
+    try {
+      const result = await window.api.appendMessages(activeConversationId, stripOffloadedInline(normalizeChatMessages(messages.slice(persistedCount))))
+      assertPersistenceSucceeded(result, 'append active conversation messages')
+    } catch (err) {
+      // 追加被拒（典型：id 撞了、或水位线和磁盘对不上）不是重试能救的——换整段 replace 重写这条会话，
+      // 一次不成也把 dirty 立起来让下一次继续走 replace。否则每次重试都撞同一堵墙，
+      // 连"新建对话 / 切换会话"都会卡在等落盘上（2026-09-10 实撞）
+      console.warn('[chatStore] 追加落盘被拒，改走整段重写:', err)
+      dirty = true
+      appended = false
+      const result = await window.api.replaceMessages(activeConversationId, stripOffloadedInline(normalizeChatMessages(messages)))
+      assertPersistenceSucceeded(result, 'replace active conversation messages after append rejection')
+    }
     if (get().activeConversationId === activeConversationId) {
       persistedCount = messages.length
+      if (!appended) dirty = false
     }
   }
   // Sidebar refresh is not part of the transcript durability acknowledgement.
@@ -1068,11 +1087,46 @@ function beginStream(get: () => ChatState, msgs: ChatMessage[]): void {
   }
   window.api.sendChat(
     toApiMessages(msgs),
-    get().activeAgentId || undefined,
+    undefined,
     get().conversationConfig || undefined,
     cid || undefined,
     get().activeWorkspaceId || undefined
   )
+}
+
+/**
+ * 刚建好一条会话后把台面切过去：内置角色的会话与 Pal 的会话只差 activeWorkspaceId，其余重置一模一样，
+ * 所以只写一份（以前是两段 30 行的复制，改一次要改两处）。
+ */
+function enterFreshConversation(conv: any, list: ConversationSummary[], workspaceId: string | null): void {
+  artifactDeltaAcc = ''
+  visualizerDeltaAcc = ''
+  useChatStore.setState({
+    activeConversationId: conv.id,
+    activeWorkspaceId: workspaceId,
+    activeTeamId: conv.teamId ?? null,
+    activeChannel: conv.channel ?? null,
+    // 出生配置水合——浅合并下漏掉该字段会让上一个会话的 config 静默残留
+    conversationConfig: conv.config ?? null,
+    // 刚建的这条一定在列表里：appStore.currentRole 从"活跃会话在列表里的 role"派生，列表落后一拍就会看错角色
+    conversations: list.some((c) => c.id === conv.id) ? list : [conv, ...list],
+    messages: [],
+    pendingQuestionsV2: null,
+    isStreaming: false
+  })
+  streamBuf = ''
+  liveStream.reset()
+  resetThinkingState()
+  resetPersistWatermark()
+  // 只清这个新会话的授权（id 复用兜底），别把并发中其它会话的"本次会话允许"一起抹掉
+  window.api.clearSessionApprovals?.(conv.id)
+  useArtifactStore.getState().clearArtifacts()
+  useVisualizerStore.getState().clearAll()
+  const ws = useWorkspaceStore.getState()
+  ws.setRehydrating(true)
+  resetWorkspaceForNewConversation()
+  ws.setRehydrating(false)
+  ws.restoreOpenForConversation(conv.id, false)
 }
 
 export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
@@ -1082,14 +1136,14 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
   unreadDoneConvIds: {},
   conversations: [],
   activeConversationId: null,
-  welcomeNonce: 0,
   convLoading: true,
   pendingPermission: null,
   inlinePermissionRequests: new Map(),
   pendingFileAttachments: [],
   pendingMessages: [],
-  activeAgentId: null,
   activeWorkspaceId: null,
+  activeTeamId: null,
+  activeChannel: null,
   conversationConfig: null,
   pendingQuestionsV2: null,
   pendingMentions: [],
@@ -1103,10 +1157,10 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
 
   // ---- 对话管理 ----
 
-  initConversations: (_role) => enqueueConversationNavigation(async () => {
+  initConversations: () => enqueueConversationNavigation(async () => {
     const exitHandoff = await prepareActiveConversationExit()
-    // 切角色/启动一律停在欢迎页"开新的"——只载会话列表,不自动续最近会话(messages 留空 → 渲染 WelcomePage)。
-    // 续旧会话由用户点左侧历史列表显式加载,与"切角色=开新的"解耦。
+    // 启动一律停在欢迎页"开新的"——只载会话列表,不自动续最近会话(messages 留空 → 渲染 WelcomePage)。
+    // 续旧会话由用户点左侧历史列表显式加载。
     let list: ConversationSummary[]
     try {
       list = await window.api.listConversations()
@@ -1130,120 +1184,41 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
 
   newConversation: (role) => enqueueConversationNavigation(async () => {
     const exitHandoff = await prepareActiveConversationExit()
-    artifactDeltaAcc = ''
-    visualizerDeltaAcc = ''
-    let conv: any
-    let list: ConversationSummary[]
     try {
-      conv = await window.api.createConversation(role)
-      list = await window.api.listConversations()
+      const conv = await window.api.createConversation(role)
+      const list = await window.api.listConversations()
+      enterFreshConversation(conv, list, null)
     } catch (error) {
       exitHandoff?.restore()
       throw error
     }
-    set({
-      activeConversationId: conv.id,
-      welcomeNonce: get().welcomeNonce + 1,  // 新建对话 → WelcomePage 复位到通用头像页
-      activeAgentId: null,
-      activeWorkspaceId: null,
-      // 水合出生配置（含创建时钉住的 modelPresetId）——此前硬编码 null 导致"+"路径的
-      // chat:send 载荷不带钉住,全靠 agent-overrides 磁盘兜底(层次评审:两处防线意图对齐)
-      conversationConfig: conv.config ?? null,
-      conversations: list,
-      messages: [],
-      pendingQuestionsV2: null,
-      isStreaming: false
-    })
     exitHandoff?.complete()
-    streamBuf = ''
-    liveStream.reset()
-    resetThinkingState()
-    resetPersistWatermark()
-    // 只清这个新会话的授权（id 复用兜底），别把并发中其它会话的"本次会话允许"一起抹掉
-    window.api.clearSessionApprovals?.(conv.id)
-    useArtifactStore.getState().clearArtifacts()
-    useVisualizerStore.getState().clearAll()
-    const ws = useWorkspaceStore.getState()
-    ws.setRehydrating(true)
-    resetWorkspaceForNewConversation()
-    ws.setRehydrating(false)
-    ws.restoreOpenForConversation(conv.id, false)
   }),
 
-  newConversationFromAgent: (role, agentId, agentName) => enqueueConversationNavigation(async () => {
+  newConversationFromWorkspace: (workspaceId, workspaceName) => enqueueConversationNavigation(async () => {
     const exitHandoff = await prepareActiveConversationExit()
-    let conv: any
-    let list: ConversationSummary[]
     try {
-      conv = await window.api.createConversation(role, agentName, agentId)
-      list = await window.api.listConversations()
+      const conv = await window.api.createConversation(DEFAULT_AGENT_ID, workspaceName, undefined, workspaceId)
+      const list = await window.api.listConversations()
+      enterFreshConversation(conv, list, workspaceId)
     } catch (error) {
       exitHandoff?.restore()
       throw error
     }
-    set({
-      activeConversationId: conv.id,
-      activeAgentId: agentId,
-      activeWorkspaceId: null,
-      // 出生配置水合——浅合并下漏掉该字段会让上一个会话的 config 静默残留（评审登记缺口）
-      conversationConfig: conv.config ?? null,
-      conversations: list,
-      messages: [],
-      pendingQuestionsV2: null,
-      isStreaming: false
-    })
     exitHandoff?.complete()
-    streamBuf = ''
-    liveStream.reset()
-    resetThinkingState()
-    resetPersistWatermark()
-    // 只清这个新会话的授权（id 复用兜底），别把并发中其它会话的"本次会话允许"一起抹掉
-    window.api.clearSessionApprovals?.(conv.id)
-    useArtifactStore.getState().clearArtifacts()
-    useVisualizerStore.getState().clearAll()
-    const ws = useWorkspaceStore.getState()
-    ws.setRehydrating(true)
-    resetWorkspaceForNewConversation()
-    ws.setRehydrating(false)
-    ws.restoreOpenForConversation(conv.id, false)
   }),
 
-  newConversationFromWorkspace: (role, workspaceId, workspaceName) => enqueueConversationNavigation(async () => {
+  newConversationInTeam: (teamId, channel, title) => enqueueConversationNavigation(async () => {
     const exitHandoff = await prepareActiveConversationExit()
-    let conv: any
-    let list: ConversationSummary[]
     try {
-      conv = await window.api.createConversation(role, workspaceName, undefined, workspaceId)
-      list = await window.api.listConversations()
+      const conv = await window.api.createConversation(DEFAULT_AGENT_ID, title, undefined, undefined, { teamId, ...(channel ? { channel } : {}) })
+      const list = await window.api.listConversations()
+      enterFreshConversation(conv, list, conv.workspaceId ?? null)
     } catch (error) {
       exitHandoff?.restore()
       throw error
     }
-    set({
-      activeConversationId: conv.id,
-      activeAgentId: null,
-      activeWorkspaceId: workspaceId,
-      // 出生配置水合——同 newConversationFromAgent
-      conversationConfig: conv.config ?? null,
-      conversations: list,
-      messages: [],
-      pendingQuestionsV2: null,
-      isStreaming: false
-    })
     exitHandoff?.complete()
-    streamBuf = ''
-    liveStream.reset()
-    resetThinkingState()
-    resetPersistWatermark()
-    // 只清这个新会话的授权（id 复用兜底），别把并发中其它会话的"本次会话允许"一起抹掉
-    window.api.clearSessionApprovals?.(conv.id)
-    useArtifactStore.getState().clearArtifacts()
-    useVisualizerStore.getState().clearAll()
-    const ws = useWorkspaceStore.getState()
-    ws.setRehydrating(true)
-    resetWorkspaceForNewConversation()
-    ws.setRehydrating(false)
-    ws.restoreOpenForConversation(conv.id, false)
   }),
 
   switchConversation: (id) => enqueueConversationNavigation(async () => {
@@ -1301,8 +1276,9 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
         : s.contextStats
       return {
         activeConversationId: id,
-        activeAgentId: conv?.agentId || null,
         activeWorkspaceId: (conv as any)?.workspaceId || null,
+        activeTeamId: conv?.teamId ?? null,
+        activeChannel: conv?.channel ?? null,
         conversationConfig: configAfterPendingReconcile,
         messages: normalizeChatMessages(msgs || []),
         // 不可沿用上个会话的问卷；存在持久化状态时立刻恢复，避免产物 tab 首帧误判“已提交”。
@@ -1499,7 +1475,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
     await newConversation(role)
     const id = get().activeConversationId!
     if (inflightConfig) {
-      // 合并而非覆写：主进程建会话时会把当时的全局模型预设钉进 config（出生快照，防全局切换
+      // 合并而非覆写：主进程建会话时可能已在 config 里写了东西（模型钉住在第一次跑时才发生，见 agent-overrides；防全局切换
       // 翻转运行中会话）——渲染层攒的 inflightConfig 若没带 modelPresetId，不能把钉住冲掉；
       // 用户在前置页显式选过模型时 inflightConfig 有值，仍以显式选择为准。
       const born = get().conversations.find(c => c.id === id)?.config
@@ -1532,6 +1508,13 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
     }
 
     await ensureConversation(role)
+    // 第一句话发出去时才钉模型：没在会话里选过就把此刻的全局默认钉进 conversationConfig（主进程同样会钉，这里是让
+    // 输入框胶囊立刻显示真相：之后全局再切，这条会话还是它）。选过的（modelPresetId 已有）不动。
+    if (messages.length === 0 && !get().conversationConfig?.modelPresetId) {
+      const models = await (window.api as any).getAvailableModels?.().catch(() => []) as Array<{ id: string; active?: boolean }> | undefined
+      const active = Array.isArray(models) ? models.find(m => m.active) : undefined
+      if (active?.id) get().setConversationModelPreset(active.id)
+    }
 
     // 随消息图片落盘（官方 uploads/ 形状）：拿到相对路径挂进消息元数据——模型侧据此注入
     // "图片已存盘"事实，dc 配图直接引用文件，消灭"全盘找图"（失败不阻塞发送，仅少这条事实）
@@ -2131,6 +2114,10 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
 
       window.api.onStreamEnd((cid: string, error?: string) => {
         const endedCid = cid || get().activeConversationId || ''
+        // 团队话题跑完兜底刷一遍（成员用 write 放进 shared/ 的文件没有 team:changed 事件）
+        if (endedCid && get().conversations.find(c => c.id === endedCid)?.teamId) {
+          void import('./agentStore').then(({ useAgentStore }) => useAgentStore.getState().refreshTeams())
+        }
         const endWasAbort = endedCid
           ? abortedStreamConversationIds.delete(endedCid)
           : abortWithoutConversationId
@@ -2301,24 +2288,22 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
         if (silentFlush) {
           console.log('[Cave] 🤫 静默 flush(tool 前):', streamBuf.substring(0, 80))
         }
-        const flushedAssistant = hasFlushableText(streamBuf) && !silentFlush
-          ? createAssistantMessage({
-              id: `flush-${Date.now()}`,
-              content: streamBuf,
-              timestamp: Date.now()
-            })
-          : null
-        const toolAnchor = createToolMessage({
-          id: toolCallId ? `tool-${toolCallId}` : `tool-${Date.now()}`,
-          toolName: name,
-          toolCallId,
-          timestamp: Date.now()
-        })
+        const flushedText = hasFlushableText(streamBuf) && !silentFlush ? streamBuf : null
 
         streamBuf = ''
 
         set(s => {
           const updated = [...s.messages]
+          // id 在会话内去重：provider 的 toolCallId 可能重复（deepseek 官方端点实撞），落盘对重复 id 是永久拒绝
+          const flushedAssistant = flushedText !== null
+            ? createAssistantMessage({ id: uniqueMessageId(updated, `flush-${Date.now()}`), content: flushedText, timestamp: Date.now() })
+            : null
+          const toolAnchor = createToolMessage({
+            id: uniqueMessageId(flushedAssistant ? [...updated, flushedAssistant] : updated, toolCallId ? `tool-${toolCallId}` : `tool-${Date.now()}`),
+            toolName: name,
+            toolCallId,
+            timestamp: Date.now()
+          })
           // 按事件到达顺序 append 到末尾(与 onThinking/onStreamEnd/onAskUser/questions_v2 等一致)。
           // 到 tool-start 时,本轮此前的 thinking(role:'assistant')、流式文字都已在数组里按时序排好,
           // 工具调用发生在它们之后 → 直接 push 即是正确时序。
@@ -2774,7 +2759,7 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
               markDirtyIfPersisted(foundIdx)
             } else if (toolCallId) {
               updated.push(createToolMessage({
-                id: `tool-${toolCallId}`,
+                id: uniqueMessageId(updated, `tool-${toolCallId}`),
                 toolName: 'create_artifact',
                 toolCallId,
                 content: anchorContent,
@@ -2937,6 +2922,18 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       )
     }
 
+    // 跨会话：别的对话发来消息、这条对话在主进程无头跑完一轮（消息已由主进程落盘）。
+    // 正开着它 → 重载这条对话；在后台 → 点亮未读；列表顺序也刷一下
+    if (window.api.onPeerTurn) {
+      cleanups.push(
+        window.api.onPeerTurn((cid: string) => {
+          window.api.listConversations().then((list: ConversationSummary[]) => set({ conversations: list }))
+          if (get().activeConversationId === cid) void get().switchConversation(cid)
+          else set(s => ({ unreadDoneConvIds: { ...s.unreadDoneConvIds, [cid]: true } }))
+        })
+      )
+    }
+
     // 胶囊提醒（记忆 / 规则）：落在它发生的会话里、发生的位置上，长期可见；不发给模型、不算对话历史。
     // 目标会话就是当前会话 → 进内存 + 常规落盘；不是（用户切走了 / 后台会话 / 事件没带会话就落当前）
     // → 直接追加到它自己的会话文件（与后台工具消息同一条路：主进程按会话串行写入）
@@ -2968,6 +2965,15 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
             memoryNotice: notice,
             timestamp: Date.now()
           }, 'memory notice')
+        })
+      )
+    }
+
+    // 团队目录变了（组长在话题里改名 / 写章程 / 建成员、整理引擎落了团队记忆）→ 左栏当场刷新，不等话题跑完（团队面板自己也订阅）
+    if (window.api.onTeamChanged) {
+      cleanups.push(
+        window.api.onTeamChanged(() => {
+          void import('./agentStore').then(({ useAgentStore }) => useAgentStore.getState().refreshTeams())
         })
       )
     }

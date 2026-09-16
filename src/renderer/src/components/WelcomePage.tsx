@@ -6,18 +6,19 @@ import { VoiceCallInline } from './VoiceCallInline'
 import type { VoiceSessionState } from '../types'
 import { useAppStore } from '../stores/appStore'
 import { useChatStore } from '../stores/chatStore'
-import { useAgentStore } from '../stores/agentStore'
 import { RolePreflowPanel, type PreflowManifest } from './RolePreflowPanel'
-import { RoleAvatar } from './shared/RoleAvatar'
+import { RoleAvatar, resolveRoleMark } from './shared/RoleAvatar'
 import { useAgentMarkStudio, MarkStudioAffordance } from './agent-mark'
 import { extractPastedImages } from '../utils/pasteImages'
 import { expandSkillMentions } from '../chat/skillRequest'
 import { useSkillMentions, type SkillInfo } from './shared/SkillMention'
 import { WorkingDirBar } from './shared/WorkingDirBar'
 import { useComposerFileIntake } from './shared/useComposerFileIntake'
+import { useWindowFileDragging, useWindowFileDrop } from './shared/FileDrop'
 import { fmtSize } from '../utils/format'
-import { getBuiltinRoleNameKey } from '../../../shared/i18n/resources'
-import { PAL_BASE_ROLE } from '../../../shared/pal-contract'
+import { builtinDisplayName } from '../../../shared/i18n/resources'
+import { startConversationWith } from '../utils/startConversationWith'
+import { AgentAvatar } from './shared/AgentAvatar'
 
 // 只有 teacher / design 有副标题,其余角色不展示 —— 一张 6 个角色、
 // 4 个是空对象的表没有存在价值。
@@ -57,27 +58,21 @@ export function WelcomePage({
 }: WelcomePageProps = {}) {
   const { t } = useTranslation()
   const { openMarkStudio, markStudio } = useAgentMarkStudio()
-  const { currentRole, allRoles, switchRole } = useAppStore()
-  const { sendMessage, conversationConfig, setConversationBrief, setConversationModelPreset, newConversationFromAgent, switchConversation } = useChatStore()
-  const agentTemplates = useAgentStore(s => s.templates)
-  const loadTemplates = useAgentStore(s => s.loadTemplates)
+  const { currentRole, allRoles, setCurrentRoleName } = useAppStore()
+  const { sendMessage, conversationConfig, setConversationBrief, setConversationModelPreset, switchConversation } = useChatStore()
+  const agents = useAppStore(s => s.agents)
+  const loadAgents = useAppStore(s => s.loadAgents)
+  // 我的 Pal（含模板）跟内置头像排在同一行：选谁就用谁开对话（统一身份第 4 段）
+  const myAgents = agents.filter(a => a.kind === 'pal')
 
-  // 选中的角色。欢迎页固定从通用头像开始,避免一进来就被某角色的 preflow(如 design)整页占满、隐藏头像切换器
-  const [selectedRole, setSelectedRole] = useState('general')
+  // 选中的角色住在 appStore.currentRole：新建对话 / 启动落通用头像页，点头像只改这个待定选择（不落盘、不切什么全局角色），
+  // 首条消息 ensureConversation 才把它钉成会话的 role；切到别的会话时 App 会用那条会话的 role 覆盖它（统一身份第 4 段）
+  const selectedRole = currentRole?.name || 'general'
   const roleName = selectedRole
-  // 新建对话 → 回到通用头像欢迎页(preflow 早返回会隐藏头像,不重置就困住)。
-  // 用 welcomeNonce(仅 newConversation 递增)精确侦测"新建对话";切角色走 initConversations 不改它,
-  // 避免之前"点头像切角色却跳回 general"的 bug(切角色改了 activeConversationId 误触发复位)
-  const welcomeNonce = useChatStore(s => s.welcomeNonce)
-  useEffect(() => { setSelectedRole('general') }, [welcomeNonce])
-  // 点头像 = 切本地预览 + 真正切全局角色(语音/路由读全局 currentRole)。仅 messages.length===0 时渲染,切不丢会话
-  const pickRole = useCallback((name: string) => { setSelectedRole(name); switchRole(name) }, [switchRole])
+  const pickRole = useCallback((name: string) => setCurrentRoleName(name), [setCurrentRoleName])
   const taglineKey = ROLE_TAGLINE[selectedRole]
   const roleDisplay = allRoles.find(r => r.name === selectedRole) || currentRole
-  const roleDisplayName = (role: { name: string; displayName?: string }): string => {
-    const key = getBuiltinRoleNameKey(role.name)
-    return key ? t(key) : (role.displayName || role.name)
-  }
+  const roleDisplayName = (role: { name: string; displayName?: string }): string => builtinDisplayName(t, role.name, role.displayName || role.name)
 
   const [input, setInput] = useState('')
   const [interpretLangs, setInterpretLangs] = useState<{ targetLanguages: string[]; current: string } | null>(null)
@@ -123,8 +118,11 @@ export function WelcomePage({
   const { handleFile, handleFileUpload } = useComposerFileIntake(
     (base64) => setImages(prev => [...prev, base64])
   )
+  // 拖文件：整窗都接，落进这个输入框（欢迎页没有消息列，亮的是输入框自己那圈边）
+  useWindowFileDrop({ onFilePath: (p) => { void handleFile(p) }, onImage: (b64) => setImages(prev => [...prev, b64]) })
+  const isDragOver = useWindowFileDragging()
 
-  useEffect(() => { loadTemplates() }, [])
+  useEffect(() => { void loadAgents() }, [])
   useEffect(() => {
     window.api.listSkills?.().then(setAllSkills).catch(() => {})
     refreshActiveModel()
@@ -285,10 +283,9 @@ export function WelcomePage({
           )}
         </div>
 
-        {/* 角色头像群 — 固定占位，选中放大；未选中保留原色并降低透明度，不给头像增加外框 */}
-        {/* flex-wrap 不是装饰:6 个 64px 头像 + 间距 ≈ 444px,挂靠态内容列只有 ~350px,
-            不换行就会横向溢出(底部冒出滚动条、两侧头像被裁)。 */}
-        <div className="flex flex-wrap items-center justify-center gap-8 mb-6">
+        {/* 角色头像群 — 固定占位，选中放大；未选中保留原色并降低透明度，不给头像增加外框。
+            一行排到底：放不下的从两侧半遮出去，点被遮住的那个就滚过去看更多（AvatarStrip）。 */}
+        <AvatarStrip className="mb-2">
           {/* 通用助手（默认） */}
           <div className="group relative h-11 w-11">
             <button
@@ -345,13 +342,36 @@ export function WelcomePage({
                   onClick={() => openMarkStudio({
                     roleName: role.name,
                     displayName: roleDisplayName(role),
-                    initial: role.mark as never,
+                    initial: resolveRoleMark(role), // 没捏过也从角色默认（红围脖等）起手，不从墨色空白起手
                   })}
                 />
               </div>
             )
           })}
-        </div>
+          {myAgents.length > 0 && (
+            <>
+              <span aria-hidden="true" className="h-8 w-px bg-surface-200" />
+              {myAgents.map(agent => (
+                <div key={agent.id} className="group relative h-11 w-11" data-testid="welcome-my-agent">
+                  <button
+                    onClick={() => { void startConversationWith(agent) }}
+                    className="flex h-11 w-11 items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+                    title={agent.name}
+                  >
+                    <AgentAvatar agent={agent} size={44} className="sw-welcome-avatar sw-welcome-avatar--inactive text-3xl" />
+                  </button>
+                  {agent.kind === 'pal' && (
+                    <MarkStudioAffordance
+                      size={16}
+                      label={t('agentMark.entry')}
+                      onClick={() => openMarkStudio({ scope: 'agent', roleName: agent.id, displayName: agent.name })}
+                    />
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+        </AvatarStrip>
 
         {/* 同传:目标语言选择(源语言自动识别)*/}
         {selectedRole === 'interpreter' && interpretLangs && (
@@ -386,7 +406,7 @@ export function WelcomePage({
         {/* 欢迎页底下没有消息流穿过去,所以这里用实心变体(官方 Composer 的
             glass={false})。玻璃只出现在有内容从底下流过去的地方 —— 这条克制
             正是玻璃在会话页里读得出来的原因。 */}
-        <div className="op-composer-solid relative z-10">
+        <div className={`op-composer-solid relative z-10 transition-shadow ${isDragOver ? 'op-composer--drop' : ''}`}>
           {pendingFileAttachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-4 pt-3">
               {pendingFileAttachments.map((file, i) => (
@@ -501,29 +521,74 @@ export function WelcomePage({
         {/* 工作目录 —— 欢迎页输入框上面还有欢迎语，只能往下贴 */}
         <WorkingDirBar placement="below" className="mb-5" />
 
-        {/* Agent 模板卡片 */}
-        {agentTemplates.length > 0 && (
-          <div className="mb-4">
-            <p className="text-[11px] text-surface-300 mb-2 px-1">
-              {t('welcome.templatesTitle')}
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {agentTemplates.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => newConversationFromAgent(PAL_BASE_ROLE, t.id, t.name)}
-                  className="flex flex-col items-start p-3 rounded-lg bg-surface-50 border border-surface-100 hover:border-brand-200 dark:hover:border-brand-700 transition-colors text-left"
-                >
-                  <span className="text-xl mb-1.5">{t.icon}</span>
-                  <span className="text-[13px] font-semibold text-surface-700">{t.name}</span>
-                  {t.description && <span className="text-[11px] text-surface-400 mt-0.5 line-clamp-2">{t.description}</span>}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
       {markStudio}
     </div>
   )
 }
+
+/**
+ * 头像横排条：一行排到底，放不下时两侧用渐变半遮住溢出的头像；点到被遮住的头像只是滚过去看它，不算选中。
+ * 挂靠态内容列只有 ~350px，六七个头像 + 间距远超一行——以前靠换行，现在靠这个条。
+ */
+function AvatarStrip({ className = '', children }: { className?: string; children: React.ReactNode }) {
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const [overflow, setOverflow] = useState({ left: false, right: false })
+  const EDGE = 28   // 渐变遮罩宽度，也是"算被遮住"的判据
+
+  // 左侧：滚过就算；右侧用最后一个头像的位置判，不用 scrollWidth——头像角上的捏头像小按钮是绝对定位的，会把它撑大几像素
+  const measure = useCallback(() => {
+    const el = scrollerRef.current
+    const last = el?.lastElementChild as HTMLElement | null
+    if (!el || !last) return
+    const left = el.scrollLeft > 0
+    const right = last.getBoundingClientRect().right > el.getBoundingClientRect().right + 1
+    setOverflow(prev => (prev.left === left && prev.right === right ? prev : { left, right }))
+  }, [])
+  // 只在头像个数变了时重量；欢迎页每次按键都会重渲，children 引用每次都是新的，不能当依赖
+  const childCount = Array.isArray(children) ? children.length : 1
+  useEffect(() => {
+    measure()
+    const el = scrollerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [measure, childCount])
+
+  // 被遮住的头像：先滚到它，不触发它自己的点击（capture 阶段拦下来）
+  const onClickCapture = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = scrollerRef.current
+    const btn = (e.target as HTMLElement).closest('button')
+    if (!el || !btn || !el.contains(btn)) return
+    const box = el.getBoundingClientRect()
+    const r = btn.getBoundingClientRect()
+    const hiddenLeft = overflow.left && r.left < box.left + EDGE
+    const hiddenRight = overflow.right && r.right > box.right - EDGE
+    if (!hiddenLeft && !hiddenRight) return
+    e.preventDefault()
+    e.stopPropagation()
+    btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+  }
+
+  const mask = overflow.left || overflow.right
+    ? `linear-gradient(to right, ${overflow.left ? 'transparent' : 'black'} 0, black ${EDGE}px, black calc(100% - ${EDGE}px), ${overflow.right ? 'transparent' : 'black'} 100%)`
+    : undefined
+  return (
+    <div
+      ref={scrollerRef}
+      onScroll={measure}
+      onClickCapture={onClickCapture}
+      data-testid="welcome-avatar-strip"
+      data-overflow-left={overflow.left ? '1' : undefined}
+      data-overflow-right={overflow.right ? '1' : undefined}
+      // 横向可滚就必然竖向裁切：配饰伸到身体外（耳机头梁、厨师帽最高到身体上方约二十像素），用上下 padding 把它们收进裁切框，
+      // 再用等量负 margin 抵掉，版面高度不变（所有者 2026-09-16：耳机头梁被条的上沿切平）
+      className={`flex items-center gap-8 overflow-x-auto op-no-scrollbar px-3 py-5 -my-4 ${className}`}
+      style={{ justifyContent: 'safe center', WebkitMaskImage: mask, maskImage: mask }}
+    >
+      {children}
+    </div>
+  )
+}
+

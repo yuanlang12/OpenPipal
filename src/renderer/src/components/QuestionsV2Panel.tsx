@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent as ReactDragEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Paperclip, X, FileText } from 'lucide-react'
 import { extractPastedImages } from '../utils/pasteImages'
 import { shouldOfferAiDecision } from '../chat/questionChoices'
@@ -46,6 +47,8 @@ interface Props {
   onCancel?: () => void
   /** 流式生成中:问题仍在逐个到达,提交禁用,底部显示「生成中」而非提交按钮 */
   streaming?: boolean
+  /** 给了挂载点就把「✓ 请你确认」portal 到产物页头行（与 预览/源码 同一行），自己不再占一行 */
+  toolbarHost?: HTMLElement | null
 }
 
 const OTHER = '__other__'
@@ -59,7 +62,7 @@ const OTHER = '__other__'
 /** 图片扩展名判定 —— 与 InputBar.isImageFile 同一组扩展 */
 const isImageFile = (name: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name)
 
-export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streaming }: Props) {
+export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streaming, toolbarHost }: Props) {
   const { t } = useTranslation()
   // 初始化默认值
   const [values, setValues] = useState<Record<string, any>>(() => {
@@ -288,21 +291,29 @@ export function QuestionsV2Panel({ title, questions, onSubmit, onCancel, streami
     </div>
   )
 
+  const headerLabel = (
+    <div className="flex items-center gap-1.5 min-w-0" data-testid="questions-confirm-label">
+      <span className="text-[11px] text-surface-400">✓</span>
+      <span className="text-xs text-surface-500 truncate">{t('chat.questions.confirmTitle')}</span>
+    </div>
+  )
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-surface-0 dark:bg-surface-50">
-      {/* 顶栏 —— 只是身份标识：大标题在内容区，这里不必再喊一遍，收到 h-9 把空间还给问题 */}
-      <div className="h-9 shrink-0 flex items-center justify-between px-4 border-b border-surface-100">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-[11px] text-surface-400">✓</span>
-          <span className="text-xs text-surface-500 truncate">{t('chat.questions.confirmTitle')}</span>
-        </div>
-        {onCancel && (
-          <button
-            onClick={onCancel}
-            className="text-xs text-surface-400 hover:text-surface-600"
-          >{t('chat.questions.close')}</button>
+      {/* 身份标识「✓ 请你确认」：有产物页头行就并进去（与 预览/源码 同一行，省一行），没有才自己占一行 */}
+      {toolbarHost
+        ? createPortal(headerLabel, toolbarHost)
+        : (
+          <div className="h-9 shrink-0 flex items-center justify-between px-4 border-b border-surface-100">
+            {headerLabel}
+            {onCancel && (
+              <button
+                onClick={onCancel}
+                className="text-xs text-surface-400 hover:text-surface-600"
+              >{t('chat.questions.close')}</button>
+            )}
+          </div>
         )}
-      </div>
 
       {/* 内容列限宽：面板拉宽时正文不该跟着拉到一行上千像素——读一行要转头 */}
       <div className="flex-1 overflow-y-auto min-h-0 px-5 py-5">

@@ -22,7 +22,7 @@ export function PendingMessageStack() {
   const removePending = useChatStore(s => s.removePending)
   const sendPendingNow = useChatStore(s => s.sendPendingNow)
   const currentRole = useAppStore(s => s.currentRole)
-  const roleName = currentRole?.name || 'learner'
+  const roleName = currentRole?.name || 'general'
 
   if (pendingMessages.length === 0) return null
 

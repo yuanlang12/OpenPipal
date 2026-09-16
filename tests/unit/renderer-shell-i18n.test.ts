@@ -141,10 +141,10 @@ describe('renderer shell i18n', () => {
     const welcome = read('src/renderer/src/components/WelcomePage.tsx')
 
     expect(sidebar).toContain('{getConversationDisplayTitle(conv, t)}')
-    expect(switcher).toContain('activeWorkspace.name')
-    expect(switcher).toContain('{w.name}')
-    expect(welcome).toContain('{t.name}')
-    expect(welcome).toContain('{t.description')
+    expect(switcher).toContain('activeAgent.name')
+    expect(switcher).toContain('{agent.name}')
+    // 欢迎页头像行里的 Pal / 模板：名字只进 title，不进翻译
+    expect(welcome).toContain('title={agent.name}')
   })
 
   it('keeps migrated text buttons content-sized or fluid', () => {

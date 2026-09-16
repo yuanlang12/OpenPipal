@@ -13,7 +13,7 @@ const read = (rel: string): string => readFileSync(join(__dirname, '../..', rel)
 describe('hook_notice 链路', () => {
   it('运行时：写文件探针把结论推进事件队列并回给模型', () => {
     const runtime = read('src/main/agent-runtime/pi-core-runtime.ts')
-    expect(runtime).toMatch(/probeWrittenFile:\s*async \(toolName, args\)/)
+    expect(runtime).toMatch(/probeWrittenFile:\s*async \(toolName, args, toolCallId\)/)
     expect(runtime).toMatch(/eventQueue\.push\(\{ type: 'hook_notice', notice \}\)/)
     expect(runtime).toMatch(/formatHookNoticeForModel/)
     // 后台（set_rule → Evolver）正在写规则时，shell 探针只刷基线不报——否则后台写的文件会被当成本轮模型建的

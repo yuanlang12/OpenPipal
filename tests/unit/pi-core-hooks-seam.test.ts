@@ -36,7 +36,7 @@ describe('pi-core-runtime 规则接线', () => {
     const block = runtime.slice(runtime.indexOf('createHookToolCaller({'), runtime.indexOf('if (hookChain && hasHandlers(hookChain, \'before_agent_start\'))'))
     expect(block).toMatch(/tools: builtTools\.tools/)
     expect(block).toMatch(/onConfirmation: permissionHandler/)
-    expect(block).toMatch(/scope: \{ workspaceId: workspace\.workspaceId, workingDir: workspace\.workingDir \}/)
+    expect(block).toMatch(/scope: \{ workspaceId: workspace\.workspaceId, workingDir: workspace\.workingDir, teamId: overrides\?\.teamId \}/)
     expect(block).toMatch(/tier: overrides\?\.permissionTier/)
   })
 

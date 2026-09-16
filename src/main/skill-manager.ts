@@ -40,6 +40,7 @@ import {
   getSkillsConfigPath,
   getUserSkillsDir,
   listGlobalSkillDirs, isAgentWideSkillFile } from './openpipal-skill-sources'
+import { getAgent } from './agent-registry'
 import { SKILL_USAGE_NUDGE } from './skill-prompt-policy'
 import { getDataRoot } from './data-root'
 
@@ -331,18 +332,20 @@ function scanBuiltInRoleSkills(roleName: string): PiSkill[] {
 function resolveSkillScope(options: {
   workspaceId?: string
   roleName?: string
+  agentId?: string
 } = {}): Array<{ skill: PiSkill; enabled: boolean }> {
   // 每轮对话开头重扫——目录小、本地盘、几毫秒可接受；避免"放新技能文件夹后必须重启才生效"
   scanAllSkills()
 
-  // 独立智能体：自己的目录 + 声明了 agent-scope: all 的全局技能
+  // 独立智能体：自己的目录 + 全局里自荐（agent-scope: all）或被它点名（frontmatter skills:）的技能
   if (options.workspaceId) {
     const own = scanAgentSkills(options.workspaceId)
     const ownNames = new Set(own.map(s => s.name))
+    const named = new Set(getAgent(options.agentId ?? options.workspaceId)?.policies.skills ?? [])
     return [
       ...own.map(skill => ({ skill, enabled: true })),
       ...piSkills
-        .filter(s => !ownNames.has(s.name) && isAgentWideSkill(s))
+        .filter(s => !ownNames.has(s.name) && (named.has(s.name) || isAgentWideSkill(s)))
         .map(skill => ({ skill, enabled: isSkillEnabled(skill.name) }))
     ]
   }

@@ -361,3 +361,14 @@ test.describe('design preflow — Claude Design 风首页', () => {
     console.log('[preflow-t9] 画廊选用这套 → 选用生效 + overlay 关闭 - 通过')
   })
 })
+
+test('preflow 左上角色标识：mark 裸画成圆角方，不套圆裁切（所有者 2026-09-16）', async ({ page }) => {
+  await bootToDesignPreflow(page)
+  const mark = page.getByTestId('preflow-composer').locator('svg.sw-agent-mark').first()
+  await expect(mark).toBeVisible()
+  expect(await mark.evaluate(el => ({
+    size: el.getBoundingClientRect().width,
+    clipped: /rounded-full|overflow-hidden/.test(el.parentElement?.className ?? ''), // 直接父级不套圆、不裁切（整列的 overflow 不算）
+  }))).toEqual({ size: 28, clipped: false })
+  await mark.screenshot({ path: `${ARTIFACTS_DIR}/role-mark-header.png` })
+})

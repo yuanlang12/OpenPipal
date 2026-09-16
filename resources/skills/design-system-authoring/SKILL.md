@@ -266,7 +266,7 @@ frame-src 'none';  worker-src 'none';  form-action 'none';  base-uri 'none';  sa
   把"仍被踩且未解决"的项列到工具返回值里。别手写、别删。
 - **不用自己截图。** `render_artifact` 自检会渲染页面、回传 console 错误/警告、跑一遍文本重叠检测
   （最多 5 条）、抓一段页面文本摘要，并把截图**作为 image block 直接内联在工具结果里**回给你
-  （`openpipal-product-tools.ts:730-784`；截图同时存到 `~/.openpipal/outputs/.self-check/`，
+  （`openpipal-product-tools.ts:730-784`；截图同时存到本会话的 `~/.openpipal/outputs/<会话id>/.self-check/`（路径在结果里），
   那份是给人看的）。你不需要、也不应该去 read 那个 png 文件。
   两种降级会明说：模型不支持看图、或图太大（base64 超 600KB）时只给文本摘要。
 - **不用给画廊单独做缩略图。** 根目录的 `thumbnail.html` 只被记进 manifest 的 `hasThumbnailHtml`，

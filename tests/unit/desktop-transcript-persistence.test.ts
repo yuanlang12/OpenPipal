@@ -168,13 +168,13 @@ describe('desktop transcript persistence barrier', () => {
   it('pins memory extraction to the conversation role captured at execution start', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/main/ipc-handlers.ts'), 'utf8')
     expect(source).toContain(
-      'executionRoleName = overrides?.roleName || getCurrentRole().name'
+      'executionRoleName = overrides?.roleName || DEFAULT_AGENT_ID'
     )
     expect(source).toContain(
-      "const roleName = capturedRoleName || (conversationId ? peekConversation(conversationId)?.role : undefined) || getCurrentRole().name"
+      "const roleName = capturedRoleName || (conversationId ? peekConversation(conversationId)?.role : undefined) || DEFAULT_AGENT_ID"
     )
     expect(source).toContain('executeExtraction(messages, conversationId || null, executionRoleName!')
-    expect(source).not.toMatch(/executeExtraction\(messages, conversationId \|\| null, getCurrentRole\(\)\.name/)
+    expect(source).not.toMatch(/executeExtraction\(messages, conversationId \|\| null, getDefaultRole\(\)\.name/)
   })
 
   it('rejects a desktop turn without a durable conversation id before Runtime acquisition', () => {

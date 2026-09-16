@@ -11,11 +11,11 @@ import { describe, expect, it } from 'vitest'
 
 const COMPONENTS = 'src/renderer/src/components'
 /** 画 Pal 身份的每一处 → 该用哪个组件 */
-const PAL_SURFACES: Array<[file: string, component: 'WorkspaceAvatar' | 'ConversationAvatar']> = [
+const PAL_SURFACES: Array<[file: string, component: 'WorkspaceAvatar' | 'ConversationAvatar' | 'AgentAvatar']> = [
   ['Sidebar.tsx', 'ConversationAvatar'],
   ['HistoryPopover.tsx', 'ConversationAvatar'],
   ['ConversationList.tsx', 'ConversationAvatar'],
-  ['AgentSwitcher.tsx', 'WorkspaceAvatar'],
+  ['AgentSwitcher.tsx', 'AgentAvatar'],
   ['AgentWorkspaceInspector.tsx', 'WorkspaceAvatar'],
   ['ChatPanel.tsx', 'WorkspaceAvatar'],
   ['TaskEditor.tsx', 'WorkspaceAvatar'],

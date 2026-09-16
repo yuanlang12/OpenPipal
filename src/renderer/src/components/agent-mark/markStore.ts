@@ -14,11 +14,14 @@ import type { MarkShape } from './geometry'
  * 查不到就返回 undefined，调用方回落到角色默认 / workspace 自己的 emoji。
  */
 
-export type MarkScope = 'role' | 'agent'
+export type MarkScope = 'role' | 'agent' | 'team'
 
 export interface MarkOverride {
   accessory?: AccessoryId
+  /** 身体色 */
   hue?: MarkHue
+  /** 配饰色；不给 = 按搭配表取身体色的搭子 */
+  accent?: MarkHue
   /** 身体轮廓；不给 = 圆角方 */
   shape?: MarkShape
 }

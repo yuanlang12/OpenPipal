@@ -108,13 +108,13 @@ vi.mock('../../src/main/memory-store', () => ({
 }))
 vi.mock('../../src/main/role-manager', () => ({
   initRoles: vi.fn(),
-  switchRole: vi.fn(),
   getAllRoles: vi.fn(() => []),
-  getCurrentRole: vi.fn(() => ({ name: state.currentRoleName })),
+  getDefaultRole: vi.fn(() => ({ name: state.currentRoleName })),
   getRoleConfig: vi.fn((roleName: string) => ['general', 'design', 'office', 'learner', 'teacher', 'translator'].includes(roleName)
     ? { name: roleName }
     : null),
   getRoleAssetsDir: vi.fn(() => '/tmp'),
+  getRoleAssetsRoot: vi.fn(() => '/tmp'),
   getDisabledApps: vi.fn(() => state.disabledApps),
   getDetectedApps: vi.fn(() => []),
   getDetectedAppLabels: vi.fn(() => ({})),

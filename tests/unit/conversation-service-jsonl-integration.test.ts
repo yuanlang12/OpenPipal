@@ -109,8 +109,9 @@ describe('Conversation Service JSONL product integration', () => {
     const restored = await restarted.getConversation(fresh.id)
     expect(restored).toMatchObject({
       id: fresh.id,
-      role: 'design',
-      agentId: 'design-agent',
+      // 带 workspaceId 的会话 role 槽位一律默认角色（存储层收的不变量：Pal 不借内置角色的闸门）；
+      // 模板并入 Pal 后 agentId 不再落盘：认不出是 Pal 的老 id 丢掉，workspaceId 才是身份
+      role: 'general',
       workspaceId: 'workspace-1',
       config: {
         workingDir: '/tmp/project',

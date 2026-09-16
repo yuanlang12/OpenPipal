@@ -35,11 +35,20 @@ export interface AgentOverrides {
    * conversation may switch it concurrently.
    */
   roleName?: string
+  /**
+   * 统一的 Agent 身份（内置名或 Pal id，见 agent-registry）。本次执行的提示词 / 技能 / 工具 / 声明都从它的档案取；
+   * roleName / workspaceId 是过渡期的老字段，逐步退场。
+   */
+  agentId?: string
   tools?: string[]
   workingDir?: string
   conversationId?: string
   /** Workspace Agent ID — enables workspace-scoped skills and resources. */
   workspaceId?: string
+  /** 团队话题：这条会话属于哪个团队（teams/<id>/）；建会话时定、之后不可改。有它才叠团队层与团队租户规则 */
+  teamId?: string
+  /** 团队里的频道（teams/<id>/channels/<name>/）；没有 = 单频道团队 */
+  channel?: string
   /** Conversation-scoped structured context injected by OpenPipal. */
   roleBrief?: Record<string, Record<string, any>>
   initialAssets?: Array<{

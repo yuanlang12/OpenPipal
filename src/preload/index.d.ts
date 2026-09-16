@@ -1,4 +1,5 @@
 import type { UpdateCheckResult } from '../shared/update-contract'
+import type { AgentSummary } from '../shared/agent-identity'
 import { ElectronAPI } from '@electron-toolkit/preload'
 import type { LocalePreference, LocaleState } from '../shared/i18n/contract'
 import type { AppFollowingUpdateResult, AppSettingsState } from '../shared/app-following-contract'
@@ -82,14 +83,18 @@ interface LayoutManifest {
   chatSidebarWidth?: number
 }
 
-type MarkScope = 'role' | 'agent'
+type MarkScope = 'role' | 'agent' | 'team'
 
 /** 捏头像存的东西：一件配饰 + 一个色号。眼型是核心符号，不存也不许改。 */
 interface MarkManifest {
   accessory?: string
+  /** 身体色 */
   hue?: string
+  /** 配饰色 */
+  accent?: string
   shape?: string
 }
+
 
 interface RoleInfo {
   name: string
@@ -158,13 +163,14 @@ interface OpenPipalAPI {
   onTargetStatus: (callback: (status: TargetAppStatus) => void) => () => void
   onAppChanged: (callback: (appName: string, displayName: string) => void) => () => void
   // 角色管理
-  getRoleInitState: () => Promise<{ hasRole: boolean; role: RoleInfo }>
   getAllRoles: () => Promise<RoleInfo[]>
+  /** 统一身份：内置 → Pal 一份列表 */
+  listAgents: () => Promise<AgentSummary[]>
+  /** 把内置 Agent 复制成自己的 Pal（人设 + 它声明的行为 + 点名它的专属技能）；不是内置的返回 null */
+  copyBuiltinAsPal: (id: string) => Promise<{ id: string; name: string } | null>
   /** 捏头像：scope='role' 内置角色 / scope='agent' 用户自建 Agent，都是文件式 opt-in */
   getMark: (scope: MarkScope, id: string) => Promise<MarkManifest | null>
   saveMark: (scope: MarkScope, id: string, config: MarkManifest) => Promise<boolean>
-  getCurrentRole: () => Promise<RoleInfo>
-  switchRole: (roleName: string) => Promise<RoleInfo | null>
   // 设置
   /** Windows 自绘窗口按钮与不透明窗底色对齐；浏览器插件的 shim 没有这三个，调用方用可选调用 */
   minimizeWindow?: () => Promise<void>
@@ -177,12 +183,14 @@ interface OpenPipalAPI {
   getAcpStatus: () => Promise<AcpStatus>
   /** 主进程推"状态变了"，渲染层再自己来取快照 */
   onAcpStatusChanged: (callback: () => void) => () => void
+  /** 团队目录变了（组长在话题里改名 / 写章程 / 建成员、团队记忆落盘）：渲染层重新拉团队与 Pal 列表 */
+  onTeamChanged?: (callback: (teamId: string) => void) => () => void
   getLocaleState: () => Promise<LocaleState>
   setLocalePreference: (preference: LocalePreference) => Promise<LocaleState>
   onLocaleChanged: (callback: (state: LocaleState) => void) => () => void
   // 对话管理
   listConversations: () => Promise<any[]>
-  createConversation: (role: string, title?: string, agentId?: string) => Promise<any>
+  createConversation: (role: string, title?: string, agentId?: string, workspaceId?: string, team?: { teamId: string; channel?: string }) => Promise<any>
   getConversation: (id: string) => Promise<any>
   getConversationMessages: (id: string) => Promise<any[]>
   appendMessages: (id: string, messages: any[]) => Promise<any>
@@ -254,7 +262,7 @@ interface OpenPipalAPI {
   clearSearchConfig: () => Promise<{ ok: boolean }>
   testSearchConnection: (apiKey?: string) => Promise<{ ok: boolean; errorKey?: string; errorParams?: Record<string, string> }>
   // Realtime Voice
-  getRealtimeConfig: () => Promise<{
+  getRealtimeConfig: (roleName?: string) => Promise<{
     provider: string
     url: string
     model: string
@@ -340,15 +348,16 @@ interface OpenPipalAPI {
   getTodayUsage?: () => Promise<Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }>>
   // 对话标题更新通知
   onTitleUpdated?: (callback: (id: string, title: string) => void) => () => void
-  // Agent 模板
-  listAgentTemplates?: () => Promise<any[]>
-  getAgentTemplate?: (id: string) => Promise<any>
-  createAgentTemplate?: (data: any) => Promise<any>
-  updateAgentTemplate?: (id: string, data: any) => Promise<any>
-  deleteAgentTemplate?: (id: string) => Promise<any>
   // Agent Workspace
   listAgentWorkspaces?: () => Promise<any[]>
   getAgentWorkspace?: (id: string) => Promise<any>
+  listTeams?: () => Promise<any[]>
+  foundTeam?: () => Promise<any>
+  getTeam?: (id: string) => Promise<any>
+  createTeam?: (data: { name: string; members: string[]; lead?: string; tier?: 'readonly' | 'auto' | 'full'; charter?: string }) => Promise<any>
+  writeTeamMd?: (id: string, content: string) => Promise<{ ok: boolean }>
+  deleteTeam?: (id: string) => Promise<{ ok: boolean }>
+  readTeamFile?: (id: string, relPath: string) => Promise<string | null>
   createAgentFromConversation?: (conversationId: string) => Promise<any>
   deleteAgentWorkspace?: (id: string) => Promise<any>
   /** 全局作品文件索引；只在用户打开作品时调用。 */
@@ -376,6 +385,8 @@ interface OpenPipalAPI {
   toggleTask?: (id: string, enabled: boolean) => Promise<any>
   triggerTaskNow?: (id: string) => Promise<{ ok: boolean; error?: string }>
   onTaskExecuted?: (callback: (taskId: string, result: any, silent?: boolean) => void) => () => void
+  /** 跨会话：别的对话发来消息、本对话跑完一轮回复 */
+  onPeerTurn?: (callback: (conversationId: string, from: string) => void) => () => void
   // 记忆更新通知
   /** 记忆提取 / 整理的结论：落到 conversationId 那个会话的胶囊，空 = 当前会话 */
   onMemoryUpdated?: (callback: (conversationId: string | null, notice: MemoryNotice) => void) => () => void

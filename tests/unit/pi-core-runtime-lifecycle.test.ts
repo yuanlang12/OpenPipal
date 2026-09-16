@@ -22,7 +22,8 @@ const state = vi.hoisted(() => ({
   modelFactoryOptions: [] as any[],
   loadSkills: async () => ({ skills: [], promptSection: '' }),
   goalResults: [] as any[],
-  compact: undefined as any
+  compact: undefined as any,
+  budget: { contextWindow: 128_000, budget: 100_000 }
 }))
 
 vi.mock('../../src/main/agent-overrides', () => ({
@@ -103,7 +104,7 @@ vi.mock('../../src/main/agent-runtime/pi-core-skills', () => ({
 
 vi.mock('../../src/main/history-compactor', () => ({
   compactHistoryForModel: (...args: any[]) => state.compact(...args),
-  getContextBudget: () => ({ contextWindow: 128_000, budget: 100_000 }),
+  getContextBudget: () => state.budget,
   recordMeasuredPromptTokens: (...args: unknown[]) => state.measured.push(args)
 }))
 
@@ -142,6 +143,7 @@ describe('pi-core Runtime lifecycle', () => {
     models.setProvider(faux.provider)
     state.model = faux.getModel()
     state.models = models
+    state.budget = { contextWindow: 128_000, budget: 100_000 }
     state.usageRecords = []
     state.measured = []
     state.tools = []
@@ -601,6 +603,8 @@ describe('pi-core Runtime lifecycle', () => {
   })
 
   it('never replays an overflowed turn after tool activity', async () => {
+    // 溢出要有证据：faux 按提示字符估算载荷，把窗口压到几十 token 让它贴着窗口。载荷远没到窗口的 length 空回复不算溢出（见 empty-completion-guard）
+    state.budget = { contextWindow: 40, budget: 30 }
     let executed = 0
     let forcedCompactions = 0
     state.tools = [{
@@ -639,6 +643,43 @@ describe('pi-core Runtime lifecycle', () => {
     expect(events.filter((event) => event.type === 'error')).toEqual([
       expect.objectContaining({ content: expect.stringContaining('避免自动重放') })
     ])
+  })
+
+  it('2026-09-10 实撞：载荷远没到窗口的 length 空回复是输出被截断，走续跑让模型重发，不报窗口上限', async () => {
+    let executed = 0
+    let forcedCompactions = 0
+    state.tools = [{
+      name: 'read',
+      label: 'read',
+      description: 'read',
+      parameters: Type.Object({}),
+      executionMode: 'sequential',
+      async execute() {
+        executed += 1
+        return { content: [{ type: 'text', text: 'evidence' }], details: {} }
+      }
+    }]
+    state.compact = async (history: unknown[], _c?: string, _cfg?: unknown, options?: { force?: boolean }) => {
+      if (options?.force) forcedCompactions += 1
+      return history
+    }
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('read', {}, { id: 'call-first' }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage('', { stopReason: 'length' }),
+      fauxAssistantMessage(fauxToolCall('read', {}, { id: 'call-reissued' }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage('done')
+    ])
+
+    const events = await collect(createPiCoreAgentRuntime().agentChat(
+      [{ role: 'user', content: 'run' }],
+      undefined,
+      'desktop',
+      { systemPrompt: 'system', conversationId: 'conv-truncated-output' }
+    ))
+
+    expect(events.filter((event) => event.type === 'error')).toEqual([])
+    expect(forcedCompactions).toBe(0)
+    expect(executed).toBe(2)
   })
 
   it('cancels background goal work when the event consumer closes early', async () => {

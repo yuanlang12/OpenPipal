@@ -19,7 +19,7 @@ import { buildInterpretTranscriptArchive } from '../chat/voiceArchiveDisplay'
 declare global {
   interface Window {
     api: {
-      getRealtimeConfig: () => Promise<{ url: string; model: string; hasKey: boolean }>
+      getRealtimeConfig: (roleName?: string) => Promise<{ url: string; model: string; hasKey: boolean }>
       startRealtime: (ctx?: { conversationId?: string; agentId?: string; workspaceId?: string; conversationConfig?: any }) => Promise<{ success: boolean; error?: string }>
       stopRealtime: () => void
       sendRealtimeEvent: (event: any) => void
@@ -455,11 +455,13 @@ export function useRealtimeVoice() {
   )
 
   /** 检查语音功能是否可用 */
+  // 按这条会话的角色问：同传的豆包通道只对 interpreter 开，换会话 / 换角色要重问
+  const voiceRoleName = useAppStore(s => s.currentRole?.name)
   useEffect(() => {
-    window.api.getRealtimeConfig().then((config) => {
+    window.api.getRealtimeConfig(voiceRoleName).then((config) => {
       setVoiceAvailable(config.hasKey)
     })
-  }, [])
+  }, [voiceRoleName])
 
   /** 启动语音会话 */
   const startSession = useCallback(async () => {
@@ -468,7 +470,7 @@ export function useRealtimeVoice() {
     setSessionState('connecting')
 
     // 确保有 active conversation —— transcripts 将作为 chat 消息流入
-    const currentRoleName = useAppStore.getState().currentRole?.name || 'learner'
+    const currentRoleName = useAppStore.getState().currentRole?.name || 'general'
     await useChatStore.getState().ensureVoiceConversation(currentRoleName)
 
     // 捕获已有聊天历史 —— session 就绪后注入，让语音模型带上下文（取最近 12 条纯文本 user/assistant 消息）
@@ -507,7 +509,6 @@ export function useRealtimeVoice() {
     const cs = useChatStore.getState()
     const result = await window.api.startRealtime({
       conversationId: cs.activeConversationId || undefined,
-      agentId: cs.activeAgentId || undefined,
       workspaceId: cs.activeWorkspaceId || undefined,
       conversationConfig: cs.conversationConfig || undefined
     })

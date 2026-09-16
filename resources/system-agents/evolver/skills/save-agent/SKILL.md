@@ -153,15 +153,18 @@ Never use `read`, `grep`, `find`, `ls`, `bash`, or code execution on the applica
 
 ### 7. meta.json — Update identity
 
-Read the existing meta.json, then update name, icon, and description:
+Read the existing meta.json, then update name, icon, description, and category:
 
 ```json
 {
   "name": "2-6 character Agent name",
   "icon": "relevant emoji",
-  "description": "one-line description (≤15 chars)"
+  "description": "one-line description (≤15 chars)",
+  "category": "one of: general, education, office, language, design, coding — or, if none fits, a single plain word in the user's language (≤4 chars)"
 }
 ```
+
+`category` groups the Agent on the "My Pals" page. Prefer one of the listed keys (they carry translated labels); a custom word becomes its own group.
 
 Use `read` then `edit` to update `{workspace}/meta.json`.
 
@@ -174,4 +177,4 @@ Use `read` then `edit` to update `{workspace}/meta.json`.
 5. Write skill files (reusable patterns)
 6. Update tools/config.json (if tools were used)
 7. Migrate scheduled tasks (if any match — see section 6 above)
-8. Update meta.json name/icon/description
+8. Update meta.json name/icon/description/category

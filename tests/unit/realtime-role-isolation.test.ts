@@ -43,7 +43,7 @@ vi.mock('../../src/main/config-manager', () => ({
   getDoubaoVoiceConfig: () => state.doubaoConfig
 }))
 vi.mock('../../src/main/role-manager', () => ({
-  getCurrentRole: () => ({ name: state.currentRole })
+  getDefaultRole: () => ({ name: state.currentRole })
 }))
 vi.mock('../../src/main/agent-overrides', () => ({
   resolveAgentOverrides: ({ conversationId }: { conversationId?: string }) => ({

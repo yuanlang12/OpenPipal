@@ -89,6 +89,8 @@ export interface WorkspaceMeta {
   name: string
   icon: string
   description: string
+  /** 分类：内置键（general / education / office / language / design / coding）或用户自己的一个词；没有 = 未分类 */
+  category?: string
   sourceConversationId?: string
   triggers?: WorkspaceTrigger[]
   createdAt: number
@@ -100,6 +102,7 @@ export interface WorkspaceSummary {
   name: string
   icon: string
   description: string
+  category?: string
   createdAt: number
   updatedAt: number
   memoryCount: number
@@ -143,14 +146,20 @@ export function getWorkspacesRootDir(): string {
   return WORKSPACES_DIR
 }
 
-/** 只读 meta.json 拿名字，不像 getWorkspace 那样把 agent.md 和记忆全读出来 */
-export function getWorkspaceName(id: string): string | undefined {
+/** 只读 meta.json（不读 agent.md / 记忆 / 技能）；不是 Pal 或文件坏了返回 undefined */
+export function readWorkspaceMeta(id: string): WorkspaceMeta | undefined {
   try {
-    const meta: WorkspaceMeta = JSON.parse(readFileSync(metaPath(id), 'utf-8'))
-    return typeof meta.name === 'string' && meta.name.trim() ? meta.name : undefined
+    const meta = JSON.parse(readFileSync(metaPath(id), 'utf-8')) as WorkspaceMeta
+    return meta && typeof meta === 'object' && meta.id === id ? meta : undefined
   } catch {
     return undefined
   }
+}
+
+/** 只读 meta.json 拿名字，不像 getWorkspace 那样把 agent.md 和记忆全读出来 */
+export function getWorkspaceName(id: string): string | undefined {
+  const name = readWorkspaceMeta(id)?.name
+  return typeof name === 'string' && name.trim() ? name : undefined
 }
 
 function metaPath(id: string): string {
@@ -175,6 +184,7 @@ export interface AgentToolsConfig {
   workingDir?: string
   mcpServers?: string[]        // 白名单：只允许这些 MCP server 的工具（空数组 = 全部允许）
   disabledTools?: string[]     // 黑名单：禁用这些内置工具
+  enabledTools?: string[]      // 加法开关：内置角色默认有、独立 Pal 要点名才有的工具（role-manager PAL_OPT_IN_TOOLS，如 conversations）
 }
 
 const DEFAULT_TOOLS_CONFIG: AgentToolsConfig = {}
@@ -273,15 +283,19 @@ export function createWorkspace(data: {
   name: string
   icon: string
   description: string
+  category?: string
   sourceConversationId?: string
+  /** 只给迁移用（模板并入 Pal 时 id 不变，老会话 / 任务里的引用照样认得出） */
+  id?: string
 }): WorkspaceMeta {
   ensureDir(WORKSPACES_DIR)
   const now = Date.now()
   const meta: WorkspaceMeta = {
-    id: randomUUID(),
+    id: data.id || randomUUID(),
     name: data.name,
     icon: data.icon,
     description: data.description,
+    ...(data.category ? { category: data.category } : {}),
     sourceConversationId: data.sourceConversationId,
     createdAt: now,
     updatedAt: now
@@ -344,6 +358,7 @@ export function listWorkspaces(): WorkspaceSummary[] {
         name: meta.name,
         icon: meta.icon,
         description: meta.description,
+        ...(typeof meta.category === 'string' && meta.category.trim() ? { category: meta.category.trim() } : {}),
         createdAt: meta.createdAt,
         updatedAt: meta.updatedAt,
         memoryCount,
@@ -392,6 +407,15 @@ export function deleteWorkspace(id: string): boolean {
 
   rmSync(dir, { recursive: true, force: true })
   console.log(`[Workspace] 删除: ${id.substring(0, 8)}`)
+  return true
+}
+
+/** 改 Pal 的名字（meta.json）；团队改名时默认命名的组长跟着改 */
+export function renameWorkspace(id: string, name: string): boolean {
+  const meta = readWorkspaceMeta(id)
+  const next = name.trim()
+  if (!meta || !next) return false
+  writeFileSync(metaPath(id), JSON.stringify({ ...meta, name: next, updatedAt: Date.now() }, null, 2))
   return true
 }
 

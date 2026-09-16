@@ -7,7 +7,8 @@
 
 import { Type } from 'typebox'
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core'
-import { resolveExecutionRoleName } from './agent-overrides'
+import { resolveExecutionAgent, resolveExecutionRoleName } from './agent-overrides'
+import type { AgentPolicies } from './agent-registry'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -30,14 +31,14 @@ import { createBrowserControlTools, isBrowserControlAvailable } from './browser-
 // Stage 2: skill-manager 的 load/write helpers 不再被 pi-tools 使用
 // AI 通过通用 read/write 工具完成 skill 加载和创建
 import { getActiveContext, formatContext } from './accessibility'
-import { isToolAllowed, getRoleConfig, getDsReview } from './role-manager'
+import { getDsReview } from './role-manager'
 import { READONLY_TIER_TOOLS, type PermissionTier } from './pi-security'
 import {
   listConversationArtifacts,
-  compileJsxArtifact, findSimilarArtifact, coarseTypeFromFile, normalizeArtifactLanguage
+  compileJsxArtifact, findSimilarArtifact, coarseTypeFromFile, normalizeArtifactLanguage,
+  artifactFilePath
 } from './artifact-store'
 import { getArtifactStore, evaluateArtifactWriteGuard, buildExternalEditEvidence } from './artifact-registry'
-import { containsReceiptPlaceholder } from './tool-content-compactor'
 import { fileToolHint } from './file-tool-hint'
 import { compileDesignSystem } from './ds-compile'
 import { inlineDcForHeadless } from './dc-headless'
@@ -51,9 +52,15 @@ import {
 import { getTaskSchedulerControl } from './task-scheduler-control'
 import type { ChildAgentUpdate } from './subagent-runner'
 import { describeAvailableProfiles, listSubagentProfiles } from './subagent-manager'
+import {
+  addTeamMember, createTeamMember, readTeam, removeTeamMember, renameTeam, resolveTeamScope, setTeamLead, updateTeamMd
+} from './team-store'
+import { ACCESSORY_HINTS, PAL_ACCESSORIES } from '../shared/agent-mark-catalog'
+import { listWorkspaces } from './agent-workspace-store'
+import { formatPeerList, listPeerConversations, readPeerConversation, sendPeerMessage } from './conversation-peer'
 import { capInsert, computeStickyInclude } from './prompt-cache-fifo'
 import { normalizeQuestionsPanelTitle, normalizeQuestionsV2Items } from './pi-event-adapter'
-import { exportArtifactPdf, exportStandaloneHtml, exportZip, exportDcBundle } from './dc-export'
+import { dcRuntimeDir, exportArtifactPdf, exportStandaloneHtml, exportZip, exportDcBundle } from './dc-export'
 import { exportArtifactMp4 } from './dc-video-export'
 import { exportArtifactPptx } from './dc-pptx-export'
 import { exportArtifactHandoff } from './dc-handoff-export'
@@ -61,7 +68,7 @@ import { mp4FormatGateMessage, pptxFormatGateMessage, handoffFormatGateMessage, 
 import { sliceArtifactContent, formatArtifactReadHeader, formatArtifactTruncationNote, formatArtifactOffsetOutOfRangeNote } from './read-artifact-slice'
 import type { ChatSource } from './agent-runtime/contracts'
 import { createSetRuleTool } from './hooks/set-rule-tool'
-import { dataPath } from './data-root'
+import { dataPath, outputsDirFor } from './data-root'
 import { getBuiltInSkillsDir } from './openpipal-skill-sources'
 import { resolveCodeExecutionLanguage } from './code-execution-language'
 import { isRenderArtifactConsoleNoise } from './render-artifact-diagnostics'
@@ -482,10 +489,6 @@ function createEditArtifactTool(conversationId?: string): AgentTool {
     }),
     execute: async (_id, params) => {
       const p = params as any
-      // 回执门闩：new_string 不得是压缩回执占位（old_string 允许——修复受损产物要靠它匹配）
-      if (containsReceiptPlaceholder(p.new_string)) {
-        return { content: [{ type: 'text', text: `已拒绝：new_string 里包含"[内容已保存…]"占位回执——那是上下文压缩标记不是正文。请先 read_artifact(id) 取回真实内容再编辑。` }], details: {} }
-      }
       const resolved = resolveArtifactId(p.id, conversationId)
       if ('error' in resolved) {
         return { content: [{ type: 'text', text: resolved.error }], details: {} }
@@ -536,7 +539,7 @@ function createEditArtifactTool(conversationId?: string): AgentTool {
   }
 }
 
-function createRenderArtifactTool(conversationId?: string): AgentTool {
+export function createRenderArtifactTool(conversationId?: string, workingDir?: string): AgentTool {
   return {
     name: 'render_artifact',
     label: '自检',
@@ -546,10 +549,11 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
 - id：自检会话里的 artifact
 - path：自检磁盘上的 HTML 文件（设计系统的 specimen 预览卡 / ui_kit index.html 用这个——file:// 加载，相对引用的 styles.css / assets 全部生效）
 
-**交付前必自检**：create_artifact / 一轮 edit_artifact / 写完预览卡后调用一次，有报错就修完再交——用户看到坏稿等于白交。返回"渲染干净"才算完。`,
+**交付前必自检**：create_artifact / 一轮 edit_artifact / 写完预览卡后调用一次，有报错就修完再交——用户看到坏稿等于白交。返回"渲染干净"只说明没报错；结果会附上截图，**画面类产物要看图核对**（版式、图形、文案位置），画对没画对只在图里，不在 console 里。长页一次截 6 屏（5400 高），结果里写明截到哪、后面还剩多少；要看后面的就再调一次并传 scroll_y，像翻页验收一样一段段看完。`,
     parameters: Type.Object({
       id: Type.Optional(Type.String({ description: '要自检的 artifact id 或标题（与 path 二选一；标题按本会话解析）' })),
-      path: Type.Optional(Type.String({ description: '要自检的本地 HTML 文件绝对路径（限 ~/.openpipal 工作区内）' }))
+      path: Type.Optional(Type.String({ description: '要自检的本地 HTML 文件绝对路径（OpenPipal 数据目录下的 workspace / outputs / design-systems / conversations/artifacts，或本会话工作目录内）' })),
+      scroll_y: Type.Optional(Type.Number({ description: '从页面的这个高度（CSS 像素）起截，默认 0。上一次结果写着"N 以下没截到"就传 N 接着看' }))
     }),
     execute: async (_id, params) => {
       const p = params as any
@@ -565,14 +569,18 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
         resolvedId = resolved.id
       } else if (p.path) {
         const resolved = path.resolve(String(p.path))
+        // 边界与 read/write/bash 同一口径：数据目录里的几个根 + 本会话的工作目录。之前私藏一份只认数据目录的白名单，
+        // 模型把文件写进工作目录却不许自检，只能复制进数据目录再看——那边没有 vendor/预制件，再报一堆假问题
+        const sessionWorkingDir = path.resolve(workingDir || getWorkingDir())
         const allowedRoots = [
           dataPath('workspace'),
           dataPath('outputs'),
           dataPath('design-systems'),
-          dataPath('conversations', 'artifacts')
+          dataPath('conversations', 'artifacts'),
+          sessionWorkingDir
         ]
         if (!allowedRoots.some((r) => resolved.startsWith(r + path.sep) || resolved === r)) {
-          return { content: [{ type: 'text', text: `path 必须在 ~/.openpipal 的 workspace / outputs / conversations/artifacts 下。` }], details: {} }
+          return { content: [{ type: 'text', text: `path 必须在 OpenPipal 数据目录（workspace / outputs / design-systems / conversations/artifacts）或本会话工作目录 ${sessionWorkingDir} 内。` }], details: {} }
         }
         if (!fs.existsSync(resolved)) {
           return { content: [{ type: 'text', text: `文件不存在: ${resolved}` }], details: {} }
@@ -591,7 +599,9 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
       const win = new BrowserWindow({
         // 900 而不是 800：动画产物的播放条展开成剪辑轨后占 85px，800 高会把 720p 舞台
         // 压到 scale 0.99——自检帧没有尺寸断言，但给模型看的画面不该无谓地缩一档。
-        show: false, width: 1280, height: 900,
+        // 2026-09-11 真机实测：没有这两项，macOS 把隐藏窗钳在屏幕工作区内（1512×982 的屏只截到 1280×839），
+        // 首屏就不是 900、100vh 也跟着缩水；enableLargerThanScreen 解开这个钳位
+        show: false, width: 1280, height: 900, useContentSize: true, enableLargerThanScreen: true,
         // backgroundThrottling:false 与逐帧导出窗口同因：隐藏窗口默认节流 rAF/timer，
         // 动画多帧自检要等双 rAF 落地（见下方 settleAt），被节流就只能干等超时。
         webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
@@ -608,6 +618,13 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
         }
       })
       let shotPath = ''
+      let shotHeight = 900
+      let docHeight = 0
+      // 长页按段截：一次最多 SHOT_CAP 高（6 屏），从 scroll_y 起。上限是给模型上下文守的——每段图都占 token，
+      // 页面多长不该由宿主替模型决定看多少；截到哪、后面还剩多少写在结果里，要看后面它再传 scroll_y 翻页。
+      const SHOT_CAP = 5400
+      let scrollY = Math.max(0, Math.round(Number(p.scroll_y) || 0))
+      let clipFailed = ''
       const frames: Array<{ pct: number; time: number; path: string }> = []
       // 隐藏窗口 capturePage 在部分环境不重合成 → 逐帧字节全同（W2#11 真机 bug）。检出这种情况
       // 就不写等值假帧，只保留基帧并在文本说明——不误导模型以为已核过运动。
@@ -624,13 +641,43 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
           await win.loadURL('data:text/html;base64,' + Buffer.from(html, 'utf8').toString('base64'))
         }
         await new Promise((r) => setTimeout(r, 5000)) // 等 CDN React + boot + 首帧
-        const img = await win.webContents.capturePage()
-        const baseBuf = img.toPNG()
+        // 首屏帧：动画多帧自检拿它做"合成器有没有冻结"的基准（下方 varying 判定），窗口始终 1280×900 不动
+        const baseBuf = (await win.webContents.capturePage()).toPNG()
         capturedBuf = baseBuf
-        const shotDir = dataPath('outputs', '.self-check')
+        // 长页截段：页面能滚动（长文/文档）就用 CDP 的 captureBeyondViewport 从 scroll_y 起截 SHOT_CAP 高，
+        // 视口不动（100vh、吸顶、滚动入场都保持用户看到的样子），也绕开 capturePage 的 16384 像素硬顶。
+        // 舞台类产物（deck 等 html/body 100% 高）scrollHeight == 视口高，走不到这里。
+        // 2026-09-11 实撞：只截首屏时模型为了看下半页去找 Playwright、翻 conversations 目录；
+        // 把窗拉到 6000 高一次截完则 8192 以上 UnknownVizError，超过的部分模型只能改 zoom 做副本自己看。
+        docHeight = Number(await win.webContents
+          .executeJavaScript('Math.max(document.documentElement.scrollHeight || 0, document.body ? document.body.scrollHeight : 0)')
+          .catch(() => 0)) || 0
+        scrollY = Math.min(scrollY, Math.max(0, Math.round(docHeight) - 900))
+        if (docHeight > 900 + 8 || scrollY > 0) {
+          const clipHeight = Math.min(Math.round(docHeight) - scrollY, SHOT_CAP)
+          const dbg = win.webContents.debugger
+          try {
+            dbg.attach('1.3')
+            const shot = await dbg.sendCommand('Page.captureScreenshot', {
+              format: 'png', captureBeyondViewport: true, clip: { x: 0, y: scrollY, width: 1280, height: clipHeight, scale: 1 }
+            })
+            capturedBuf = Buffer.from(String(shot?.data || ''), 'base64')
+            shotHeight = clipHeight
+          } catch (err: any) {
+            // CDP 截不到就退回首屏，文案照实说只有首屏；这是宿主的事，不进 problems（那是让模型修的清单）
+            capturedBuf = baseBuf
+            shotHeight = 900
+            scrollY = 0
+            clipFailed = String(err?.message || err)
+          } finally {
+            try { if (dbg.isAttached()) dbg.detach() } catch { /* ignore */ }
+          }
+        }
+        // 截图落本会话的产物目录（outputs/<conversationId>/.self-check/），模型 ls 自己的目录不会被拦
+        const shotDir = path.join(outputsDirFor(conversationId), '.self-check')
         fs.mkdirSync(shotDir, { recursive: true })
-        shotPath = path.join(shotDir, `${shotName}.png`)
-        fs.writeFileSync(shotPath, baseBuf)
+        shotPath = path.join(shotDir, `${shotName}${scrollY > 0 ? `.y${scrollY}` : ''}.png`)
+        fs.writeFileSync(shotPath, capturedBuf ?? baseBuf)
         // 文本重叠自检（弱模型排版常见坑：导航行/标签互相堆叠）：检测失败静默跳过，不阻断原有自检
         const overlaps: string[] = await win.webContents.executeJavaScript(OVERLAP_LINT_JS).catch(() => [])
         for (const o of overlaps) {
@@ -729,33 +776,69 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
       // 上限按最坏口径设防：部分网关把 data-URL 图按原始 base64 文本计 token（~1.5 字符/token），
       // 全尺寸 PNG（实测 ~700KB → base64 ~930KB）单图即 60 万 token，直接打爆 500k 上限致整轮 400。
       const MAX_IMAGE_B64 = 600 * 1024
-      let imageBlock: { type: 'image'; data: string; mimeType: string } | null = null
+      const imageBlocks: Array<{ type: 'image'; data: string; mimeType: string }> = []
       let imageNote = ''
+      let tileNote = ''
       if (capturedBuf) {
         if (supportsImages) {
-          // 发送用缩小的 JPEG（盘上仍存全尺寸 PNG 供人工/导出查看）；缩图失败退回原图，仍受上限保护
-          let sendBuf = capturedBuf
+          // 发送用缩到 1024 宽的 JPEG（盘上仍存全尺寸 PNG，导出时用）。整页截图按 ≤1200 高切段、自上而下
+          // 逐段附上：一张 6000 高的图缩成一张既超上限又糊成一团，模型只好自己 cp 出来再裁（2026-09-11 实测）。
+          // 总量守 MAX_IMAGE_B64：先降质量再降宽度，实在装不下就只附前几段并把没附的说清楚。
+          const TILE = 1200
+          const tiles = Math.max(1, Math.ceil(shotHeight / TILE))
+          let sent: Buffer[] = [capturedBuf]
           let sendMime = 'image/png'
           try {
-            let img = nativeImage.createFromBuffer(capturedBuf)
-            if (img.getSize().width > 1024) img = img.resize({ width: 1024 })
-            const jpeg: Buffer = img.toJPEG(75)
-            if (jpeg.length > 0 && jpeg.length < sendBuf.length) {
-              sendBuf = jpeg
+            const full = nativeImage.createFromBuffer(capturedBuf)
+            for (const [maxWidth, quality] of [[1024, 70], [1024, 55], [896, 50], [768, 45]] as Array<[number, number]>) {
+              const scaled = full.getSize().width > maxWidth ? full.resize({ width: maxWidth }) : full
+              const { width, height } = scaled.getSize()
+              const tileH = Math.ceil(height / tiles)
+              const bufs: Buffer[] = []
+              for (let y = 0; y < height; y += tileH) {
+                const piece = tiles === 1 ? scaled : scaled.crop({ x: 0, y, width, height: Math.min(tileH, height - y) })
+                bufs.push(piece.toJPEG(quality))
+              }
+              if (bufs.some((b) => b.length === 0)) break
+              sent = bufs
               sendMime = 'image/jpeg'
+              if (bufs.reduce((n, b) => n + b.length, 0) * 4 / 3 <= MAX_IMAGE_B64) break
             }
           } catch { /* nativeImage 不可用（如单测环境）→ 原图走上限兜底 */ }
-          const b64 = sendBuf.toString('base64')
-          if (b64.length > MAX_IMAGE_B64) {
-            imageNote = '\n（截图过大已跳过随结果发送，仅存盘供人工查看；核对以下文本摘要为准）'
-          } else {
-            imageBlock = { type: 'image', data: b64, mimeType: sendMime }
+          let total = 0
+          for (const buf of sent) {
+            const b64 = buf.toString('base64')
+            if (total + b64.length > MAX_IMAGE_B64) break
+            total += b64.length
+            imageBlocks.push({ type: 'image', data: b64, mimeType: sendMime })
+          }
+          if (imageBlocks.length === 0) {
+            imageNote = `\n（截图太大没能随结果附上；完整 PNG 在 ${shotPath}，用 read 工具读它就能看图）`
+          } else if (imageBlocks.length < sent.length) {
+            imageNote = `\n（只附上了前 ${imageBlocks.length}/${sent.length} 段，再多就超出单次结果的图片上限；下面的部分用 read 工具读完整 PNG ${shotPath}）`
+          } else if (imageBlocks.length > 1) {
+            tileNote = `，自上而下切成 ${imageBlocks.length} 段`
           }
         } else {
           imageNote = '\n（当前模型不支持看图，未随结果发送截图——以下文本摘要即为核对依据）'
         }
       }
-      const shotNote = shotPath ? `\n截图已存盘: ${shotPath}（供人工/导出查看）。${imageNote}` : ''
+      // 之前的文案把截图说成给人看的，模型读成"图不是给我的"，只认"渲染干净"四个字就交稿。图是给它看的，说清楚。
+      // 截到哪、后面还剩多少、下一次传什么，都写成事实；看不看后面是模型的判断。
+      const totalHeight = Math.round(docHeight)
+      const shotEnd = scrollY + shotHeight
+      const cutOff = totalHeight > shotEnd + 8
+        ? (clipFailed
+            ? `，页面总高 ${totalHeight}，整页截图失败（${clipFailed}），只截到首屏`
+            : `，页面总高 ${totalHeight}，${shotEnd} 以下没截到——要看后面再调一次并传 scroll_y: ${shotEnd}`)
+        : ''
+      const segment = scrollY > 0 ? `，本段 ${scrollY}–${shotEnd}${totalHeight > shotEnd ? '' : '（已到底）'}` : ''
+      const shotScope = (shotHeight > 900 || scrollY > 0) ? `整页 1280×${shotHeight}${segment}${cutOff}${tileNote}` : `首屏 1280×900${cutOff}`
+      const shotNote = shotPath
+        ? (imageBlocks.length
+            ? `\n截图（${shotScope}）已随本结果附上——看图核对版式、图形、文案位置；"渲染干净"只说明没报错。文件: ${shotPath}${imageNote}`
+            : `\n截图（${shotScope}）已存盘: ${shotPath}${imageNote}`)
+        : ''
       const framesNote = frames.length
         ? `\n动画多帧自检（初始定格 t=10%/50%/90% 各截一帧，逐帧核对运动是否连贯、有无卡帧/穿模）：\n${frames.map((f) => `- t${f.pct}% (${f.time.toFixed(2)}s): ${f.path}`).join('\n')}`
         : frameCaptureFrozen
@@ -779,7 +862,7 @@ function createRenderArtifactTool(conversationId?: string): AgentTool {
       const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
         { type: 'text', text }
       ]
-      if (imageBlock) content.push(imageBlock)
+      content.push(...imageBlocks)
       return { content, details: frames.length ? { frames } : {} }
     }
   }
@@ -843,7 +926,7 @@ function createExportArtifactTool(conversationId?: string): AgentTool {
   return {
     name: 'export_artifact',
     label: '导出',
-    description: `把已有 artifact 导出成可交付的文件，落 ~/.openpipal/outputs/（用户可在“作品”中回看，不用另外找路径）。
+    description: `把已有 artifact 导出成可交付的文件，落本会话的产物目录 ~/.openpipal/outputs/<会话id>/（结果里带完整路径；用户可在“作品”中回看，不用另外找路径）。
 
 六种格式：
 - mp4：逐帧导出动画视频（无声）。**只对动画 dc 有效**（引用 animations.jsx / 用 useSprite·useTime / 定义 Stage 的产物），非动画产物会被拒绝并给出可选格式提示
@@ -875,7 +958,8 @@ function createExportArtifactTool(conversationId?: string): AgentTool {
       if (!EXPORT_FORMAT_LABELS[format]) {
         return { content: [{ type: 'text', text: `未知导出格式: ${format}` }], details: {} }
       }
-      const outRoot = dataPath('outputs')
+      // 按会话分目录（outputs/<conversationId>/）：结果里带完整路径，安全层放行自己的目录
+      const outRoot = outputsDirFor(conversationId)
 
       if (format === 'mp4') {
         const gate = mp4FormatGateMessage(content)
@@ -959,7 +1043,7 @@ function createExportArtifactTool(conversationId?: string): AgentTool {
       if (zipGate) {
         return { content: [{ type: 'text', text: `已拒绝：${zipGate}` }], details: {} }
       }
-      const bundle = exportDcBundle(title, [{ title, content, artifactId }])
+      const bundle = exportDcBundle(title, [{ title, content, artifactId }], outRoot)
       if (!bundle.ok || !bundle.dir) {
         return { content: [{ type: 'text', text: `zip 导出失败：${bundle.error || '装配失败（可能不是 Design Component 内容）'}` }], details: {} }
       }
@@ -981,7 +1065,9 @@ function looksLikeAnimationDc(c: string): boolean {
 function createArtifactTool(
   conversationId: string | undefined,
   roleName: string,
-  roleBrief?: Record<string, Record<string, any>>
+  roleBrief: Record<string, Record<string, any>> | undefined,
+  /** 这个 Agent 档案里的声明：整页 HTML 走不走 DC、jsx 要不要闸门 */
+  agentPolicies: AgentPolicies
 ): AgentTool {
   return {
     name: 'create_artifact',
@@ -1004,11 +1090,6 @@ function createArtifactTool(
     }),
     execute: async (_id, params) => {
       const p = params as any
-      // 回执门闩（机制优于纪律，2026-07-15 实案）：模型把上下文里的压缩回执当正文复制，
-      // 把 11KB 场景覆写成 73 字节占位。拦死并给证据式指路。
-      if (containsReceiptPlaceholder(p.content)) {
-        return { content: [{ type: 'text', text: `已拒绝：content 里包含"[内容已保存…]"占位回执——那不是正文，是上下文压缩标记。请先 read_artifact(id) 取回真实内容，修改后再提交；若要全新创作请直接写完整内容。` }], details: {} }
-      }
       // 机制优于纪律（2026-07-03 实测）：模型"推倒重做"时会无视"迭代必传 id"的说明，
       // 不带 id 重建同名产物；编造的 id 也会静默生成新作品。两条路都在这里拦死。
       if (p.id && conversationId) {
@@ -1045,9 +1126,9 @@ function createArtifactTool(
           }
         }
       }
-      // dc 门闩（机制优于纪律）：design / teacher 角色的整页 HTML 交付必须是 Design Component。
-      // 实测模型跳过读 dc-authoring 技能时会退回普通 HTML（首轮 2/5 合规），工具级拒绝把纪律变成机制。
-      if (['design', 'teacher'].includes(roleName) && p.type === 'html') {
+      // dc 门闩（机制优于纪律）：声明了 artifacts: dc 的 Agent（design / teacher 内置声明；Pal 可在 agent.md frontmatter 里声明）
+      // 整页 HTML 交付必须是 Design Component。实测模型跳过读 dc-authoring 技能时会退回普通 HTML（首轮 2/5 合规），工具级拒绝把纪律变成机制。
+      if (agentPolicies.artifacts === 'dc' && p.type === 'html') {
         const c: string = p.content || ''
         const reject = (msg: string) => ({
           content: [{ type: 'text' as const, text: `已拒绝：${msg}` }],
@@ -1114,7 +1195,7 @@ function createArtifactTool(
       }
       // jsx 场景截断门闩（机制优于纪律）：type='code' jsx 是真正的截断受害者（34KB 正片场景在 a7e26d1d 被砍），
       // 走不到上面的 dc(html) 门闩。size 预防 + 编译完整性两道，把"分批产出"从纪律变成机制。isUpdate 路径同样过闸。
-      if (roleName === 'design' && p.type === 'code') {
+      if (agentPolicies.artifactJsxGuards && p.type === 'code') {
         const c: string = p.content || ''
         // ① 尺寸预防（语言标签无关——弱模型把 jsx 误标 javascript / 省略 language 也拦得住）：过大单次生成极易被截断
         if (c.length > 28000) {
@@ -1145,6 +1226,8 @@ function createArtifactTool(
       const orbHint = env.mode === 'orb' && p.type === 'html'
         ? `\n\n⚠️ orb 模式下侧边栏不可见。如果希望用户现在就看到，调用 present_to_user({ content: <本次 content>, kind: 'interactive', title: '${p.title}' })。`
         : ''
+      // 文件在哪直接说：模型要自己截图/用 bash 处理时不必去翻 conversations 目录（会撞跨会话边界）
+      const fileNote = conversationId ? `\n文件: ${artifactFilePath(conversationId, artifactId, p.type, artifactLanguage)}` : ''
       // jsx 场景：即时预检编译（真实存盘走 saveArtifact 钩子），编译失败回传让模型自修
       let compileNote = ''
       if (p.type === 'code' && String(artifactLanguage || '').toLowerCase() === 'jsx') {
@@ -1178,7 +1261,7 @@ function createArtifactTool(
         }
       }
       return {
-        content: [{ type: 'text', text: `${verb}预览: ${p.title} (id: ${artifactId})${orbHint}${compileNote}` }],
+        content: [{ type: 'text', text: `${verb}预览: ${p.title} (id: ${artifactId})${fileNote}${orbHint}${compileNote}` }],
         details: {
           artifact: {
             id: artifactId,
@@ -1301,7 +1384,7 @@ function createVisualizerTool(): AgentTool {
   }
 }
 
-function createGenerateDocumentTool(workspaceId?: string): AgentTool {
+function createGenerateDocumentTool(workspaceId?: string, conversationId?: string): AgentTool {
   return {
     name: 'generate_document',
     label: '生成文档',
@@ -1340,11 +1423,8 @@ function createGenerateDocumentTool(workspaceId?: string): AgentTool {
 
       // 模式 1：生成 Markdown 文档。落 outputs/ 文件 + 复用 artifact 管线(自动打开可编辑 ArtifactTab)
       // 结果只给回执不回显正文——正文是模型自己刚写的参数，回显等于同一份内容在上下文里携带两遍。
-      if (containsReceiptPlaceholder(p.content)) {
-        return textResult(`已拒绝：content 里包含"[内容已保存…]"占位回执——那是上下文压缩标记不是正文，请写入真实文档内容。`, { displayResult: '已拒绝：占位回执不能作为文档内容' })
-      }
       const content = p.content || ''
-      const filepath = saveOutput(title, content, workspaceId)
+      const filepath = saveOutput(title, content, workspaceId, conversationId)
       const result = `📄 已生成${docType}「${title}」\n保存位置: ${filepath}\n（${content.length} 字符，正文已保存，需要时可 read 该文件）`
       return textResult(result, {
         displayResult: result,
@@ -1495,9 +1575,7 @@ function createManageTaskTool(
           const summary = tasks.map(t => {
             const status = t.enabled ? '启用' : '禁用'
             const next = t.nextRun ? new Date(t.nextRun).toLocaleString('zh-CN') : '—'
-            const scope = t.workspaceId ? `ws=${t.workspaceId.slice(0,8)}`
-                        : t.agentId ? `agent=${t.agentId.slice(0,8)}`
-                        : 'global'
+            const scope = t.workspaceId ? `ws=${t.workspaceId.slice(0,8)}` : 'global'
             const triggerDesc = t.trigger.type === 'schedule' ? t.trigger.schedule.type : t.trigger.type
             return `- [${status}] ${t.name} (${triggerDesc}) | ${scope} | 下次: ${next} | ID: ${t.id}`
           }).join('\n')
@@ -1529,8 +1607,8 @@ function createManageTaskTool(
             name: p.name,
             enabled: true,
             role: roleName,
-            workspaceId: wsId,
-            agentId: wsId ? undefined : p.agent_id,
+            // agent_id 是老参数（曾指模板）：模板并入 Pal 后就是 Pal id，一律进 workspaceId
+            workspaceId: wsId || (p.agent_id || undefined),
             trigger,
             prompt: p.prompt,
             conversationMode: p.conversation_mode || 'per-run',
@@ -1612,6 +1690,88 @@ function createManageTaskTool(
 // 两个工具都遵循"渐进式披露"——环境信息不注入 system prompt，AI 按需调 get_environment
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * 运行时目录里可拷的预制件：HTML 里怎么引用就叫什么名（`animations.compiled.js` 对外叫 `animations.js`，
+ * 与导出链路 resolveExportSibling 同一套改名）。文件存在即可选——加预制件不用改这里。
+ */
+export function listStarterComponents(runtimeDir: string): string[] {
+  let names: string[] = []
+  try { names = fs.readdirSync(runtimeDir) } catch { return [] }
+  const kinds = new Set<string>()
+  for (const n of names) {
+    if (n.endsWith('.compiled.js')) kinds.add(n.replace(/\.compiled\.js$/, '.js'))
+    else if (n.endsWith('.js')) kinds.add(n)
+  }
+  return Array.from(kinds).sort()
+}
+
+/** support.js 启动时 window.React 必须在场；本地双击打开没有宿主注入，vendor 得跟着一起落盘 */
+const STARTER_VENDOR_FILES = ['vendor/react.production.min.js', 'vendor/react-dom.production.min.js']
+
+/**
+ * 对标原版 design agent 的 copy_starter_component：预制件住在项目目录里，模型显式拷进来。
+ * 之前只靠宿主渲染时内联，磁盘上从来没有这些文件——模型按前端本能去找 `./support.js`，
+ * 找不到就全盘 find（2026-09-11 实撞，两次触发主目录遍历确认）。
+ */
+export function createCopyStarterComponentTool(options?: { workingDir?: string; runtimeDir?: string }): AgentTool {
+  // 无 electron 的测试宿主里 app 是 undefined；运行时目录拿不到就没有可选项，工具照样能构造
+  let runtimeDir = options?.runtimeDir || ''
+  if (!runtimeDir) { try { runtimeDir = dcRuntimeDir() } catch { runtimeDir = '' } }
+  const kinds = listStarterComponents(runtimeDir)
+  return {
+    name: 'copy_starter_component',
+    label: '拷贝预制件',
+    description: `把 OpenPipal 自带的 dc 预制件拷进当前工作目录，让 HTML 里的 \`./xxx.js\` 相对引用在磁盘上成立（本地双击、自己截图、交接都能跑）。
+可选 kind（文件名原样传）：${kinds.join(', ') || '（运行时目录不可用）'}
+- support.js：dc 运行时，会连同 vendor/react*.js 一起拷；本地打开需在它之前加两行 \`<script src="./vendor/react.production.min.js">\` / \`<script src="./vendor/react-dom.production.min.js">\`（App 预览与导出会自行处理）
+- 其它预制件（deck-stage.js 等）：support.js 不联网也不读盘，**不会自己去取 x-import 的 from 文件**——本地打开必须在 support.js 之前再加一行 \`<script src="./deck-stage.js"></script>\` 预载，x-import 的 from 照写不删
+- 这些文件是冻结的运行时，不必 read；接口看对应技能的 SKILL.md
+- 用 create_artifact 交付时不需要调本工具，宿主渲染会内联；写到工作区文件、要本地打开时才需要
+- 不要去磁盘上搜这些文件，它们不在工作区里`,
+    parameters: Type.Object({
+      kind: Type.String({ description: `要拷的预制件文件名，必须是：${kinds.join(' | ')}` }),
+      directory: Type.Optional(Type.String({ description: '工作目录下的子目录（如 "deck/"），默认工作目录根' }))
+    }),
+    execute: async (_id, rawParams: unknown) => {
+      const params = (rawParams || {}) as { kind?: string; directory?: string }
+      const kind = String(params.kind || '').trim()
+      if (!kinds.includes(kind)) {
+        return { content: [{ type: 'text', text: `没有 ${kind || '(空)'} 这个预制件。可选：${kinds.join(', ')}` }], details: { ok: false } }
+      }
+      const workingDir = path.resolve(options?.workingDir || getWorkingDir())
+      const destDir = path.resolve(workingDir, params.directory || '.')
+      const rel = path.relative(workingDir, destDir)
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        return { content: [{ type: 'text', text: `directory 必须在工作目录 ${workingDir} 之内` }], details: { ok: false } }
+      }
+      const plain = path.join(runtimeDir, kind)
+      const compiled = path.join(runtimeDir, kind.replace(/\.js$/, '.compiled.js'))
+      const source = fs.existsSync(plain) ? plain : compiled
+      const jobs: Array<[string, string]> = [[source, path.join(destDir, kind)]]
+      if (kind === 'support.js') {
+        for (const v of STARTER_VENDOR_FILES) jobs.push([path.join(runtimeDir, v), path.join(destDir, v)])
+      }
+      const written: string[] = []
+      const unchanged: string[] = []
+      for (const [from, to] of jobs) {
+        const data = fs.readFileSync(from)
+        if (fs.existsSync(to) && fs.readFileSync(to).equals(data)) { unchanged.push(to); continue }
+        fs.mkdirSync(path.dirname(to), { recursive: true })
+        fs.writeFileSync(to, data)
+        written.push(to)
+      }
+      const lines = [
+        written.length ? `已拷贝：\n${written.map((p) => `- ${p}`).join('\n')}` : '',
+        unchanged.length ? `已存在且内容一致：\n${unchanged.map((p) => `- ${p}`).join('\n')}` : '',
+        kind === 'support.js'
+          ? `HTML 里 \`<script src="./support.js">\` 之前先放两行 \`<script src="./vendor/react.production.min.js">\`、\`<script src="./vendor/react-dom.production.min.js">\`，本地打开才有 React。`
+          : `HTML 里 x-import 按 \`from="./${kind}"\` 引用（路径逐字，导出与 PPTX 门闩都按它认）；support.js 不会自己去取这个文件，本地打开还要在 \`<script src="./support.js">\` 之前加一行 \`<script src="./${kind}"></script>\` 预载（2026-09-11 实测：少这行页面空白无报错）。`
+      ].filter(Boolean)
+      return { content: [{ type: 'text', text: lines.join('\n') }], details: { ok: true, written, unchanged } }
+    }
+  }
+}
+
 function createGetEnvironmentTool(): AgentTool {
   return {
     name: 'get_environment',
@@ -1622,7 +1782,7 @@ function createGetEnvironmentTool(): AgentTool {
 - mode='docked'：用户在普通应用旁，OpenPipal 为 400px 侧栏，用户**能直接看到**对话
 - mode='undocked'：用户把 OpenPipal 拖离，独立窗口模式
 
-**重要调用时机**：当用户的请求**可能产出可视化内容、追问、或非对话式结果**（画图、写代码、生成文档等）时，先调本工具确认环境。docked 模式从上下文可明显推断时可跳过。`,
+宿主会在需要时把环境告诉你：orb 模式下每轮运行时上下文带一行提示，create_artifact / create_visualizer 的结果里也会提示。**不必在做事前先调本工具**；只有用户问起当前环境、或要按前台应用做判断时才调。`,
     parameters: Type.Object({}),
     execute: async () => {
       const snap = getEnvironmentSnapshot()
@@ -1723,11 +1883,32 @@ function createSubagentTool(overrides?: {
   roleName?: string
   workingDir?: string
   modelPresetId?: string
+  teamId?: string
+  channel?: string
 }): AgentTool {
-  const available = describeAvailableProfiles()
+  // 团队话题：同一个工具加一个 `pal` 参数就是"交接给成员"（不新造工具，设计稿 §4）。
+  // 可交接的 = 名单里除了自己（跑这条话题的 Lead）以外的人；交接次数按本轮给预算（§8 拐杖，team.md `handoff-budget: off` 关掉）
+  const team = overrides?.teamId ? resolveTeamScope(overrides.teamId, overrides.channel) : null
+  const handoffTargets = team ? team.members.filter(m => m.id !== overrides?.workspaceId) : []
+  const handoffBudget = team ? team.handoffBudget : 'off'
+  let handoffsUsed = 0
+  // 团队话题里这个工具只做交接（所有者 2026-09-14：团队里的活给成员做，不放通用子 agent）：
+  // 没有 profile 参数、pal 必填；要新角色先 manage_team 建成员再交接。规则住在参数 schema 里，说明只是把它讲给模型听
+  const description = team
+    ? `把活交接给团队「${team.name}」的成员：\`pal\` 填成员 id，它以自己的人设、记忆、技能做完再把结果带回来。\n` +
+      `可交接的成员：\n` +
+      (handoffTargets.map(m => `- ${m.name}：pal = ${m.id}${m.description ? `（${m.description}）` : ''}`).join('\n') || '- （名单里只有你自己；先用 manage_team 建成员）') +
+      `\n交接条写在 task 里：任务 / 依据（文件路径与事实）/ 输出放哪 / 没解决的 / 下一步谁。成员看不到本话题，背景要写全。\n` +
+      `本话题里没有通用子 agent：需要一个名单上没有的角色，先用 manage_team 的 create_member 把它建成成员，再交接给它。` +
+      (handoffBudget === 'off' ? '' : `本轮最多交接 ${handoffBudget} 次。`)
+    : `把一个独立子任务委派给隔离上下文的子 agent 完成。可用档位（从 ~/.openpipal/subagents/ 加载）：\n${describeAvailableProfiles()}\n\n` +
+      `调用时机：当主任务需要"开一个干净的上下文窗口"做信息收集 / 评估 / 调研 / 执行隔离子任务时。\n` +
+      `子 agent 不能调用 ask_user/questions_v2/create_artifact/create_visualizer/generate_document/present_to_user/subagent —— ` +
+      `这些工具的语义是"主 agent 决定"，子 agent 只能把结果汇报回来由主 agent 决定下一步。\n` +
+      `子 agent 跑完会返回它的 final text，作为本次工具的结果。`
   return {
     name: 'subagent',
-    label: '委派子 agent',
+    label: team ? '交接给成员' : '委派子 agent',
     // 注：曾尝试加 executionMode: 'parallel' (per-tool 并发 override)，实测无效——
     // Pi 框架 agent-loop.js:235 逻辑是"global toolExecution='sequential' 一票否决所有
     // per-tool parallel"。要让 subagent 真并发 execute 需要全局改 'parallel' 并给所有
@@ -1735,16 +1916,11 @@ function createSubagentTool(overrides?: {
     //
     // 独立子任务是否一次发出由通用工具规则和模型判断；Pi 当前仍串行 execute，
     // 但一次返回多个 toolCall block 仍能减少主 agent 的重复决策轮数。
-    description:
-      `把一个独立子任务委派给隔离上下文的子 agent 完成。可用档位（从 ~/.openpipal/subagents/ 加载）：\n${available}\n\n` +
-      `调用时机：当主任务需要"开一个干净的上下文窗口"做信息收集 / 评估 / 调研 / 执行隔离子任务时。\n` +
-      `子 agent 不能调用 ask_user/questions_v2/create_artifact/create_visualizer/generate_document/present_to_user/subagent —— ` +
-      `这些工具的语义是"主 agent 决定"，子 agent 只能把结果汇报回来由主 agent 决定下一步。\n` +
-      `子 agent 跑完会返回它的 final text，作为本次工具的结果。`,
+    description,
     parameters: Type.Object({
-      profile: Type.String({
-        description: `档位名（必须是上面列出的）。决定子 agent 的工具白名单和默认 system prompt。`,
-      }),
+      ...(team
+        ? { pal: Type.String({ description: `要交接的成员的 Pal id（见工具说明里的名单）。` }) }
+        : { profile: Type.String({ description: `档位名（必须是上面列出的）。决定子 agent 的工具白名单和默认 system prompt。` }) }),
       task: Type.String({
         description: `委派给子 agent 的任务描述。要具体、范围明确——子 agent 看不到主对话历史，所以任务里要包含完成它需要的全部背景。`,
       }),
@@ -1760,23 +1936,47 @@ function createSubagentTool(overrides?: {
       ),
     }),
     execute: async (toolCallId, params, signal, onUpdate) => {
-      const { profile, task, persona, model } = params as {
-        profile: string
+      const { profile, pal, task, persona, model } = params as {
+        profile?: string
+        pal?: string
         task: string
         persona?: string
         model?: string
       }
+      const fail = (text: string, errorMessage = text) => ({
+        content: [{ type: 'text' as const, text }],
+        details: { subagent: { status: 'error', errorMessage, profileName: profile ?? pal } },
+        isError: true,
+      })
 
-      // 提前校验 profile 名 —— 给主 agent 一个清晰错误而不是直接抛
-      const profiles = listSubagentProfiles()
-      if (!profiles.find(p => p.name === profile)) {
-        const available = profiles.map(p => p.name).join(', ') || '(none)'
-        return {
-          content: [{ type: 'text', text: `未知 profile: "${profile}"。可用: ${available}` }],
-          details: { subagent: { status: 'error', errorMessage: `Unknown profile: ${profile}` } },
-          isError: true,
+      // 参数 schema 已按有没有团队只留 pal 或 profile 一个；这两条只兜直接调 execute 的路（规则跳过校验时）
+      if (team && !pal) {
+        return fail('团队话题里 subagent 只做交接：pal 填成员的 id。需要名单上没有的角色，先用 manage_team 的 create_member 把它建成成员，再交接给它。')
+      }
+      if (pal) {
+        // 交接给成员：名单校验 + 本轮预算。拒绝理由要带下一步（可交接的名单 / 先汇总再说）
+        if (!team) return fail('本会话不属于任何团队，没有可交接的成员')
+        const member = handoffTargets.find(m => m.id === pal)
+        if (!member) {
+          const list = handoffTargets.map(m => `${m.name}（${m.id}）`).join('、') || '（无）'
+          return fail(`「${pal}」不是本团队可交接的成员。可交接：${list}`)
+        }
+        if (handoffBudget !== 'off' && handoffsUsed >= handoffBudget) {
+          return fail(`本轮交接次数已用完（${handoffBudget} 次）。先把已有结果汇总回复，或如实回报卡在哪；下一轮再交接。`)
+        }
+        handoffsUsed++
+        console.log(`[Team] 交接 → ${member.name} (${member.id.slice(0, 8)})，本轮第 ${handoffsUsed} 次${handoffBudget === 'off' ? '' : ` / ${handoffBudget}`}`)
+      } else if (!profile) {
+        return fail('要填 profile（子 agent 档位）')
+      } else {
+        // 提前校验 profile 名 —— 给主 agent 一个清晰错误而不是直接抛
+        const profiles = listSubagentProfiles()
+        if (!profiles.find(p => p.name === profile)) {
+          const available = profiles.map(p => p.name).join(', ') || '(none)'
+          return fail(`未知 profile: "${profile}"。可用: ${available}`, `Unknown profile: ${profile}`)
         }
       }
+      const remaining = pal && handoffBudget !== 'off' ? `\n\n（本轮剩余交接次数：${handoffBudget - handoffsUsed}）` : ''
 
       // 透传 runner 的 onUpdate 给 Pi 的 onUpdate
       // 当前 pi-event-adapter 忽略 tool_execution_update（P4 会处理）—— 链路就位但 UI 端要 P4 才能看到流式
@@ -1800,6 +2000,9 @@ function createSubagentTool(overrides?: {
         const { runChildAgent } = await import('./subagent-runner')
         const result = await runChildAgent({
           profile,
+          pal,
+          teamId: overrides?.teamId,
+          channel: overrides?.channel,
           task,
           persona,
           modelOverride: model,
@@ -1813,15 +2016,17 @@ function createSubagentTool(overrides?: {
           onUpdate: onChildUpdate,
         })
 
+        if (pal) console.log(`[Team] 交接完成 ← ${result.profileName}：${result.errorMessage ? `出错 ${result.errorMessage.slice(0, 80)}` : `${result.usage.turns} 轮，${(result.finalText || '').length} 字回报`}`)
         // details.subagent 是给 pi-event-adapter 用的 — adapter 会把这些字段序列化进
         // mcpArgs JSON（cardData），SubagentCard 展开态从 message.toolArgs 反序列化渲染
         // 完整 child history（inline 折叠展示，不进 Workspace 侧栏）
         return {
-          content: [{ type: 'text', text: result.finalText || '(子 agent 无输出)' }],
+          content: [{ type: 'text', text: (result.finalText || (pal ? '(成员无输出)' : '(子 agent 无输出)')) + remaining }],
           details: {
             subagent: {
               status: result.errorMessage ? 'error' : 'complete',
               profileName: result.profileName,
+              ...(result.palId ? { palId: result.palId } : {}),
               modelId: result.modelId,
               task,
               persona,
@@ -1836,14 +2041,142 @@ function createSubagentTool(overrides?: {
         }
       } catch (e) {
         const msg = (e as Error).message
-        console.error(`[Subagent] 执行失败 profile=${profile}:`, e)
-        return {
-          content: [{ type: 'text', text: `Subagent 执行失败: ${msg}` }],
-          details: { subagent: { status: 'error', errorMessage: msg, profileName: profile } },
-          isError: true,
-        }
+        console.error(`[Subagent] 执行失败 ${pal ? `pal=${pal}` : `profile=${profile}`}:`, e)
+        return fail(`${pal ? '交接' : 'Subagent'} 执行失败: ${msg}`, msg)
       }
     },
+  }
+}
+
+/**
+ * manage_team：团队自己的事（改名 / 章程 / 名单 / Lead）。只给**在 App 里跟主人聊的 Lead**——
+ * 定时 / webhook 话题没有它（章程不能在没人看的时候漂），成员也没有（子代理黑名单）。
+ * 这是设计稿 §5 第④层"治理只有人能改"的具体形态：人在场、由 Lead 代笔，写的还是同一份 team.md。
+ */
+/** create_member 的 look 参数说明：配饰清单 + 像什么角色。清单是常量，只拼一次 */
+const LOOK_DESCRIPTION = '新成员头像上的配饰（create_member，可选）：按它的角色挑一个最像的，其余（颜色、轮廓）自动组合。可选：' +
+  PAL_ACCESSORIES.map(a => `${a}=${ACCESSORY_HINTS[a]}`).join('；')
+
+/**
+ * 跨会话（所有者 2026-09-16）：列 / 读 / 发消息到这台机器上的其他单对话。一个工具三个动作，不拆三个。
+ * 逻辑都在 conversation-peer；这里只做参数与文案。内置角色默认有，独立 Pal 要在 tools/config.json 点名（PAL_OPT_IN_TOOLS）。
+ */
+function createConversationsTool(ctx: { conversationId: string }): AgentTool {
+  return {
+    name: 'conversations',
+    label: '其他对话',
+    description:
+      '这台机器上的其他对话（不含团队话题）：list 列出，read 读某条的记录，send 把消息发过去——对方会在它自己的对话里回复，' +
+      '回复直接带回来；对方正忙就排队送达、稍后用 read 看结果。多线程任务要互通进展、问对方结论时用。',
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal('list'), Type.Literal('read'), Type.Literal('send')], { description: 'list=列出其他对话；read=读记录；send=发消息' }),
+      conversation_id: Type.Optional(Type.String({ description: '目标对话 id（read / send；从 list 拿）' })),
+      message: Type.Optional(Type.String({ description: 'send 的内容：说清楚你是哪条对话、要什么、希望对方回什么' })),
+      limit: Type.Optional(Type.Number({ description: 'read 读最近几条，默认 30，最多 200' })),
+    }),
+    execute: async (_id, params, signal) => {
+      const p = params as { action: string; conversation_id?: string; message?: string; limit?: number }
+      switch (p.action) {
+        case 'list':
+          return textResult(formatPeerList(listPeerConversations(ctx.conversationId)))
+        case 'read': {
+          if (!p.conversation_id) return textResult('read 需要 conversation_id')
+          const r = await readPeerConversation(p.conversation_id, p.limit)
+          return textResult(r.ok ? r.text : r.error)
+        }
+        case 'send': {
+          if (!p.conversation_id || !p.message) return textResult('send 需要 conversation_id 和 message')
+          const r = await sendPeerMessage({ fromConversationId: ctx.conversationId, toConversationId: p.conversation_id, text: p.message, signal })
+          if (r.status === 'replied') return textResult(`对方回复：\n${r.reply}`)
+          if (r.status === 'queued') return textResult('对方正在忙，消息已排在它这一轮之后送达；之后用 read 看它的回复。')
+          return textResult(`没发出去：${r.error}`)
+        }
+        default:
+          return textResult(`未知 action: ${p.action}`)
+      }
+    }
+  }
+}
+
+function createManageTeamTool(ctx: { teamId: string; leadId: string }): AgentTool {
+  const listPals = (): string => {
+    const team = readTeam(ctx.teamId)
+    const members = new Set(team?.members ?? [])
+    const others = listWorkspaces().filter(w => !members.has(w.id))
+    return others.length
+      ? others.map(w => `- ${w.name}（pal_id: ${w.id}）${w.description ? `：${w.description}` : ''}`).join('\n')
+      : '（没有可加入的现成 Pal；需要角色就 create_member）'
+  }
+  const describeTeam = (): string => {
+    const team = readTeam(ctx.teamId)
+    if (!team) return '团队不存在'
+    const names = team.members.map(id => {
+      const w = listWorkspaces().find(x => x.id === id)
+      return `${w?.name ?? id.slice(0, 8)}${id === team.lead ? '（Lead）' : ''}（${id}）`
+    })
+    return `团队「${team.name}」\n成员：${names.join('、')}\n天花板：${team.tier}\n章程：${team.charter ? `\n${team.charter}` : '（空）'}`
+  }
+  return {
+    name: 'manage_team',
+    label: '团队',
+    description:
+      '团队自己的事：起名字、写章程、加成员、建新成员、移出成员、换 Lead。跟主人聊清楚一段就落一段，不用等最后。\n' +
+      `主人现有、可以直接加进来的 Pal：\n${listPals()}`,
+    parameters: Type.Object({
+      action: Type.Union([
+        Type.Literal('show'), Type.Literal('rename'), Type.Literal('set_charter'), Type.Literal('add_member'),
+        Type.Literal('create_member'), Type.Literal('remove_member'), Type.Literal('set_lead')
+      ], { description: 'show=看当前状态；rename=改团队名；set_charter=整篇写章程（会替换）；add_member=加现成 Pal；create_member=建一个新成员；remove_member=移出；set_lead=换 Lead' }),
+      name: Type.Optional(Type.String({ description: '团队名（rename）或新成员的名字（create_member）' })),
+      charter: Type.Optional(Type.String({ description: '章程正文（set_charter）：目的 / 名单各管什么 / 怎么干活 / 东西放哪 / 几条坑。200 行以内，成员每次开工都整篇读' })),
+      pal_id: Type.Optional(Type.String({ description: 'Pal id（add_member / remove_member / set_lead）' })),
+      description: Type.Optional(Type.String({ description: '新成员的一句话介绍（create_member）' })),
+      persona: Type.Optional(Type.String({ description: '新成员的人设（create_member）：它做什么、怎么做、不做什么；写成 Markdown' })),
+      look: Type.Optional(Type.String({ description: LOOK_DESCRIPTION })),
+    }),
+    execute: async (_id, params) => {
+      const p = params as { action: string; name?: string; charter?: string; pal_id?: string; description?: string; persona?: string; look?: string }
+      try {
+        switch (p.action) {
+          case 'show':
+            return textResult(describeTeam())
+          case 'rename': {
+            if (!p.name?.trim()) return textResult('错误：请给团队名（name）')
+            const team = renameTeam(ctx.teamId, p.name)
+            return textResult(`团队已改名为「${team.name}」`)
+          }
+          case 'set_charter': {
+            if (p.charter === undefined) return textResult('错误：请给章程正文（charter）')
+            updateTeamMd(ctx.teamId, { charter: p.charter })
+            return textResult(`章程已写入（${p.charter.trim().split('\n').length} 行）`)
+          }
+          case 'add_member': {
+            if (!p.pal_id?.trim()) return textResult('错误：请给 pal_id')
+            const team = addTeamMember(ctx.teamId, p.pal_id.trim())
+            return textResult(`已加入。现在的名单：${team.members.length} 人\n${describeTeam()}`)
+          }
+          case 'create_member': {
+            if (!p.name?.trim() || !p.persona?.trim()) return textResult('错误：建成员要给 name 和 persona')
+            const { memberId, mark } = createTeamMember(ctx.teamId, { name: p.name, description: p.description, persona: p.persona, look: p.look })
+            return textResult(`成员「${p.name.trim()}」已建好并加入名单（pal_id: ${memberId}，头像：${mark.accessory} / ${mark.hue}+${mark.accent} / ${mark.shape}）。交接给它时 subagent 的 pal 填这个 id。`)
+          }
+          case 'remove_member': {
+            if (!p.pal_id?.trim()) return textResult('错误：请给 pal_id')
+            const team = removeTeamMember(ctx.teamId, p.pal_id.trim())
+            return textResult(`已移出。现在的名单：${team.members.length} 人`)
+          }
+          case 'set_lead': {
+            if (!p.pal_id?.trim()) return textResult('错误：请给 pal_id')
+            const team = setTeamLead(ctx.teamId, p.pal_id.trim())
+            return textResult(`Lead 已换成 ${team.lead}。注意：这条话题仍由你跑完；新话题起由新 Lead 接。`)
+          }
+          default:
+            return textResult(`未知 action: ${p.action}`)
+        }
+      } catch (error) {
+        return textResult(`失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
   }
 }
 
@@ -1861,6 +2194,9 @@ export interface OpenPipalProductToolOptions {
   executeCodeBackend?: CodeExecutionBackend
   /** 会话级权限档位（编码助手专属）。'readonly' 时写类工具连 schema 都不发给模型。 */
   permissionTier?: PermissionTier
+  /** 团队话题：subagent 工具据此开放 `pal` 交接 */
+  teamId?: string
+  channel?: string
 }
 
 export function buildOpenPipalProductTools(
@@ -1873,6 +2209,8 @@ export function buildOpenPipalProductTools(
   // roleName. Capture their UI default once while composing the tool graph so
   // later tool execution never observes a different conversation's role.
   const roleName = resolveExecutionRoleName(overrides)
+  // 统一身份：产物闸门等专属行为读这个 Agent 档案里的声明，不再按角色名认
+  const agentPolicies = resolveExecutionAgent(overrides).policies
 
   // 浏览器扩展专用
   if (source === 'extension') {
@@ -1892,7 +2230,8 @@ export function buildOpenPipalProductTools(
   // 沿用原行为，每次现算，不参与跨轮前缀缓存）
   const cid = overrides?.conversationId
   const sticky = cid ? toolStickiness.get(cid) : undefined
-  const includeSubagent = listSubagentProfiles().length > 0 || !!sticky?.subagent
+  // 团队话题里 subagent 是交接原语，没有 profile 也要在
+  const includeSubagent = listSubagentProfiles().length > 0 || !!sticky?.subagent || !!overrides?.teamId
   const includeBrowser = isBrowserControlAvailable() || !!sticky?.browser
   if (cid) {
     // includeSubagent/includeBrowser 已经是"曾经true || 现在true"，直接写回即单调只进不出
@@ -1906,16 +2245,24 @@ export function buildOpenPipalProductTools(
     createQuestionsV2Tool(),
     // 定规则：只递交要求，文件由后台 Evolver 写（hooks/set-rule-tool）
     createSetRuleTool({ conversationId: overrides?.conversationId, roleName, workspaceId: overrides?.workspaceId }),
-    createGenerateDocumentTool(overrides?.workspaceId),
+    createGenerateDocumentTool(overrides?.workspaceId, overrides?.conversationId),
     createVisualizerTool(),
-    createArtifactTool(overrides?.conversationId, roleName, overrides?.roleBrief),
+    createArtifactTool(overrides?.conversationId, roleName, overrides?.roleBrief, agentPolicies),
     createReadArtifactTool(overrides?.conversationId),
     createEditArtifactTool(overrides?.conversationId),
-    createRenderArtifactTool(overrides?.conversationId),
+    createRenderArtifactTool(overrides?.conversationId, overrides?.workingDir),
     createExportArtifactTool(overrides?.conversationId),
+    // 预制件拷进项目目录（对标原版 copy_starter_component）——磁盘上有文件，模型就不会全盘去找
+    createCopyStarterComponentTool({ workingDir: overrides?.workingDir }),
     createUpdateTodosTool(overrides?.conversationId),
     createExecuteCodeTool(overrides?.workingDir, overrides?.executeCodeBackend),
     createManageTaskTool(overrides?.workspaceId, overrides?.conversationId, roleName),
+    // 跨会话：有会话身份才有（语音桥 / 无 conversationId 的路径拿不到）；Pal 是否拿到由档案白名单决定（filterOpenPipalTools）
+    ...(overrides?.conversationId ? [createConversationsTool({ conversationId: overrides.conversationId })] : []),
+    // 团队自己的事：只给在 App 里跟主人聊的 Lead（scheduler 面没有；成员在子代理黑名单里拿不到）
+    ...(overrides?.teamId && source === 'desktop' && overrides.workspaceId && overrides.workspaceId === resolveTeamScope(overrides.teamId, overrides.channel)?.lead
+      ? [createManageTeamTool({ teamId: overrides.teamId, leadId: overrides.workspaceId })]
+      : []),
     // subagent 委派工具 —— 本会话内曾经有 profile 就粘滞保留（opt-in 文件约定 + 前缀缓存粘滞）
     ...(includeSubagent
       ? [createSubagentTool({
@@ -1924,7 +2271,9 @@ export function buildOpenPipalProductTools(
           conversationId: overrides?.conversationId,
           roleName,
           workingDir: overrides?.workingDir,
-          modelPresetId: overrides?.modelPresetId
+          modelPresetId: overrides?.modelPresetId,
+          teamId: overrides?.teamId,
+          channel: overrides?.channel
         })]
       : []),
     // 浏览器控制工具 —— 本会话内曾经连接过扩展就粘滞保留（断连后调用由工具自身报错兜底）
@@ -1949,14 +2298,7 @@ export function filterOpenPipalTools<TTool extends { name: string }>(
     withoutDisabled = withoutDisabled.filter((t) => READONLY_TIER_TOOLS.includes(t.name))
   }
 
-  // 按 Agent 模板工具白名单或当前角色的白名单过滤
-  if (overrides?.tools) {
-    const allowed = new Set(overrides.tools)
-    return withoutDisabled.filter(t => allowed.has(t.name))
-  }
-  const capturedRole = getRoleConfig(resolveExecutionRoleName(overrides))
-  if (capturedRole) return withoutDisabled.filter(t => capturedRole.tools.includes(t.name))
-  // Compatibility fallback is evaluated during synchronous composition, never
-  // later from inside a running tool.
-  return withoutDisabled.filter(t => isToolAllowed(t.name, false))
+  // 按模板自带的白名单，或这个 Agent 档案里的白名单过滤（档案永远存在，不再回落到全局当前角色）
+  const allowed = new Set(overrides?.tools ?? resolveExecutionAgent(overrides).tools)
+  return withoutDisabled.filter(t => allowed.has(t.name))
 }

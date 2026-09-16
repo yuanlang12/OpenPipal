@@ -137,10 +137,7 @@ const BROWSER_EXACT_ROUTES = new Set([
   'POST /context',
   'POST /chat/stream',
   'POST /api/permission',
-  'GET /role/init-state',
   'GET /role/all',
-  'GET /role/current',
-  'POST /role/switch',
   'GET /api/agents/list',
   'GET /api/config/model',
   'GET /api/config/providers',
@@ -166,6 +163,8 @@ const BROWSER_EXACT_ROUTES = new Set([
   'POST /api/artifact/export-dc',
   'POST /api/artifact/export-pdf',
   'POST /api/openpipal/complete',
+  // 统一身份：浏览器顶栏的选择器要这一份列表（只读）
+  'GET /api/agents',
 ])
 
 /** Browser scope is allowlisted. New dynamic routes therefore default closed. */

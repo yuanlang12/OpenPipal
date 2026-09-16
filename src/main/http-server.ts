@@ -7,7 +7,7 @@ import { resolveAgentOverrides } from './agent-overrides'
 import { executeExtraction } from './memory-extractor'
 import { listArchivedMemories, restoreArchivedMemory, getGlobalMemoryDir, isWithinMemoryRoot } from './memory-store'
 import { isAutoMemoryEnabled } from './config-manager'
-import { initRoles, switchRole, getAllRoles, getCurrentRole, getRoleConfig, getRoleAssetsDir, getDisabledApps, getDetectedApps, getDetectedAppLabels, isAppFollowingEnabled, setAppFollowingEnabled, setDisabledApps } from './role-manager'
+import { getAllRoles, getRoleConfig, getRoleAssetsDir, getRoleAssetsRoot, getDisabledApps, getDetectedApps, getDetectedAppLabels, isAppFollowingEnabled, setAppFollowingEnabled, setDisabledApps } from './role-manager'
 import { getWorkspace, listWorkspaces } from './agent-workspace-store'
 import { BROWSER_APPS } from './app-detector'
 import { getExtensionPageHtml } from './extension-page'
@@ -87,7 +87,8 @@ import {
 } from './design-system-resource'
 import { getLocaleState, updateLocalePreference } from './locale-manager'
 import { isLocalePreference } from '../shared/i18n/contract'
-import { PAL_BASE_ROLE } from '../shared/pal-contract'
+import { DEFAULT_AGENT_ID } from '../shared/agent-identity'
+import { getAgent, listAgentSummaries } from './agent-registry'
 
 // Agent Runtime 全栈懒加载（同 ipc-handlers.ts），由 router 统一缓存与失败重试。
 const agentService = getAgentRuntime
@@ -474,27 +475,14 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       return
     }
 
-    // ---- Role API ----
-    if (url === '/role/init-state' && req.method === 'GET') {
-      json(res, 200, initRoles())
-      return
-    }
+    // ---- Role API（没有"当前角色"了：角色是每条对话自己的，只剩列表）----
     if (url === '/role/all' && req.method === 'GET') {
       json(res, 200, getAllRoles())
       return
     }
-    if (url === '/role/current' && req.method === 'GET') {
-      json(res, 200, getCurrentRole())
-      return
-    }
-    if (url === '/role/switch' && req.method === 'POST') {
-      try {
-        const { roleName } = JSON.parse(await readBody(req))
-        const role = switchRole(roleName)
-        json(res, 200, role)
-      } catch (err: any) {
-        json(res, requestErrorStatus(err, 400), { error: err.message })
-      }
+    // 统一身份：内置 + Pal + 模板一份列表（浏览器插件顶栏的选择器用）
+    if (url === '/api/agents' && req.method === 'GET') {
+      json(res, 200, listAgentSummaries())
       return
     }
 
@@ -545,14 +533,28 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       try {
         const body = JSON.parse(await readBody(req))
         // Stage 8: 接受 agentId / workspaceId,让 openpipal-acp 等外部 client 能创建关联自定义 Agent 的会话
-        // Pal / 模板的会话用中性角色（见 pal-contract）；显式给了 role 的照给
-        const conv = await createConversation(
-          body.role || ((body.workspaceId || body.agentId) ? PAL_BASE_ROLE : getCurrentRole().name),
-          body.title,
-          body.agentId,
-          body.workspaceId,
-          'acp'
-        )
+        // 统一身份：`agent`（内置名或 Pal id）一个字段就够；老字段 role / agentId / workspaceId 一版内照收
+        const target = typeof body.agent === 'string' && body.agent ? getAgent(body.agent) : undefined
+        if (typeof body.agent === 'string' && body.agent && !target) {
+          json(res, 400, { error: 'Unknown agent' })
+          return
+        }
+        const conv = target
+          ? await createConversation(
+            target.kind === 'builtin' ? target.id : DEFAULT_AGENT_ID,
+            body.title,
+            undefined,
+            target.kind === 'pal' ? target.id : undefined,
+            'acp'
+          )
+          // Pal 的会话 role 槽位给默认角色；显式给了 role 的照给。老字段 agentId（模板）并入 Pal 后当 workspaceId
+          : await createConversation(
+            body.role || DEFAULT_AGENT_ID,
+            body.title,
+            body.agentId,
+            body.workspaceId,
+            'acp'
+          )
         json(res, 200, conv)
       } catch (err: any) {
         json(res, requestErrorStatus(err, 400), { error: err.message })
@@ -994,7 +996,7 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
         // Freeze role ownership with the same conversation snapshot used for
         // overrides. A concurrent global role switch must not redirect this
         // turn's eventual memory extraction into another role.
-        const turnRoleName = conv?.role || getCurrentRole().name
+        const turnRoleName = conv?.role || DEFAULT_AGENT_ID
 
         // ACP 客户端是无状态的（每轮只发最新一条 user 消息）：
         // ① 先于任何注入/改写抓住"这轮真正新增了什么"供流结束后落盘（正文 + 工具轨迹）；
@@ -1052,7 +1054,6 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
         let overrides: ReturnType<typeof resolveAgentOverrides> | undefined
         if (conversationId) {
           overrides = resolveAgentOverrides({
-            agentId: conv?.agentId,
             workspaceId: conv?.workspaceId,
             conversationConfig: conv?.config,
             conversationId,
@@ -1257,8 +1258,8 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
       try {
         const body = JSON.parse(await readBody(req))
         if (!body.sourcePath) throw new Error('缺 sourcePath')
-        // 资产库按角色隔离：写到当前角色的 assets/<role>/ 子目录
-        const destDir = getRoleAssetsDir()
+        // 资产库按角色隔离：写到这条对话所属角色的 assets/<role>/ 子目录（调用方传 roleName，缺省默认角色）
+        const destDir = getRoleAssetsDir(body.roleName)
         require('fs').mkdirSync(destDir, { recursive: true })
         const origName = require('path').basename(body.sourcePath)
         let destName = origName
@@ -1340,8 +1341,8 @@ export function startHttpServer(port: number = PORT): ReturnType<typeof createSe
     if (url === '/api/assets/delete' && req.method === 'POST') {
       try {
         const body = JSON.parse(await readBody(req))
-        const root = getRoleAssetsDir()
-        if (!body.path || !body.path.startsWith(root)) throw new Error('拒绝删除当前角色资产目录外的文件')
+        const root = getRoleAssetsRoot() + require('path').sep
+        if (!body.path || !body.path.startsWith(root)) throw new Error('拒绝删除角色资产目录外的文件')
         require('fs').unlinkSync(body.path)
         json(res, 200, { ok: true })
       } catch (err: any) {

@@ -124,12 +124,13 @@ export function prepareDcForExport(content: string): { html: string; siblings: E
   return { html: out, siblings: ordered }
 }
 
-export function exportDcBundle(projectName: string, artifacts: DcExportItem[]): DcExportResult {
+export function exportDcBundle(projectName: string, artifacts: DcExportItem[], targetDir?: string): DcExportResult {
   try {
     const dcItems = artifacts.filter((a) => /<x-dc[\s>]/i.test(a.content || ''))
     if (!dcItems.length) return { ok: false, ...mainError('artifacts.shell.export.errors.noDcItems') }
 
-    const dir = path.join(OUTPUTS_ROOT, sanitizeName(projectName))
+    // targetDir：模型经 export_artifact 导出时传本会话的产物目录；用户点导出按钮的 IPC/HTTP 路径不传，落根
+    const dir = path.join(targetDir || OUTPUTS_ROOT, sanitizeName(projectName))
     fs.mkdirSync(path.join(dir, 'vendor'), { recursive: true })
 
     const runtime = dcRuntimeDir()

@@ -1,5 +1,5 @@
 import { memo, useEffect, useId, useRef } from 'react'
-import { ACCESSORY_BY_ID, hueVar, type AccessoryId, type MarkHue } from './accessories'
+import { ACCESSORY_BY_ID, accentFor, hueVar, type AccessoryId, type MarkHue } from './accessories'
 import { sample, staticFrame, type MarkClock, type MarkFrame, type MarkState } from './engine'
 import { eyePath, eyeTransform, r2, type MarkShape } from './geometry'
 import type { ExpressionId } from './expressions'
@@ -21,19 +21,28 @@ export interface AgentMarkProps {
   /** 显式指定表情（捏头像预览）；不给就按 state 映射 */
   expression?: ExpressionId | null
   accessory?: AccessoryId
+  /** 身体色。眼睛是纸色的洞，身体什么色都露得出来 */
   hue?: MarkHue
+  /** 配饰色；不给 = 身体色的搭子（搭配表头一个），老 mark.json 只有 hue 也照样两色 */
+  accent?: MarkHue
   /** 身体轮廓；不给 = 圆角方。眼睛与配饰不随它变 */
   shape?: MarkShape
   size?: number
   /** 只有当前可见且活跃的 Agent 才开动画；列表里的静态实例零 rAF */
   animated?: boolean
+  /**
+   * 叠放时给整个剪影（身体 + 配饰 + 状态点）描一圈背景色（--sw-mark-halo，默认纸色）：
+   * 前面的头把后面的头"抠"出一道缝，层级才看得出来。用 SVG 滤镜把整张图的 alpha 向外膨胀再填底色、垫在图下面，
+   * 所以围脖、公文包这些伸出身体的配饰也一起抠，不是只描身体轮廓（所有者 2026-09-16）。
+   */
+  halo?: boolean
   className?: string
   ariaLabel?: string
 }
 
 export const AgentMark = memo(function AgentMark({
-  state = 'idle', expression = null, accessory = 'none', hue = 'ink', shape = 'square',
-  size = 20, animated = false, className = '', ariaLabel,
+  state = 'idle', expression = null, accessory = 'none', hue = 'ink', accent, shape = 'square',
+  size = 20, animated = false, halo = false, className = '', ariaLabel,
 }: AgentMarkProps): React.JSX.Element {
   const maskId = useId().replace(/:/g, '')
   const svgRef = useRef<SVGSVGElement>(null)
@@ -42,7 +51,7 @@ export const AgentMark = memo(function AgentMark({
     state, prevState: state, expression, prevExpression: expression, since: 0, shape,
   })
   const lastBody = useRef<string | null>(null)
-  const color = hueVar(hue)
+  const color = hueVar(accent ?? accentFor(hue))
 
   // 切状态 = 记一次 since，morph 由 sample 按时间算，组件不持有中间态
   useEffect(() => {
@@ -150,8 +159,18 @@ export const AgentMark = memo(function AgentMark({
           <path ref={ref('eyeL')} fill="none" stroke="#000" strokeLinecap="round" />
           <path ref={ref('eyeR')} fill="none" stroke="#000" strokeLinecap="round" />
         </mask>
+        {/* 抠缝：整张图的 alpha 向外膨胀 5 单位（64 单位 = size px，16px 下约 1.25px）填底色，垫在原图下面。
+            滤镜区域放到 ±70，配饰最远伸到 ±56 也罩得住 */}
+        {halo && (
+          <filter id={`${maskId}h`} data-halo filterUnits="userSpaceOnUse" x="-70" y="-70" width="140" height="140">
+            <feMorphology in="SourceAlpha" operator="dilate" radius="5" result="fat" />
+            <feFlood style={{ floodColor: 'var(--sw-mark-halo, var(--sw-mark-paper))' }} result="tint" />
+            <feComposite in="tint" in2="fat" operator="in" result="halo" />
+            <feMerge><feMergeNode in="halo" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        )}
       </defs>
-      <g ref={ref('all')}>
+      <g ref={ref('all')} filter={halo ? `url(#${maskId}h)` : undefined}>
         <g ref={ref('rot')}>
           {RINGS.map((ring, i) => (
             <path key={`b${i}`} ref={ref(`ringB${i}`)} fill="none" stroke={ring.color}
@@ -163,7 +182,7 @@ export const AgentMark = memo(function AgentMark({
           {/* 纸色底：没有它，绕到背后的彩环会从眼睛的洞里冒出来 */}
           <g ref={ref('squash')}>
             <path ref={ref('bg')} fill="var(--sw-mark-paper)" />
-            <path ref={ref('fg')} fill="var(--sw-mark-ink)" mask={`url(#${maskId})`} />
+            <path ref={ref('fg')} fill={hueVar(hue)} mask={`url(#${maskId})`} />
           </g>
           <circle ref={ref('dot0')} cy={0} r={0} />
           <circle ref={ref('dot1')} cy={0} r={0} />

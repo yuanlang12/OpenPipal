@@ -28,7 +28,7 @@ const state = vi.hoisted(() => ({
 }))
 
 vi.mock('../../src/main/role-manager', () => ({
-  getCurrentRole: () => state.roles.general,
+  getDefaultRole: () => state.roles.general,
   getRoleConfig: (name: string) => state.roles[name] || null
 }))
 vi.mock('../../src/main/agent-workspace-store', () => ({

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
   tasks: new Map<string, any>(),
-  agentTemplates: new Map<string, any>(),
   workspaces: new Map<string, any>(),
   conversations: new Map<string, any>(),
   histories: new Map<string, any[]>(),
@@ -44,8 +43,10 @@ vi.mock('../../src/main/agent-runtime', () => ({
   })
 }))
 
-vi.mock('../../src/main/agent-template-manager', () => ({
-  getAgentTemplate: (id: string) => state.agentTemplates.get(id) ?? null
+// 模板已并入 Pal：老的 agentId 只在它是 Pal 目录时才算 workspaceId，这里没有 Pal 目录
+vi.mock('../../src/main/pal-id', () => ({
+  isPalId: (id: unknown) => typeof id === 'string' && state.workspaces.has(id),
+  palIdOf: (r: { workspaceId?: string; agentId?: string }) => r.workspaceId ?? (typeof r.agentId === 'string' && state.workspaces.has(r.agentId) ? r.agentId : undefined)
 }))
 
 vi.mock('../../src/main/conversation-store', () => ({
@@ -91,7 +92,7 @@ vi.mock('../../src/main/agent-workspace-store', () => ({
 }))
 
 vi.mock('../../src/main/role-manager', () => ({
-  getCurrentRole: () => ({ name: 'learner' }),
+  getDefaultRole: () => ({ name: 'general' }),
   getRoleConfig: (name: string) => ({ name })
 }))
 
@@ -123,7 +124,6 @@ async function waitForRunningSignal(): Promise<AbortSignal> {
 
 beforeEach(() => {
   state.tasks.clear()
-  state.agentTemplates.clear()
   state.workspaces.clear()
   state.conversations.clear()
   state.conversations.set('conversation-1', {
@@ -227,43 +227,6 @@ describe('scheduler Runtime safety', () => {
       goal
     })
     expect(state.agentCalls[0].overrides.systemPrompt).toContain('智能免打扰')
-  })
-
-  it('keeps an Agent template explicit working directory ahead of conversation config', async () => {
-    const roleBrief = { general: { taskType: 'agent task' } }
-    const goal = { text: 'finish agent task', status: 'active', turnsUsed: 0, maxTurns: 3, consecutiveBlocks: 0 }
-    state.agentTemplates.set('agent-1', {
-      systemPrompt: 'Agent template prompt',
-      tools: ['read', 'write'],
-      workingDir: '/agent/template'
-    })
-    state.tasks.set('task-1', task({ agentId: 'agent-1' }))
-    state.conversations.set('conversation-1', {
-      ...state.conversations.get('conversation-1'),
-      config: {
-        workingDir: '/conversation/config',
-        modelPresetId: 'agent-conversation-preset',
-        thinkingEnabled: false,
-        thinkingLevel: 'medium',
-        roleBrief,
-        goal
-      }
-    })
-    state.agentChat = async function* () {
-      yield { type: 'text', content: '任务完成' }
-    }
-
-    await scheduler.executeTask('task-1')
-
-    expect(state.agentCalls[0].overrides).toMatchObject({
-      workingDir: '/agent/template',
-      tools: ['read', 'write'],
-      modelPresetId: 'agent-conversation-preset',
-      thinkingEnabled: false,
-      thinkingLevel: 'medium',
-      roleBrief,
-      goal
-    })
   })
 
   it('lets an explicit conversation working directory win over the workspace default', async () => {

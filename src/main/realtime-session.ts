@@ -17,7 +17,7 @@ import type { DoubaoInterpretSession as DoubaoInterpretSessionType } from './dou
 import type { DoubaoDuplexSession as DoubaoDuplexSessionType } from './doubao-duplex-session'
 import { reduceVoiceTurn, TOOL_EXECUTED } from './voice-turn-policy'
 import type { AgentOverrides } from './agent-runtime/contracts'
-import { getCurrentRole } from './role-manager'
+import { DEFAULT_AGENT_ID } from '../shared/agent-identity'
 import { resolveAgentOverrides, resolveExecutionRoleName } from './agent-overrides'
 import type { ConversationConfig } from './conversation-store'
 import { mainError, type MainFailure } from './main-i18n'
@@ -87,7 +87,7 @@ let activeDuplex: DoubaoDuplexSessionType | null = null
 /** 当前是否走豆包同传:角色 = interpreter 且配了豆包凭证。返回豆包配置或 null。 */
 function interpretDoubaoConfig(roleName?: string): VoiceConfig | null {
   try {
-    if ((roleName || getCurrentRole().name) !== 'interpreter') return null
+    if ((roleName || DEFAULT_AGENT_ID) !== 'interpreter') return null
   } catch {
     return null
   }
@@ -136,7 +136,7 @@ export function setRealtimeLifecycleListener(
  * 获取 Realtime 配置（用于 renderer 查询当前 provider / 是否可用）
  * 数据源：config.json > .env > 默认值（由 getEffectiveVoiceConfig 负责）
  */
-export function getRealtimeConfig(): {
+export function getRealtimeConfig(roleName?: string): {
   provider: string
   url: string
   model: string
@@ -149,7 +149,8 @@ export function getRealtimeConfig(): {
   /** 播放采样率:多数 = sampleRate;豆包全双工出 24000(入 16k 出 24k 不对称) */
   outputSampleRate: number
 } {
-  const doubao = interpretDoubaoConfig()
+  // 同传的豆包通道按会话角色判：没有全局"当前角色"了，调用方（渲染层）把这条会话的角色传进来
+  const doubao = interpretDoubaoConfig(roleName)
   if (doubao) {
     return {
       provider: 'doubao',

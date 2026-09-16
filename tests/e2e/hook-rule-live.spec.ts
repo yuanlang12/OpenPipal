@@ -1,9 +1,10 @@
-import { expect, test, type Page } from '@playwright/test'
-import { cp, mkdtemp, mkdir, readFile, readdir, writeFile, rm } from 'node:fs/promises'
+import { expect, test } from '@playwright/test'
+import { cp, mkdtemp, mkdir, readdir, writeFile, rm } from 'node:fs/promises'
 import { appendFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { launchIsolatedElectron, type IsolatedElectron } from './helpers'
+import { drivePermissions, lastReply, realModelConfig, send, waitForTurn, type StoreWindow } from './live-helpers'
 
 /**
  * 规则（hook）整体验收 —— 用户一句话定规则，真 App 里从头到尾走一遍。
@@ -21,125 +22,12 @@ const NAMES = ['张三', '李四', '王五']
 
 const RULE_REQUEST = '以后读成绩表之前，先把学生的名字遮掉再给你看。这条规则以后一直生效，不只是这一次。'
 
-interface PresetLike {
-  name?: string
-  providerId?: string
-  config?: Record<string, unknown> & { model?: string; thinkingFormat?: string }
-}
-interface ProviderLike {
-  id: string
-  name?: string
-  provider?: string
-  baseUrl?: string
-  apiKey?: string
-  apiFormat?: string
-  thinkingFormat?: string
-  thinkingBudgets?: unknown
-}
-
-/**
- * 把用户真实配置里的模型抄进隔离 home。只在测试进程里抄，key 不经过任何日志或断言。
- *   OPENPIPAL_LIVE_PRESET=<子串>  从已保存的预设里按名字/模型名挑一个（默认端点配额用完时换别家）；
- *                                多个命中时优先不在 opencode 上的那个
- *   OPENPIPAL_LIVE_MODEL=<模型名>  只换模型名，端点与 key 照抄默认配置
- * 找不到预设时把可选的名字列出来（不含 key），省得去翻凭据文件。
- */
-async function realModelConfig(): Promise<Record<string, unknown> | null> {
-  let parsed: { modelConfig?: Record<string, unknown>; modelPresets?: PresetLike[]; modelProviders?: ProviderLike[] }
-  try {
-    parsed = JSON.parse(await readFile(join(homedir(), '.openpipal', 'config.json'), 'utf8'))
-  } catch {
-    return null
-  }
-  const presetQuery = process.env.OPENPIPAL_LIVE_PRESET?.trim().toLowerCase()
-  if (presetQuery) {
-    const providers = parsed.modelProviders || []
-    const resolve = (preset: PresetLike): Record<string, unknown> => {
-      const provider = preset.providerId ? providers.find(p => p.id === preset.providerId) : undefined
-      const cfg = preset.config || {}
-      if (!provider) return cfg
-      const modelFormat = cfg.thinkingFormat
-      return {
-        ...cfg,
-        provider: provider.provider,
-        baseUrl: provider.baseUrl,
-        apiKey: provider.apiKey,
-        ...(provider.apiFormat ? { apiFormat: provider.apiFormat } : {}),
-        thinkingFormat: modelFormat && modelFormat !== 'auto' ? modelFormat : (provider.thinkingFormat || modelFormat),
-        ...(Object.prototype.hasOwnProperty.call(cfg, 'thinkingBudgets') ? {} : { thinkingBudgets: provider.thinkingBudgets })
-      }
-    }
-    const label = (p: PresetLike): string => `${p.name || '?'} / ${p.config?.model || '?'}`
-    const matches = (parsed.modelPresets || [])
-      .filter(p => `${p.name || ''} ${p.config?.model || ''}`.toLowerCase().includes(presetQuery))
-      .map(p => ({ preset: p, config: resolve(p) }))
-      .filter(m => typeof m.config.apiKey === 'string' && m.config.apiKey)
-      .sort((a, b) => Number(String(a.config.baseUrl || '').includes('opencode')) - Number(String(b.config.baseUrl || '').includes('opencode')))
-    if (matches.length === 0) {
-      const available = (parsed.modelPresets || []).map(label).join('\n  ')
-      throw new Error(`没有名字或模型含「${presetQuery}」的预设。可选：\n  ${available || '（一个都没有）'}`)
-    }
-    console.log(`[验收] 预设 ${label(matches[0].preset)}（端点 ${new URL(String(matches[0].config.baseUrl || 'http://?')).host}）`)
-    return matches[0].config
-  }
-  if (!parsed?.modelConfig?.apiKey) return null
-  const override = process.env.OPENPIPAL_LIVE_MODEL
-  if (!override) return parsed.modelConfig
-  const { supportsThinking: _thinking, ...rest } = parsed.modelConfig
-  return { ...rest, model: override }
-}
-
-/** 一直盯着聊天区，出现权限卡就点「允许」。 */
-async function drivePermissions(page: Page, log: string[], deadline: number): Promise<void> {
-  while (Date.now() < deadline && !page.isClosed()) {
-    try {
-      const allow = page.getByRole('button', { name: '允许', exact: true }).first()
-      if (await allow.count() > 0 && await allow.isVisible().catch(() => false)) {
-        const card = allow.locator('xpath=ancestor::div[3]')
-        log.push((await card.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 200))
-        await allow.click()
-        await page.waitForTimeout(400)
-        continue
-      }
-      await page.waitForTimeout(700)
-    } catch {
-      return
-    }
-  }
-}
-
-type StoreWindow = Window & {
-  __chatStore?: { getState(): { isStreaming: boolean; messages: Array<{ role: string; content: unknown; messageKind?: string }> } }
-  __appStore?: { getState(): { setActiveView(view: string): void } }
-}
-
-/** 等这一轮真正开始又真正结束（isStreaming 先变 true 再变 false）。 */
-async function waitForTurn(page: Page, deadline: number): Promise<void> {
-  await page.waitForFunction(() => (window as StoreWindow).__chatStore?.getState().isStreaming === true, null, { timeout: 60_000 })
-  await page.waitForFunction(() => (window as StoreWindow).__chatStore?.getState().isStreaming === false, null, { timeout: Math.max(1000, deadline - Date.now()) })
-}
-
-async function lastReply(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const msgs = (window as StoreWindow).__chatStore?.getState().messages || []
-    const last = [...msgs].reverse().find(m => m.role === 'assistant' && (!m.messageKind || m.messageKind === 'assistant'))
-    return typeof last?.content === 'string' ? last.content : JSON.stringify(last?.content ?? '')
-  })
-}
-
 /** 隔离 home 跑完就删；把会话记录与规则文件先抄到产物目录，失败了才有得看（不抄 config.json，那里有 key） */
 async function preserveEvidence(home: string): Promise<void> {
   for (const rel of ['conversations', 'plugins']) {
     const from = join(home, '.openpipal', rel)
     await cp(from, join(ARTIFACTS, rel), { recursive: true }).catch(() => undefined)
   }
-}
-
-async function send(page: Page, text: string): Promise<void> {
-  const input = page.locator('textarea').first()
-  await input.waitFor({ state: 'visible', timeout: 60_000 })
-  await input.fill(text)
-  await page.locator('[data-testid="send-btn"]').first().click()
 }
 
 test.describe('规则整体验收（真模型）', () => {

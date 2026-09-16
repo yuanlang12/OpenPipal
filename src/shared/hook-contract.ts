@@ -8,10 +8,10 @@
  * 位置即范围：插件里的对所有 Agent 生效，Agent 目录里的只对它生效、跟着它走。
  */
 export interface HookSource {
-  kind: 'plugin' | 'agent'
-  /** 插件名 / 独立智能体 id */
+  kind: 'plugin' | 'agent' | 'team'
+  /** 插件名 / 独立智能体 id / 团队 id */
   id: string
-  /** 显示名：插件名 / 独立智能体名 */
+  /** 显示名：插件名 / 独立智能体名 / 团队名（频道规则是「团队 › 频道」） */
   name: string
 }
 

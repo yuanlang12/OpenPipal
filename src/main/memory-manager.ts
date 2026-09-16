@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, rea
 import { join, extname } from 'path'
 import { homedir } from 'os'
 import { getAgentOutputsDir, listWorkspaces } from './agent-workspace-store'
-import { getDataRoot } from './data-root'
+import { getDataRoot, isConversationOutputsDirName, outputsDirFor } from './data-root'
 
 export interface MemoryEntry {
   ts: number
@@ -96,12 +96,15 @@ export interface OutputHistoryEntry {
   scope: 'global' | 'agent'
   workspaceId?: string
   workspaceName?: string
+  /** 落在 outputs/<conversationId>/ 里的模型产物带上归属会话；根下的历史文件没有 */
+  conversationId?: string
 }
 
 function listOutputFiles(
   dir: string,
   scope: OutputHistoryEntry['scope'],
-  workspace?: { id: string; name: string }
+  workspace?: { id: string; name: string },
+  conversationId?: string
 ): OutputHistoryEntry[] {
   if (!existsSync(dir)) return []
   try {
@@ -119,12 +122,25 @@ function listOutputFiles(
             ext: extname(entry.name).slice(1).toLowerCase(),
             scope,
             workspaceId: workspace?.id,
-            workspaceName: workspace?.name
+            workspaceName: workspace?.name,
+            ...(conversationId ? { conversationId } : {})
           }]
         } catch {
           return []
         }
       })
+  } catch {
+    return []
+  }
+}
+
+/** outputs/ 下按会话分的子目录（名字是会话 UUID）；历史上手写进去的 bundle 目录不算，和以前一样不进索引 */
+function listConversationOutputDirs(dir: string): string[] {
+  if (!existsSync(dir)) return []
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && isConversationOutputsDirName(entry.name))
+      .map(entry => entry.name)
   } catch {
     return []
   }
@@ -136,6 +152,10 @@ function listOutputFiles(
  */
 export function listOutputHistory(): OutputHistoryEntry[] {
   const entries = listOutputFiles(GLOBAL_OUTPUTS_DIR, 'global')
+  // 模型产物按会话分目录（outputs/<conversationId>/，2026-09-12 起），「作品」页多进这一层
+  for (const name of listConversationOutputDirs(GLOBAL_OUTPUTS_DIR)) {
+    entries.push(...listOutputFiles(join(GLOBAL_OUTPUTS_DIR, name), 'global', undefined, name))
+  }
   try {
     for (const workspace of listWorkspaces()) {
       entries.push(...listOutputFiles(
@@ -156,10 +176,11 @@ export function listOutputHistory(): OutputHistoryEntry[] {
  * - 不传 → 全局会话，写入 ~/.openpipal/outputs/
  * 按 Agent 隔离产物，避免跨 Agent 的文件混淆。
  */
-export function saveOutput(title: string, content: string, workspaceId?: string): string {
+export function saveOutput(title: string, content: string, workspaceId?: string, conversationId?: string): string {
+  // 独立 Pal 按 Pal 隔离（agents/<id>/outputs/，租户规则已管着）；全局会话按会话分目录（outputs/<conversationId>/）
   const outputsDir = workspaceId
     ? join(OPENPIPAL_DIR, 'agents', workspaceId, 'outputs')
-    : GLOBAL_OUTPUTS_DIR
+    : outputsDirFor(conversationId)
   if (!existsSync(outputsDir)) {
     mkdirSync(outputsDir, { recursive: true })
   }

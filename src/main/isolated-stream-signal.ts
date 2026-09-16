@@ -421,7 +421,9 @@ export function isolateAbortSignalForStream(upstream: StreamFn, config: Isolated
         const delayMs = retryDelaysMs[Math.min(retriesUsed, retryDelaysMs.length - 1)]
         retriesUsed += 1
         try {
-          onStreamRetry?.({ attempt: retriesUsed, maxRetries: maxStreamRetries, delayMs, reason: end.reason })
+          // 给界面的"最多几次"要说实话：同一原因连撞 sameReasonMax 次就停，比总次数先到
+          const effectiveMax = sameReasonMax > 0 ? Math.min(maxStreamRetries, sameReasonMax) : maxStreamRetries
+          onStreamRetry?.({ attempt: retriesUsed, maxRetries: effectiveMax, delayMs, reason: end.reason })
         } catch {
           // 观测/提示失败不能改变重连本身的行为。
         }

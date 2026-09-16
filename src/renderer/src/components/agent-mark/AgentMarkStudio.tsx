@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
-import { ACCESSORIES, ACCESSORY_BY_ID, MARK_HUES, hueVar, type AccessoryId, type MarkHue } from './accessories'
+import { ACCESSORIES, ACCESSORY_BY_ID, MARK_HUES, accentFor, hueVar, type AccessoryId, type MarkHue } from './accessories'
 import { AgentMark } from './AgentMark'
 import type { MarkState } from './engine'
 import { MARK_SHAPES, r2, type MarkShape } from './geometry'
@@ -10,8 +10,9 @@ import { MARK_SHAPES, r2, type MarkShape } from './geometry'
  * 捏头像 —— 弹窗。
  *
  * 一条产品规则写进 UI 里：**眼睛不出现在选项里**。它是所有 Agent 共用的符号，
- * 用户能改的只有配饰和它自带的那点颜色。所以配饰格子里画的是**配饰本身**，
+ * 用户能改的是轮廓、配饰和两个颜色（身体一个、配饰一个）。所以配饰格子里画的是**配饰本身**，
  * 不再画一遍 logo —— 选的是配饰，就该看清配饰。
+ * 配饰色不选就按搭配表跟着身体色走（随机配头像也是这张表）；手捏不设限，九个色随便配。
  *
  * 落盘走 system-agents/<role>/mark.json（文件式 opt-in，同 layout.json），
  * 不给 agent.md 加任何 schema 字段。
@@ -20,7 +21,7 @@ import { MARK_SHAPES, r2, type MarkShape } from './geometry'
 const PREVIEW_STATES: MarkState[] = ['idle', 'thinking', 'generating', 'done', 'error']
 
 /** 只画配饰本身：挂到隐藏 <g> 上量一次 bbox，再据此定 viewBox，格子里就自动居中撑满。 */
-function AccessoryGlyph({ id, hue, size }: { id: AccessoryId; hue: MarkHue; size: number }): React.JSX.Element {
+function AccessoryGlyph({ id, tint, size }: { id: AccessoryId; tint: MarkHue; size: number }): React.JSX.Element {
   const acc = ACCESSORY_BY_ID.get(id)
   const groupRef = useRef<SVGGElement>(null)
   const [box, setBox] = useState('-32 -32 64 64')
@@ -44,20 +45,20 @@ function AccessoryGlyph({ id, hue, size }: { id: AccessoryId; hue: MarkHue; size
     )
   }
   return (
-    <svg width={size} height={size} viewBox={box} aria-hidden="true" style={{ color: hueVar(hue), overflow: 'visible' }}>
+    <svg width={size} height={size} viewBox={box} aria-hidden="true" style={{ color: hueVar(tint), overflow: 'visible' }}>
       <g ref={groupRef} dangerouslySetInnerHTML={{ __html: `${acc.behind ?? ''}${acc.front ?? ''}` }} />
     </svg>
   )
 }
 
 export interface AgentMarkStudioProps {
-  /** 'role' = 内置六角色（id 是角色名）；'agent' = 用户自建 Agent（id 是 workspace uuid） */
-  scope?: 'role' | 'agent'
+  /** 'role' = 内置六角色（id 是角色名）；'agent' = 用户自建 Agent（id 是 workspace uuid）；'team' = 团队（id 是团队 uuid） */
+  scope?: 'role' | 'agent' | 'team'
   roleName: string
   displayName?: string
-  initial?: { accessory?: AccessoryId; hue?: MarkHue; shape?: MarkShape }
+  initial?: { accessory?: AccessoryId; hue?: MarkHue; accent?: MarkHue; shape?: MarkShape }
   onClose: () => void
-  onSaved?: (config: { accessory: AccessoryId; hue: MarkHue; shape: MarkShape }) => void
+  onSaved?: (config: { accessory: AccessoryId; hue: MarkHue; accent: MarkHue; shape: MarkShape }) => void
 }
 
 /**
@@ -77,6 +78,9 @@ export function AgentMarkStudio({
   const { t } = useTranslation()
   const [accessory, setAccessory] = useState<AccessoryId>(initial?.accessory ?? 'none')
   const [hue, setHue] = useState<MarkHue>(initial?.hue ?? 'ink')
+  /** null = 没手选，跟着身体色自动搭 */
+  const [accent, setAccent] = useState<MarkHue | null>(initial?.accent ?? null)
+  const accentColor = accent ?? accentFor(hue)
   const [shape, setShape] = useState<MarkShape>(initial?.shape ?? 'square')
   const [state, setState] = useState<MarkState>('idle')
   const [saving, setSaving] = useState(false)
@@ -91,8 +95,8 @@ export function AgentMarkStudio({
   const save = async (): Promise<void> => {
     setSaving(true)
     try {
-      await window.api?.saveMark?.(scope, roleName, { accessory, hue, shape })
-      onSaved?.({ accessory, hue, shape })
+      await window.api?.saveMark?.(scope, roleName, { accessory, hue, accent: accentColor, shape })
+      onSaved?.({ accessory, hue, accent: accentColor, shape })
       onClose()
     } finally { setSaving(false) }
   }
@@ -184,7 +188,7 @@ export function AgentMarkStudio({
           <div className="shrink-0 w-[210px] flex flex-col items-center gap-4">
             {/* 盒子留足余量：配饰和执行态彩环都画在瓷砖外沿，mark 本体只占盒子的六成 */}
             <div ref={previewRef} className="w-[200px] h-[190px] grid place-items-center">
-              <AgentMark state={state} accessory={accessory} hue={hue} shape={shape} size={118} animated
+              <AgentMark state={state} accessory={accessory} hue={hue} accent={accentColor} shape={shape} size={118} animated
                 ariaLabel={`${displayName ?? roleName} · ${t(`agentMark.state.${state}`)}`} />
             </div>
             <div className="grid grid-cols-3 gap-1.5 w-full">
@@ -226,7 +230,7 @@ export function AgentMarkStudio({
                   className={`aspect-square grid place-items-center rounded-lg border transition-colors ${
                     accessory === a.id ? 'border-ink-primary bg-surface-50'
                       : 'border-transparent hover:border-surface-100 hover:bg-surface-50'}`}>
-                  <AccessoryGlyph id={a.id} hue={hue} size={34} />
+                  <AccessoryGlyph id={a.id} tint={accentColor} size={34} />
                 </button>
               ))}
             </div>
@@ -234,14 +238,23 @@ export function AgentMarkStudio({
             <h3 className="text-[11px] font-semibold uppercase tracking-wider text-surface-400 mb-2.5">
               {t('agentMark.sections.color')}
             </h3>
-            <div className="flex flex-wrap gap-2.5">
-              {MARK_HUES.map((h) => (
-                <button key={h} type="button" onClick={() => setHue(h)} title={t(`agentMark.hue.${h}`)}
-                  aria-label={t(`agentMark.hue.${h}`)}
-                  className={`w-7 h-7 rounded-full border-2 transition-transform ${
-                    hue === h ? 'border-ink-primary scale-110' : 'border-surface-100'}`}
-                  style={{ background: hueVar(h) }} />
+            {/* 两行色：身体 / 配饰。配饰行没手选时跟着身体色自动搭（accent 为 null），点了才定住 */}
+            <div className="flex flex-col gap-2.5" data-testid="mark-colors">
+              {([['body', hue, setHue], ['accessory', accentColor, setAccent]] as const).map(([of, picked, pick]) => (
+                <div key={of} className="flex items-center gap-3">
+                  <span className="w-8 shrink-0 text-[11px] text-surface-400">{t(`agentMark.colorOf.${of}`)}</span>
+                  <div className="flex flex-wrap gap-2.5" data-testid={`mark-color-${of}`}>
+                    {MARK_HUES.map((h) => (
+                      <button key={h} type="button" onClick={() => pick(h)} title={t(`agentMark.hue.${h}`)}
+                        aria-label={t(`agentMark.hue.${h}`)} aria-pressed={picked === h}
+                        className={`w-7 h-7 rounded-full border-2 transition-transform ${
+                          picked === h ? 'border-ink-primary scale-110' : 'border-surface-100'}`}
+                        style={{ background: hueVar(h) }} />
+                    ))}
+                  </div>
+                </div>
               ))}
+              <p className="text-[11px] text-surface-400">{t('agentMark.colorOf.hint')}</p>
             </div>
           </div>
         </div>

@@ -10,6 +10,49 @@ import {
 } from '../../src/renderer/src/components/agent-mark/geometry'
 import { neutralBody, sample, staticFrame } from '../../src/renderer/src/components/agent-mark/engine'
 import { exportViewBox } from '../../src/renderer/src/components/agent-mark/AgentMarkStudio'
+import { UNDRAWN_ACCESSORIES } from '../../src/renderer/src/components/agent-mark/accessories'
+import { ACCESSORY_IDS, MARK_ACCENTS, MARK_HUES, accentFor, composeMark, composeTeamMark } from '../../src/shared/agent-mark-catalog'
+
+describe('配饰清单', () => {
+  it('shared 清单里的每个配饰渲染层都画了（少画一个，组长挑了它的成员会静默变成"不戴"）', () => {
+    expect(UNDRAWN_ACCESSORIES).toEqual([])
+  })
+
+  it('按 id 组合的头像：确定性、Pal 避开团队的六边形 + 徽章、团队颜色按 id 散列', () => {
+    const id = 'a1a1a1a1-0000-4000-8000-000000000001'
+    expect(composeMark(id)).toEqual(composeMark(id))
+    expect(composeMark(id).shape).not.toBe('hexagon')
+    expect(['none', 'badge']).not.toContain(composeMark(id).accessory)
+    expect(composeMark(id, 'wrench').accessory).toBe('wrench')
+    expect(composeMark(id, 'unicorn').accessory).toBe(composeMark(id).accessory)
+    expect(ACCESSORY_IDS).toContain(composeMark(id).accessory)
+    expect(composeTeamMark(id)).toMatchObject({ accessory: 'badge', shape: 'hexagon' })
+    expect(composeTeamMark(id).hue).not.toBe('ink')
+  })
+
+  it('两层色：随机配出来的配饰色是身体色搭配表里的搭子，不和身体同色（所有者 2026-09-16：身体也要彩色，配饰另配色）', () => {
+    for (const hue of MARK_HUES) {
+      const [a, b] = MARK_ACCENTS[hue]
+      expect(a, hue).not.toBe(hue)
+      expect(b, hue).not.toBe(hue)
+      expect(a, hue).not.toBe(b)
+      expect([a, b], hue).not.toContain('ink') // 配饰色只在八个彩色里挑；墨色留给身体
+      expect(accentFor(hue, 0)).toBe(a)
+      expect(accentFor(hue, 1)).toBe(b)
+      expect(accentFor(hue, 7)).toBe(b)
+    }
+    const seeds = Array.from({ length: 40 }, (_, i) => `seed-${i}-a1a1a1a1-0000-4000-8000-00000000000${i % 10}`)
+    const picks = new Set<string>()
+    for (const seed of seeds) {
+      for (const mark of [composeMark(seed), composeTeamMark(seed)]) {
+        expect(MARK_ACCENTS[mark.hue], seed).toContain(mark.accent)
+        expect(mark.accent, seed).not.toBe(mark.hue)
+        picks.add(`${mark.hue}+${mark.accent}`)
+      }
+    }
+    expect(picks.size).toBeGreaterThan(8) // 每个身体色两个搭子，散列真的用到了第二个
+  })
+})
 
 describe('轮廓剖面', () => {
   it('六种轮廓各 64 个半径，都在 (0, 1.5·HALF] 内（圆角方的对角就到 41），左右对称', () => {

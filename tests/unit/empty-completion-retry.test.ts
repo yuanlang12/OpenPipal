@@ -138,11 +138,18 @@ describe('上下文溢出分型与自愈', () => {
     timestamp: Date.now()
   } as AgentMessage)
 
-  it('length+近零输出判定为溢出；大输出靠载荷占窗口比例兜底；非 length 一律不算', () => {
+  it('窗口未知：length+近零输出按指纹判溢出；窗口已知：只看载荷占比；非 length 一律不算', () => {
     expect(isContextOverflowCompletion(overflowReply(2))).toBe(true)
     expect(isContextOverflowCompletion(overflowReply(2000))).toBe(false)
     expect(isContextOverflowCompletion(overflowReply(2000), 131_072)).toBe(true)
+    expect(isContextOverflowCompletion(overflowReply(2), 131_072)).toBe(true)
     expect(isContextOverflowCompletion(assistant([], 'stop'))).toBe(false)
+  })
+
+  it('2026-09-10 实撞：载荷 10.7 万对 100 万窗口、输出近零的 length 不是溢出（是输出被截断），不许报窗口上限', () => {
+    expect(isContextOverflowCompletion(overflowReply(2), 1_000_000)).toBe(false)
+    // 窗口已知但这轮没报 usage：证据不够，不当溢出处理
+    expect(isContextOverflowCompletion({ ...overflowReply(2), usage: undefined } as AgentMessage, 1_000_000)).toBe(false)
   })
 
   it('溢出时走压缩自愈而不是续跑提示，重试成功后不置位 overflow', async () => {

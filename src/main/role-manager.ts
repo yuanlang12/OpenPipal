@@ -1,4 +1,4 @@
-import { loadConfig, saveConfig } from './config-manager'
+import { DEFAULT_AGENT_ID, type AgentMark } from '../shared/agent-identity'
 import * as fs from 'fs'
 import { join, basename, resolve, sep } from 'path'
 import { homedir } from 'os'
@@ -51,7 +51,7 @@ export interface RoleConfig {
    * 捏头像存的配饰组合 —— 派生字段(非 agent.md 持久配置)。
    * 来源:system-agents/<role>/mark.json 存在即读。眼型是核心符号,不在这里,也不许改。
    */
-  mark?: { accessory?: string; hue?: string; shape?: string }
+  mark?: AgentMark
   /**
    * 文件式角色级记忆开关——agent.md frontmatter `memory: off` 关闭注入+抽取。
    * 缺省/其它值 = true（记忆照常）。design 关闭：跨会话偏好走设计系统/资产显式通道，
@@ -86,11 +86,18 @@ export const COMMON_TOOLS = [
   'execute_code',
   // 任务管理（定时 / webhook / 门控）
   'manage_task',
+  // 团队自己的事（改名 / 章程 / 名单）——只在团队话题里、只给 Lead 注入
+  'manage_team',
+  // 跨会话：列 / 读 / 发消息到这台机器上的其他单对话（conversation-peer）。内置角色默认有；
+  // 独立 Pal 要在 tools/config.json 的 enabledTools 里点名（PAL_OPT_IN_TOOLS）
+  'conversations',
   // 定规则：把用户"以后都要…"的要求递交后台写成 hook（hooks/set-rule-tool）
   'set_rule',
   // Phase 6d：环境感知 + 内容呈现（渐进式披露——AI 按需调 get_environment）
   'get_environment',
   'present_to_user',
+  // 预制件拷进工作区（对标原版 design agent 的 copy_starter_component；dc-runtime 目录里有什么就能拷什么）
+  'copy_starter_component',
   // subagent —— 委派子任务到隔离上下文的子 agent（~/.openpipal/subagents/*.md 定义档位）
   'subagent',
   // 浏览器控制（chrome.debugger，经扩展作用于真实 Chrome profile）—— 仅扩展连上时注入
@@ -114,6 +121,12 @@ export const COMMON_TOOLS = [
   'find',
   'grep'
 ]
+
+/**
+ * 独立 Pal 默认拿不到、要在自己的 agents/<id>/tools/config.json 里写 `enabledTools: ["…"]` 才有的工具。
+ * 内置角色不受此表影响（agent.md 的 `tools: *` 展开成整张 COMMON_TOOLS）。
+ */
+export const PAL_OPT_IN_TOOLS: readonly string[] = ['conversations']
 
 export const GENERAL_SYSTEM_PROMPT = `你是 OpenPipal，一个通用 AI 助手，帮助用户完成分析、创作、学习、办公和操作任务。
 
@@ -145,10 +158,7 @@ const BUILTIN_ROLES: Record<string, RoleConfig> = {
   ...buildCodingRole(COMMON_TOOLS)
 }
 
-let currentRole: RoleConfig = BUILTIN_ROLES.general
-
-// initRoles() 在启动路径上被调用多次（module load / IPC role:get-init-state / app.whenReady /
-// HTTP /role/init-state），但 seedSystemAgents 每次都要为每个角色读文件 + 算 SHA-256 hash-diff——
+// initRoles() 在启动路径上可能被调用多次，但 seedSystemAgents 每次都要为每个角色读文件 + 算 SHA-256 hash-diff——
 // 同进程内只需播种一次。BUILTIN_ROLES 是固定常量集，当前没有"运行时新增角色需要重新 seed"的合法路径，
 // 因此不留 force 参数；如未来出现该路径，再补一个显式 force 入口即可。
 let seededThisProcess = false
@@ -226,56 +236,40 @@ function readRoleAvatarDataUrl(roleName: string): string | undefined {
   return undefined
 }
 
+/**
+ * 启动时播种内置角色的 agent.md（已存在则不覆盖），并返回默认角色。
+ * 没有"全局当前角色"这回事了（统一身份第 4 段）：角色是每条对话自己的事，这里不再读写配置里的角色字段。
+ */
 export function initRoles(): { hasRole: boolean; role: RoleConfig } {
-  // 首启种子：把代码里的 4 个 role 写成 md 文件（已存在则不覆盖）——同进程内只播种一次
   if (!seededThisProcess) {
     seedSystemAgents(BUILTIN_ROLES, COMMON_TOOLS)
     seededThisProcess = true
   }
-
-  const config = loadConfig()
-  if (config.role) {
-    const resolved = resolveRole(config.role)
-    if (resolved) {
-      currentRole = resolved
-      console.log(`[Role] 加载角色: ${currentRole.displayName}（来源：${loadRoleFromDisk(config.role, COMMON_TOOLS) ? '文件' : '代码'}）`)
-      return { hasRole: true, role: currentRole }
-    }
-  }
-  // 未配置角色 → 落盘默认 general(通用助手),新用户开箱即用,不再弹强制选择
-  config.role = currentRole.name
-  saveConfig(config)
-  console.log(`[Role] 未配置角色,自动使用默认: ${currentRole.displayName}`)
-  return { hasRole: true, role: currentRole }
-}
-
-export function switchRole(roleName: string): RoleConfig | null {
-  const role = resolveRole(roleName)
-  if (!role) return null
-  currentRole = role
-  const config = loadConfig()
-  config.role = roleName
-  saveConfig(config)
-  console.log(`[Role] 切换角色: ${role.displayName}`)
-  return role
+  return { hasRole: true, role: getDefaultRole() }
 }
 
 /**
- * 返回当前角色。每次调用都**重新**从磁盘读——这样用户改了 agent.md 后，
- * 下一轮对话就能用上新 prompt，不需要重启 app
+ * 默认角色 = 通用助手。只给"这次执行没有任何身份线索"的兜底用（新会话没落盘、老任务没记 role）——
+ * 有会话就按会话记录的 role / agent 走，永远不要拿它当"用户现在选的角色"。
+ * 每次调用都**重新**从磁盘读，用户改了 agent.md 下一轮就能用上新 prompt。
  */
-export function getCurrentRole(): RoleConfig {
-  const fresh = resolveRole(currentRole.name)
-  if (fresh) currentRole = fresh
-  return currentRole
+export function getDefaultRole(): RoleConfig {
+  return resolveRole(DEFAULT_AGENT_ID) || BUILTIN_ROLES.general
+}
+
+/** 所有内置角色资产库的父目录：~/.openpipal/workspace/assets/ */
+export function getRoleAssetsRoot(): string {
+  return dataPath('workspace', 'assets')
 }
 
 /**
- * 当前角色的资产库目录：~/.openpipal/workspace/assets/<role>/（按角色隔离）。
+ * 某个内置角色的资产库目录：~/.openpipal/workspace/assets/<role>/（按角色隔离）。
+ * 调用方传"这条对话属于哪个角色"；认不出的角色名回落到默认角色（不是"当前角色"——那个概念已经没了）。
  * 单一来源——IPC（ipc-handlers）与 HTTP 镜像（http-server）共用，避免路径公式散落。
  */
-export function getRoleAssetsDir(): string {
-  return dataPath('workspace', 'assets', getCurrentRole().name)
+export function getRoleAssetsDir(roleName?: string): string {
+  const name = roleName && isBuiltinRoleName(roleName) ? roleName : DEFAULT_AGENT_ID
+  return join(getRoleAssetsRoot(), name)
 }
 
 export interface RoleAssetEntry { fileName: string; path: string; sizeBytes: number }
@@ -290,8 +284,8 @@ export interface RoleAssetsTree {
  * 扫当前角色资产库（纯素材文件：logo/截图/brief 等）。单一来源——IPC 与 HTTP 镜像共用。
  * 文件扁平存根目录（历史约定，category 只是元数据标签）；子文件夹忽略。
  */
-export function listRoleAssets(): RoleAssetsTree {
-  const root = getRoleAssetsDir()
+export function listRoleAssets(roleName?: string): RoleAssetsTree {
+  const root = getRoleAssetsDir(roleName)
   const result: RoleAssetsTree = { brand: [], refs: [], docs: [], kits: [] }
   try {
     const entries = fs.readdirSync(root, { withFileTypes: true })
@@ -318,8 +312,8 @@ export function getRoleSystemEntryFile(dirPath: string): '风格.md' | 'SKILL.md
   return null
 }
 
-export function listRoleSystemFolders(): Array<{ name: string; path: string; description?: string; entryFile: string }> {
-  const root = getRoleAssetsDir()
+export function listRoleSystemFolders(roleName?: string): Array<{ name: string; path: string; description?: string; entryFile: string }> {
+  const root = getRoleAssetsDir(roleName)
   const out: Array<{ name: string; path: string; description?: string; entryFile: string }> = []
   try {
     for (const e of fs.readdirSync(root, { withFileTypes: true })) {
@@ -345,7 +339,8 @@ export interface RoleSystemTreeEntry { name: string; kind: 'dir' | 'file'; sizeB
  * 递归一次给全（档案很小，左侧目录树需要完整结构）；文件夹排前、按名排序、跳过隐藏文件、深度上限防环。
  */
 export function listRoleSystemTree(dirPath: string, depth = 0): RoleSystemTreeEntry[] {
-  const root = resolve(getRoleAssetsDir())
+  // 边界是所有角色资产库的父目录：调用方传的是某个角色 assets/<role>/<系统>/ 下的路径，不能按默认角色卡
+  const root = resolve(getRoleAssetsRoot())
   const target = resolve(dirPath)
   if ((target !== root && !target.startsWith(root + sep)) || depth > 6) return []
   const out: RoleSystemTreeEntry[] = []
@@ -650,15 +645,6 @@ export function getAllRoles(): RoleConfig[] {
  */
 export function getRoleConfig(roleName: string): RoleConfig | null {
   return resolveRole(roleName)
-}
-
-/**
- * 检查工具是否允许使用
- * 内置工具按角色白名单过滤，MCP 工具对所有角色开放
- */
-export function isToolAllowed(toolName: string, isMcp: boolean): boolean {
-  if (isMcp) return true
-  return currentRole.tools.includes(toolName)
 }
 
 /**

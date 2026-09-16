@@ -31,7 +31,7 @@ type ViewMode = 'preview' | 'code'
  * questions 类型 artifact 的渲染器——读 pendingQuestionsV2 的 artifactId 判断是否已回答。
  * streaming=true 时是流式生成中的临时预览稿:跳过 answered 判断,渐进渲染已成型的问题,提交禁用。
  */
-function QuestionsArtifactView({ artifactId, fallbackTitle, content, streaming }: { artifactId: string; fallbackTitle?: string; content: string; streaming?: boolean }) {
+function QuestionsArtifactView({ artifactId, fallbackTitle, content, streaming, toolbarHost }: { artifactId: string; fallbackTitle?: string; content: string; streaming?: boolean; toolbarHost?: HTMLElement | null }) {
   const { t } = useTranslation()
   const pending = useChatStore(s => s.pendingQuestionsV2)
   const submitQuestionsV2 = useChatStore(s => s.submitQuestionsV2)
@@ -61,7 +61,8 @@ function QuestionsArtifactView({ artifactId, fallbackTitle, content, streaming }
       title={payload.title}
       questions={payload.questions}
       streaming={streaming}
-      onSubmit={(answers, images, files) => submitQuestionsV2(answers, currentRole?.name || 'learner', images, files)}
+      toolbarHost={toolbarHost}
+      onSubmit={(answers, images, files) => submitQuestionsV2(answers, currentRole?.name || 'general', images, files)}
     />
   )
 }
@@ -765,6 +766,7 @@ export function ArtifactTab({ artifactId }: { artifactId: string }) {
                   fallbackTitle={data.titleKey ? t(data.titleKey) : data.title}
                   content={content}
                   streaming={isStreaming}
+                  toolbarHost={previewToolbarHost}
                 />
               case 'todos':
                 return <TodosArtifactView content={content} />

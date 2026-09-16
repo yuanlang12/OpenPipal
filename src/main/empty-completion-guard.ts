@@ -60,12 +60,16 @@ export function isContextOverflowCompletion(
   const msg = message as AssistantMessageLike | undefined
   if (!msg || msg.role !== 'assistant' || msg.stopReason !== 'length') return false
   const usage = msg.usage
-  if ((usage?.output ?? 0) <= 64) return true
-  if (contextWindow && contextWindow > 0 && usage) {
+  // 窗口已知：只信载荷占比。2026-09-10 实撞：deepseek-flash 载荷 10.7 万、窗口 100 万（实测能收 104 万），
+  // 模型是在写长命令时撞了输出上限、下一轮又空着 length 结束——按"输出近零"判成窗口溢出是误报，
+  // 正确出路是让模型重发（pi 已把截断的工具调用退回给它），不是压缩历史或叫用户开新会话。
+  if (contextWindow && contextWindow > 0) {
+    if (!usage) return false
     const promptTokens = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0)
-    if (promptTokens >= contextWindow * 0.9) return true
+    return promptTokens >= contextWindow * 0.9
   }
-  return false
+  // 窗口未知才退回指纹：length 截停 + 输出近零（max_tokens 被夹到贴地）
+  return (usage?.output ?? 0) <= 64
 }
 
 function lastAssistantSince(messages: AgentMessage[], startIndex: number): AgentMessage | undefined {

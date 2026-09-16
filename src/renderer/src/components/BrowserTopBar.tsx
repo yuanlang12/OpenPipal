@@ -13,14 +13,14 @@ import { HistoryPopover } from './HistoryPopover'
  */
 export function BrowserTopBar() {
   const { t } = useTranslation()
-  const currentRole = useAppStore(s => s.currentRole)
   const setActiveView = useAppStore(s => s.setActiveView)
   const newConversation = useChatStore(s => s.newConversation)
 
   const handleNew = useCallback(async () => {
-    await newConversation(currentRole?.name || 'learner')
+    // 所见即所得：与桌面「新建对话」一致，固定通用助手（欢迎页可再选）
+    await newConversation('general')
     setActiveView('chat')
-  }, [newConversation, currentRole?.name, setActiveView])
+  }, [newConversation, setActiveView])
 
   return (
     <div className="flex items-center w-full h-full px-2 gap-1">

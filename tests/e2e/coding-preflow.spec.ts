@@ -48,6 +48,7 @@ window.api = {
   ],
   getCurrentRole: async () => ({ name: 'general', displayName: '通用助手', icon: '✦' }),
   switchRole: async (name) => ({ name, displayName: name === 'coding' ? '编码助手' : '通用助手', icon: '💻' }),
+  listAgents: async () => [{ id: 'general', kind: 'builtin', name: '通用助手' }, { id: 'coding', kind: 'builtin', name: '编码助手', permissionTier: 'allowed' }],
   getRolePreflow: async (roleName) => roleName === 'coding' ? ${JSON.stringify(CODING_MANIFEST)} : null,
   selectDirectory: async () => { window.__mockCalls.push(['selectDirectory']); return '/Users/x/code/checkout-service'; },
   validateWorkingDir: async () => ({ ok: true }),

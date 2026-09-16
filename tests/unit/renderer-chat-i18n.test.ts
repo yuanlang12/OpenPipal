@@ -258,7 +258,7 @@ describe('renderer chat i18n', () => {
     expect(codeExecution).toContain('{exec.stderr}')
     expect(codeExecution).toContain("typeof value.code !== 'string'")
     expect(memoryNotice).toContain('{ name: m.name, scope }')
-    expect(memoryNotice).toContain("{ count, summary }")
+    expect(memoryNotice).toContain("{ team, count, summary }")
     expect(searchResult).toContain('{message.searchResults}')
     expect(screenshot).toContain('`data:image/jpeg;base64,${screenshot}`')
     expect(mermaid).toContain('detail: e instanceof Error ? e.message : null')

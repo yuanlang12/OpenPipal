@@ -35,4 +35,21 @@ describe('listOutputHistory', () => {
       expect.objectContaining({ name: 'Agent 汇报.pptx', scope: 'agent', workspaceId: workspace.id, workspaceName: '研究 Agent', ext: 'pptx' })
     ]))
   })
+
+  it('多进会话 UUID 命名的子目录（模型产物按会话分目录），历史手写的 bundle 目录与 .self-check 不进', () => {
+    const globalDir = path.join(TMP, '.openpipal', 'outputs')
+    const conv = '0f9c1a2b-3d4e-4f60-8a7b-9c0d1e2f3a4b'
+    fs.mkdirSync(path.join(globalDir, conv, '.self-check'), { recursive: true })
+    fs.writeFileSync(path.join(globalDir, conv, '会话报告.pdf'), 'conv')
+    fs.writeFileSync(path.join(globalDir, conv, '.self-check', 'artifact-1.png'), 'png')
+    fs.mkdirSync(path.join(globalDir, '手写的项目'), { recursive: true })
+    fs.writeFileSync(path.join(globalDir, '手写的项目', 'index.html'), 'legacy')
+
+    const names = listOutputHistory().map(e => e.name)
+    expect(listOutputHistory()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: '会话报告.pdf', scope: 'global', conversationId: conv })
+    ]))
+    expect(names).not.toContain('artifact-1.png')
+    expect(names).not.toContain('index.html')
+  })
 })

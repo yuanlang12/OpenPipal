@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next'
+import { parsePeerMessage } from '../../../shared/peer-message-contract'
 import type { ChatMessage } from '../types'
 import { parseModelStallNotice, parseStreamRetryNotice } from '../../../shared/runtime-notice'
 
@@ -16,7 +17,10 @@ export function formatMessageContentForDisplay(
   t: TFunction
 ): string {
   let display = message.content
-  if (message.role === 'user') {
+  if (message.role === 'user' && message.messageKind === 'peer-message') {
+    // 头尾两行是给模型看的说明；界面只留正文，来源另标
+    display = parsePeerMessage(display)?.body ?? display
+  } else if (message.role === 'user') {
     const titled = QUESTIONS_ANSWERED_TITLE.exec(display)
     if (titled) {
       display = `${t('chat.message.questionsAnsweredWithTitle', { title: titled[1] })}${display.slice(titled[0].length)}`

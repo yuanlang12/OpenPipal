@@ -186,4 +186,4 @@ description: 单页印刷品——传单、海报、公告、证书、奖状。�
 3. 目视四件事：有没有被裁掉的内容、相邻文本的包围盒有没有相交、灰度下层级是否成立、
    五 W 是不是聚在一块。
 4. 双面传单：两面都要填满，第二面不能只有半屏内容。
-5. 要成品文件就 `export_artifact(format='pdf')`，落 `~/.openpipal/outputs/`。
+5. 要成品文件就 `export_artifact(format='pdf')`，落本会话的 `~/.openpipal/outputs/<会话id>/`（回执里带路径）。

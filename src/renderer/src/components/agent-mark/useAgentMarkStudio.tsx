@@ -7,8 +7,8 @@ import { getMarkOverride, setMarkOverride, type MarkOverride } from './markStore
  * 免得每个宿主各写一遍 open/close 和保存后的刷新。
  */
 export interface MarkStudioTarget {
-  /** 'role' = 内置角色；'agent' = 用户自建 Agent（id 传 workspace uuid） */
-  scope?: 'role' | 'agent'
+  /** 'role' = 内置角色；'agent' = 用户自建 Agent（id 传 workspace uuid）；'team' = 团队 */
+  scope?: 'role' | 'agent' | 'team'
   roleName: string
   displayName?: string
   initial?: MarkOverride

@@ -1,8 +1,9 @@
 import { homedir } from 'os'
 import { join } from 'path'
 import { TOOL_RULES } from '../app-config'
-import { resolveExecutionRoleName } from '../agent-overrides'
+import { resolveExecutionAgent, resolveExecutionRoleName } from '../agent-overrides'
 import { readMeMd, readToolsConfig } from '../agent-workspace-store'
+import { intersectToolsConfig, resolveTeamScope } from '../team-store'
 import { listConversationArtifacts, coarseTypeFromFile } from '../artifact-store'
 import { getArtifactStore } from '../artifact-registry'
 import { conversationUploadsDir } from '../chat-uploads'
@@ -13,10 +14,10 @@ import { buildMemoryContext } from '../memory-store'
 import { formatMemoriesForPrompt, getRecentMemories } from '../memory-manager'
 import { getMcpToolIndex, hasVisibleMcpServer } from '../mcp-manager'
 import { buildModelPromptAdapterSection } from '../model-prompt-adapter'
-import { getCurrentRole, getRoleConfig } from '../role-manager'
-import { getCurrentConfig, isDockedToTargetApp } from '../window-tracker'
+import { getDefaultRole, getRoleConfig } from '../role-manager'
+import { getCurrentConfig, getEnvironmentSnapshot, isDockedToTargetApp } from '../window-tracker'
 import type { AgentOverrides, ChatSource } from './contracts'
-import { dataPath } from '../data-root'
+import { dataPath, outputsDirFor } from '../data-root'
 import { buildProjectContextPrompt, projectContextSnapshot } from './project-context'
 
 function escapeXml(value: string): string {
@@ -40,9 +41,9 @@ export function platformShellNote(platform: NodeJS.Platform = process.platform):
  */
 function buildWorkspaceLayoutPrompt(
   workspaceId: string | undefined,
-  roleName: string,
   memoryEnabled: boolean,
-  workingDir: string
+  workingDir: string,
+  assetLibrary: string
 ): string {
   const home = process.env.HOME || '~'
   // 记忆关闭时整段撤掉：留着等于让模型照着一个用户已关掉的子系统读写，属悬空指令
@@ -99,7 +100,6 @@ ${memoryFormat}${meMdSection}
 
   // 工作目录会跟着用户选的项目走，资产库不会——它是本助手的跨会话素材，永远住在数据目录里。
   // 两者曾经共用一个变量，于是用户一选仓库，资产库路径就跟着漂进了别人的项目里。
-  const assetLibrary = `${dataPath('workspace')}/assets/${roleName}/`
   const globalMemoryRules = memoryEnabled
     ? `- 新记忆 → \`write\` 到 \`${home}/.openpipal/memory/{topic}.md\`\n- 搜索记忆 → \`grep\` 搜索 \`${home}/.openpipal/memory/\`\n`
     : ''
@@ -113,11 +113,11 @@ ${memoryFormat}${meMdSection}
 \`\`\`
 ${home}/.openpipal/
 ├── workspace/                 # 默认工作目录与素材区（用户没另选目录时就在这里干活）
-│   └── assets/${roleName}/      # ⭐ 本助手专属资产库（按角色隔离；需要素材时 ls/read）
+│   └── assets/<助手>/          # 内置助手各自的资产库；本助手的在 ${assetLibrary} ⭐（需要素材时 ls/read）
 ├── skills/{name}/SKILL.md     # 全局技能库
 ├── memory/{name}.md            # 全局记忆
 ├── agents/{id}/                # 独立 Agent 工作空间
-└── outputs/                    # generate_document 产出
+└── outputs/<会话id>/            # 本会话的导出文件、生成的文档、自检截图（根下是历史遗留，别的会话的目录不属于本次）
 \`\`\`
 
 **规则：**
@@ -258,7 +258,7 @@ function buildPermissionTierPrompt(tier: AgentOverrides['permissionTier']): stri
 }
 
 export interface PreparedOpenPipalSystemPrompt {
-  skillContext: { workspaceId?: string; roleName: string }
+  skillContext: { workspaceId?: string; roleName: string; agentId?: string }
   render(skillPromptSection?: string): string
 }
 
@@ -273,18 +273,22 @@ export function prepareOpenPipalSystemPrompt(
   // roleName contract (voice/subagent compatibility paths) fall back to the UI
   // default, and that fallback is still captured synchronously here.
   const executionRoleName = resolveExecutionRoleName(overrides)
-  const role = getRoleConfig(executionRoleName) || getCurrentRole()
+  const role = getRoleConfig(executionRoleName) || getDefaultRole()
+  // 统一身份：记忆开关、素材库、记忆命名空间、技能作用域都从这个 Agent 的档案取（内置角色的档案与角色表同源）
+  const agent = resolveExecutionAgent(overrides)
   // pi-core loads skills asynchronously after this preparation step. Pin the
   // compatibility resolution onto the same overrides object so its later tool
   // composition cannot observe another conversation's global role.
   if (overrides && overrides.roleName === undefined) overrides.roleName = role.name
+  if (overrides && overrides.agentId === undefined) overrides.agentId = agent.id
   const stablePrefix = !!options?.stablePrefix
   const basePrompt = overrides?.systemPrompt || role.systemPrompt
   const modelAdapter = buildModelPromptAdapterSection(options?.modelConfig)
   // 记忆总闸：全局开关关掉时，注入与提示词里的记忆指引一并撤掉，避免"半关"
-  const memoryOn = isAutoMemoryEnabled() && role.memoryEnabled !== false
+  const memoryOn = isAutoMemoryEnabled() && agent.policies.memory
   const effectiveWorkingDir = resolveOpenPipalWorkingDirectory(overrides).workingDir
-  const workspace = buildWorkspaceLayoutPrompt(overrides?.workspaceId, role.name, memoryOn, effectiveWorkingDir)
+  const assetLibrary = `${agent.assetsDir}/`
+  const workspace = buildWorkspaceLayoutPrompt(overrides?.workspaceId, memoryOn, effectiveWorkingDir, assetLibrary)
   // 项目入口文档（AGENTS.md / CLAUDE.md）：只有工作目录确实指向用户的项目、且那里真有
   // 这份文件时才有内容。默认工作目录在 Agent 自己的数据区，project-context 直接返回空串
   // ——不用这个能力的会话在提示词里看不到任何痕迹。
@@ -314,8 +318,9 @@ export function prepareOpenPipalSystemPrompt(
   const memories = !memoryOn
     ? ''
     : (stablePrefix && overrides?.conversationId
-        ? memoryContext(overrides.conversationId, role.name)
-        : (buildMemoryContext(overrides?.conversationId) || formatMemoriesForPrompt(getRecentMemories(role.name, 5))))
+        // 记忆命名空间按 Agent 分：Pal 不再和通用助手共用 memory/general/
+        ? memoryContext(overrides.conversationId, agent.id)
+        : (buildMemoryContext(overrides?.conversationId) || formatMemoriesForPrompt(getRecentMemories(agent.id, 5))))
   const cliAndMcp = getMcpToolIndex(overrides?.conversationId) + formatCliPrompt()
   const toolNamesTokens = Math.ceil(cliAndMcp.length / 4)
   const toolNamesThreshold = 200_000 * 0.10
@@ -330,7 +335,7 @@ export function prepareOpenPipalSystemPrompt(
   const brief = buildConversationBriefPrompt(overrides, role.name, projectContext !== '')
   const artifacts = stablePrefix ? '' : buildArtifactInventoryPrompt(overrides?.conversationId)
   return {
-    skillContext: { workspaceId: overrides?.workspaceId, roleName: role.name },
+    skillContext: { workspaceId: overrides?.workspaceId, roleName: role.name, agentId: agent.id },
     render(skillPromptSection = ''): string {
       return basePrompt + modelAdapter + appContext + timeContext + workspace + projectContext + brief + artifacts + permissionTier + TOOL_RULES + userContext + skillPromptSection + toolNames + memories
     }
@@ -354,9 +359,23 @@ export function buildOpenPipalRuntimeContext(conversationId?: string): string {
   const uploads = conversationId
     ? `本会话图片资产目录:${conversationUploadsDir(conversationId)}(用户给出本地图片的绝对路径时,先用 bash 把文件复制进该目录,再在 dc 文档里用相对路径 uploads/<文件名> 引用;不要直接引用目录外的绝对路径——预览与导出都解析不了)。`
     : ''
+  // 事实前移：产物落在哪直接说，模型不必去翻 outputs 根（根与别的会话目录会被拦）
+  const outputs = conversationId
+    ? `本会话产物目录:${outputsDirFor(conversationId)}(export_artifact / generate_document 的文件与 render_artifact 的截图都落这里,结果里带完整路径;这个目录随便 ls,outputs 根和别的会话的目录不属于本次)。`
+    : ''
+  // 只在 orb 时说一句：它是唯一会改变回复方式的模式（纯文本会丢）。docked/undocked 什么都不加，
+  // 模型不必先调 get_environment 问一遍——之前工具描述让它每个可视化任务都先问，白花一次调用
+  let orb = ''
+  try {
+    if (getEnvironmentSnapshot().mode === 'orb') {
+      orb = '当前 OpenPipal 是悬浮球（orb）模式：用户在全屏应用里，看不到对话区。最终答复要用 present_to_user 或 ask_user 推到屏幕上，纯文本会丢。'
+    }
+  } catch { /* 无窗口环境（单测/子流程）不加 */ }
   const lines = ['\n\n<runtime-context>', time]
   if (app) lines.push(app)
+  if (orb) lines.push(orb)
   if (uploads) lines.push(uploads)
+  if (outputs) lines.push(outputs)
   let block = lines.join('\n')
   const inventory = buildArtifactInventoryPrompt(conversationId)
   if (inventory) block += inventory
@@ -371,7 +390,12 @@ export function resolveOpenPipalWorkingDirectory(overrides?: AgentOverrides): {
   mcpServers?: ReturnType<typeof readToolsConfig>['mcpServers']
 } {
   const workspaceId = overrides?.workspaceId
-  const toolsConfig = workspaceId ? readToolsConfig(workspaceId) : undefined
+  let toolsConfig = workspaceId ? readToolsConfig(workspaceId) : undefined
+  // 团队话题：工具边界 = Lead 自己的 ∩ 团队（频道）的，只收窄（设计稿 §5 第②层）
+  if (overrides?.teamId) {
+    const team = resolveTeamScope(overrides.teamId, overrides.channel)
+    if (team) toolsConfig = intersectToolsConfig(toolsConfig, team.toolsConfig)
+  }
   return {
     workspaceId,
     workingDir: overrides?.workingDir || defaultWorkingDirFrom(toolsConfig),

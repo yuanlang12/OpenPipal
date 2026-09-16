@@ -1,11 +1,11 @@
-import { useRef, useEffect, useCallback, useState, useMemo, DragEvent } from 'react'
+import { useRef, useEffect, useCallback, useState, useMemo } from 'react'
 import { MessageBubble } from './MessageBubble'
 import { StreamingArea } from './StreamingArea'
 import { useAppStore } from '../stores/appStore'
 import { useChatStore } from '../stores/chatStore'
 import { useAgentStore } from '../stores/agentStore'
 import { Bot, Focus } from 'lucide-react'
-import { WorkspaceAvatar } from './agent-mark'
+import { TeamAvatar, WorkspaceAvatar } from './agent-mark'
 import { countDialogueMessages, isRegeneratableAssistantMessage } from '../chat/messages'
 import { groupTurns } from '../chat/groupTurns'
 import { ProcessGroup } from './ProcessGroup'
@@ -85,6 +85,10 @@ export function ChatPanel({ appName }: ChatPanelProps) {
   const editAndResend = useChatStore(s => s.editAndResend)
   const activeConversationId = useChatStore(s => s.activeConversationId)
   const activeWorkspaceId = useChatStore(s => s.activeWorkspaceId)
+  const activeTeamId = useChatStore(s => s.activeTeamId)
+  const activeChannel = useChatStore(s => s.activeChannel)
+  const teams = useAgentStore(s => s.teams)
+  const activeTeam = useMemo(() => teams.find(x => x.id === activeTeamId), [teams, activeTeamId])
   const focusStream = useAppStore(s => s.focusStream)
   const toggleFocusStream = useAppStore(s => s.toggleFocusStream)
   const workspaces = useAgentStore(s => s.workspaces)
@@ -92,14 +96,13 @@ export function ChatPanel({ appName }: ChatPanelProps) {
     () => workspaces.find(w => w.id === activeWorkspaceId),
     [workspaces, activeWorkspaceId]
   )
-  const loadTemplates = useAgentStore(s => s.loadTemplates)
   const loadWorkspaces = useAgentStore(s => s.loadWorkspaces)
   const { createFromConversation, creating: creatingAgent } = useAgentStore()
   const [savedAgentName, setSavedAgentName] = useState<string | null>(null)
-  const roleName = currentRole?.name || 'learner'
+  const roleName = currentRole?.name || 'general'
 
   // 加载 Agent 模板（只在首次）
-  useEffect(() => { loadTemplates(); loadWorkspaces() }, [])
+  useEffect(() => { loadWorkspaces() }, [])
 
   const handleSaveAsAgent = useCallback(async () => {
     if (!activeConversationId || creatingAgent) return
@@ -122,7 +125,6 @@ export function ChatPanel({ appName }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const userScrolledUp = useRef(false)
   const [detached, setDetached] = useState(false) // 用户上滑脱离贴底 → 显示"跳到最新"提示
-  const [isDragOver, setIsDragOver] = useState(false)
 
   const handleScroll = useCallback(() => {
     if (scrollRef.current) {
@@ -156,47 +158,6 @@ export function ChatPanel({ appName }: ChatPanelProps) {
   // 流式滚动跟随已迁入 <StreamingArea>(它订阅 liveStreamStore,随 token 重渲染),
   // ChatPanel 不再因流式内容变化而跑这个 effect。
 
-
-  // 拖拽上传处理
-  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!isDragOver) setIsDragOver(true)
-  }, [isDragOver])
-
-  const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragOver(false)
-  }, [])
-
-  const addPendingFileAttachment = useChatStore(s => s.addPendingFileAttachment)
-
-  const handleDrop = useCallback(async (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragOver(false)
-
-    // 获取拖拽的文件
-    const uris = e.dataTransfer?.getData('text/uri-list')
-    if (uris) {
-      // Electron: file:// URLs 包含本地路径
-      const uriList = uris.split('\n').filter(u => u && u.startsWith('file://'))
-      for (const uri of uriList) {
-        try {
-          const filePath = decodeURI(new URL(uri).pathname)
-          // 通过 IPC 打开并解析文件
-          if (window.api?.parseFile) {
-            const parsed = await window.api.parseFile(filePath)
-            addPendingFileAttachment(parsed)
-            console.log('[Drop] 文件已添加:', parsed.fileName)
-          }
-        } catch (err) {
-          console.error('[Drop] 处理拖拽文件失败:', err)
-        }
-      }
-    }
-  }, [addPendingFileAttachment])
 
   // 按 turn 分组 + 找最后一条可重新生成的 assistant 消息 —— 两者都只依赖 messages 身份。
   // 用 useMemo 锁在"提交边界"(messages 变化时)重算,不再随流式 token 每次渲染重跑
@@ -236,17 +197,40 @@ export function ChatPanel({ appName }: ChatPanelProps) {
   }, [])
 
   const conversationConfig = useChatStore(s => s.conversationConfig)
-  const briefForCurrent = (() => {
+  // 会话简报：跟在第一条用户消息下面的一行小标签（只显示值：原型 / 项目名 / 资料名）。
+  // 用 useMemo 钉住元素引用——MessageBubble 的 memo 按 footer 引用比较，每帧新建会让第一条消息随每个流式 chunk 重渲
+  const firstUserMessageId = useChatStore(s => s.messages.find(m => m.role === 'user')?.id)
+  const briefFooter = useMemo(() => {
     const cfg = conversationConfig
     if (!cfg) return null
     const brief = cfg.roleBrief && Object.values(cfg.roleBrief).find(b => b && Object.keys(b).length > 0)
-    const hasAny = !!cfg.projectName || !!brief || (cfg.initialAssets && cfg.initialAssets.length > 0)
-    if (!hasAny) return null
-    return { projectName: cfg.projectName, brief, assets: cfg.initialAssets || [] }
-  })()
+    const chips = [
+      ...(cfg.projectName ? [`📁 ${cfg.projectName}`] : []),
+      ...(brief ? Object.values(brief).map(v => Array.isArray(v) ? v.join(', ') : String(v)).filter(Boolean) : []),
+      ...(cfg.initialAssets || []).map((a: any) => `${a.sourceType === 'figma' ? '🎨' : a.sourceType === 'codebase' ? '📁' : '📎'} ${a.fileName}`)
+    ]
+    if (chips.length === 0) return null
+    return (
+      <div className="mt-1 flex flex-wrap justify-end gap-1" data-testid="brief-chips" title={t('chat.panel.briefTitle')}>
+        {chips.map((chip, i) => (
+          <span key={i} className="px-1.5 py-0.5 rounded text-[10.5px] leading-4 bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-400">{chip}</span>
+        ))}
+      </div>
+    )
+  }, [conversationConfig, t])
 
   return (
     <div className="op-chat-panel relative flex-1 min-h-0">
+    {/* 团队话题徽标：左上角一枚，告诉你这条话题跑在哪个团队 / 频道里 */}
+    {activeTeamId && (
+      <div
+        className="absolute top-2 left-3 z-20 flex items-center gap-1.5 px-2 py-1 rounded-full bg-surface-0/80 dark:bg-surface-50/80 border border-surface-100 text-[11px] text-surface-500 backdrop-blur"
+        data-testid="team-badge"
+      >
+        <TeamAvatar teamId={activeTeamId} size={14} />
+        <span className="truncate max-w-[220px]">{activeTeam?.name ?? t('shell.history.deletedTeam')}{activeChannel ? ` › ${activeChannel}` : ''}</span>
+      </div>
+    )}
     {/* Focus 模式开关:低调常在,右上角。开启后已完成的 turn 只留 user/过程摘要条/最终回答。 */}
     <button
       onClick={toggleFocusStream}
@@ -277,30 +261,33 @@ export function ChatPanel({ appName }: ChatPanelProps) {
         scrollPaddingBottom: 'calc(var(--op-dock-h) + var(--op-dock-gap))',
       }}
     >
-      {/* 会话简报 banner：前置页填过东西时永久显示 */}
-      {briefForCurrent && (
-        <div className="mb-4 rounded-lg border border-brand-100 dark:border-brand-900/30 bg-brand-50/40 dark:bg-brand-900/10 px-3 py-2">
-          <div className="text-[10px] uppercase tracking-wider text-brand-600 dark:text-brand-400 mb-1.5 font-medium">{t('chat.panel.briefTitle')}</div>
-          <div className="flex flex-wrap gap-1.5 text-[11px]">
-            {briefForCurrent.projectName && (
-              <span className="px-2 py-0.5 rounded bg-surface-0 dark:bg-surface-50 border border-surface-200 text-surface-600">
-                📁 {briefForCurrent.projectName}
-              </span>
-            )}
-            {briefForCurrent.brief && Object.entries(briefForCurrent.brief).map(([k, v]) => (
-              <span key={k} className="px-2 py-0.5 rounded bg-surface-0 dark:bg-surface-50 border border-surface-200 text-surface-600">
-                {k}: {Array.isArray(v) ? v.join(', ') : String(v)}
-              </span>
-            ))}
-            {briefForCurrent.assets.map((a: any, i: number) => (
-              <span key={i} className="px-2 py-0.5 rounded bg-surface-0 dark:bg-surface-50 border border-surface-200 text-surface-500">
-                {a.sourceType === 'figma' ? '🎨' : a.sourceType === 'codebase' ? '📁' : '📎'} {a.fileName}
-              </span>
-            ))}
-          </div>
+      {messages.length === 0 && !isStreaming && activeTeamId && (
+        <div className="flex flex-col items-center justify-center h-full px-4 pb-4 max-w-lg mx-auto" data-testid="team-onboarding">
+          <TeamAvatar teamId={activeTeamId} size={56} className="mb-3" />
+          <p className="font-display text-[17px] font-bold text-surface-700 tracking-tight mb-1">
+            {activeTeam?.name ?? t('shell.history.deletedTeam')}{activeChannel ? ` › ${activeChannel}` : ''}
+          </p>
+          {activeTeam && (
+            <div className="flex items-center gap-1.5 mb-3 flex-wrap justify-center" data-testid="team-members">
+              {activeTeam.members.map(id => {
+                const w = workspaces.find(x => x.id === id)
+                return (
+                  <span key={id} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-50 border border-surface-100 text-[11px] text-surface-500">
+                    <WorkspaceAvatar workspaceId={id} icon={w?.icon} size={14} className="text-xs leading-none" />
+                    {w?.name ?? id.slice(0, 8)}{id === activeTeam.lead ? ` · ${t('chat.team.lead')}` : ''}
+                  </span>
+                )
+              })}
+            </div>
+          )}
+          <p className="text-[12px] text-surface-400 mb-2 max-w-sm text-center leading-relaxed">
+            {activeTeam && activeTeam.members.length <= 1
+              ? t('chat.team.founding', { lead: activeWorkspace?.name ?? '' })
+              : t('chat.team.ready', { lead: activeWorkspace?.name ?? '' })}
+          </p>
         </div>
       )}
-      {messages.length === 0 && !isStreaming && activeWorkspace && (
+      {messages.length === 0 && !isStreaming && activeWorkspace && !activeTeamId && (
         <div className="flex flex-col items-center justify-center h-full px-4 pb-4 max-w-lg mx-auto" data-testid="agent-onboarding">
           <WorkspaceAvatar workspaceId={activeWorkspace.id} icon={activeWorkspace.icon} size={56} className="text-5xl mb-3" />
           <p className="font-display text-[17px] font-bold text-surface-700 tracking-tight mb-1">
@@ -368,6 +355,7 @@ export function ChatPanel({ appName }: ChatPanelProps) {
                 roleIcon={currentRole?.icon}
                 onSend={onSend}
                 onEditAndResend={!isStreaming ? onEditAndResend : undefined}
+                footer={turn.userMsg.id === firstUserMessageId ? briefFooter : undefined}
               />
             )}
             {bareDivider && (

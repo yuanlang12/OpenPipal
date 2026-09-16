@@ -1,6 +1,7 @@
 import {
   callMcpToolStructuredFromBoundServer,
   extractTextFromContentBlocks,
+  getBoundMcpToolAnnotations,
   isMcpToolFromBoundServer
 } from './mcp-manager'
 import { classifyToolRisk, requestUserConfirmation } from './pi-security'
@@ -48,7 +49,11 @@ export async function callMcpToolFromApp(
     return { ok: false, error: `工具 "${toolName}" 不属于 server "${serverName}",跨 server 调用被拒绝` }
   }
 
-  const risk = classifyToolRisk(toolName, args, { origin: 'mcp' })
+  const annotations = getBoundMcpToolAnnotations(serverBinding, serverName, toolName, conversationId)
+  const risk = classifyToolRisk(toolName, args, {
+    origin: 'mcp',
+    ...(annotations ? { mcpAnnotations: annotations } : {})
+  })
   if (risk.level === 'risky') {
     return { ok: false, error: `工具 "${toolName}" 被安全策略阻止: ${risk.reason}` }
   }

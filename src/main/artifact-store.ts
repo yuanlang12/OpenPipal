@@ -21,7 +21,7 @@ import {
   listConversations,
   peekConversationMessages,
 } from './conversation-service'
-import { dataPath } from './data-root'
+import { dataPath, outputsDirFor } from './data-root'
 
 /**
  * ⚠️ esbuild 保持运行时懒 require，且正式包依赖两条打包配置，勿动：
@@ -178,6 +178,14 @@ export interface ArtifactData {
 // 是任务态/一次性问答，goal/mcp-app 走各自的持久化通道），复用 artifact 管道做传输渲染，但不落盘/
 // 不进历史产物列表/不进模型 session-artifacts 清单/不参与去重去命名冲突。复用管道 ≠ 同等待遇。
 export const EPHEMERAL_ARTIFACT_TYPES = new Set(['todos', 'questions', 'goal', 'mcp-app'])
+
+/**
+ * 产物主文件的落盘路径（纯拼接，不查盘）：create_artifact 结果里直接告诉模型文件在哪。
+ * 2026-09-11 实撞：模型想给自己的作品截整页图，结果里只有 id，它就去 ls conversations 目录找，撞上跨会话边界。
+ */
+export function artifactFilePath(conversationId: string, artifactId: string, type: string, language?: string): string {
+  return path.join(ARTIFACTS_ROOT, conversationId, `${artifactId}.${extForType(type, language)}`)
+}
 
 function extForType(type: string, language?: string): string {
   switch (type) {
@@ -656,7 +664,7 @@ export async function listArtifactHistory(opts?: { role?: string; limit?: number
         conversationId: conv.id,
         conversationTitle: conv.title,
         updatedAt: conv.updatedAt,
-        thumbnail: selfCheckThumbnail(ref.id)
+        thumbnail: selfCheckThumbnail(ref.id, conv.id)
       })
     }
     if (out.length >= limit) break
@@ -674,11 +682,19 @@ export function evictThumbCache(artifactId: string): void {
   thumbCache.delete(artifactId)
 }
 
-function selfCheckThumbnail(artifactId: string): string | undefined {
+function selfCheckThumbnail(artifactId: string, conversationId?: string): string | undefined {
   if (!isSafeStorageComponent(artifactId)) return undefined
-  const shot = dataPath('outputs', '.self-check', `${artifactId}.png`)
-  let mtimeMs: number
-  try { mtimeMs = fs.statSync(shot).mtimeMs } catch { return undefined }
+  // 2026-09-12 起截图落 outputs/<conversationId>/.self-check/；之前的在根下，老会话的缩略图照旧能找到
+  const candidates = [
+    ...(isSafeStorageComponent(conversationId) ? [path.join(outputsDirFor(conversationId), '.self-check', `${artifactId}.png`)] : []),
+    dataPath('outputs', '.self-check', `${artifactId}.png`)
+  ]
+  let shot = ''
+  let mtimeMs = 0
+  for (const candidate of candidates) {
+    try { mtimeMs = fs.statSync(candidate).mtimeMs; shot = candidate; break } catch { /* 下一个 */ }
+  }
+  if (!shot) return undefined
   const hit = thumbCache.get(artifactId)
   if (hit && hit.mtimeMs === mtimeMs) return hit.dataUrl
   let dataUrl: string | undefined

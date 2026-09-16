@@ -12,7 +12,7 @@ description: 排版级文档交付物（简历/一页纸/备忘录/报告/白皮
 DC 文件格式本身（`<x-dc>`、空穴、helmet 规则、就地编辑、字体口径、`render_artifact` 自检）见
 **dc-authoring** 技能，本篇不重复，只讲纸。
 
-**与 `generate_document` 分轨**：那个工具产出内容文档（Markdown / docx，落 `~/.openpipal/outputs/`），
+**与 `generate_document` 分轨**：那个工具产出内容文档（Markdown / docx，落本会话的 `~/.openpipal/outputs/<会话id>/`），
 重在文字本身，不做版式。用户只说"写份东西"用它。本技能是**排版**文档——用户要"设计一份简历 /
 白皮书 / 报告"、在意版式与字体、要在宿主里点选改字、要一键出 PDF 时走这条。
 
@@ -303,6 +303,6 @@ accent 在全文出现 15–20 处量级（章号、eyebrow、引言左边框、
    `data-screen-label="封面"` 这类标签，摘要与交接包截图就会**逐页**分开给你。
 4. 目视核对四件事：版心是否居中、行长是否过宽、字体回退链是否落到了难看的替身、
    figure 与自定义卡片有没有被切开。
-5. 要 PDF 就 `export_artifact(format='pdf')`，落 `~/.openpipal/outputs/`；回执里带文件大小，
+5. 要 PDF 就 `export_artifact(format='pdf')`，落本会话的 `~/.openpipal/outputs/<会话id>/`（回执里带路径）；回执里带文件大小，
    小得离谱就是渲染出了问题，别直接宣称成功。
 6. 改稿优先 `edit_artifact` 精确替换，不要整篇重发（理由见 dc-authoring）。

@@ -1,10 +1,11 @@
-import { useState, useRef, useCallback, useEffect, useMemo, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo, KeyboardEvent, ClipboardEvent } from 'react'
 import { Square, ArrowUp, X, FileText } from 'lucide-react'
 import { ModelControl, type ThinkingLevel } from './shared/ModelControl'
 import { PermissionTierControl } from './shared/PermissionTierControl'
 import { useAppStore } from '../stores/appStore'
 import { useChatStore, type ContextUsageEntry, type ContextCumulativeStats } from '../stores/chatStore'
 import { extractPastedImages } from '../utils/pasteImages'
+import { useWindowFileDragging, useWindowFileDrop } from './shared/FileDrop'
 import { expandSkillMentions } from '../chat/skillRequest'
 import { useSkillMentions, type SkillInfo } from './shared/SkillMention'
 import { WorkingDirBar } from './shared/WorkingDirBar'
@@ -248,13 +249,14 @@ export function InputBar({
   const clearPendingAnnotations = useChatStore(s => s.clearPendingAnnotations)
   const contextUsage = useChatStore(s => s.activeConversationId ? s.contextUsage[s.activeConversationId] : undefined)
   const contextStats = useChatStore(s => s.activeConversationId ? s.contextStats[s.activeConversationId] : undefined)
-  const roleName = currentRole?.name || 'learner'
+  const roleName = currentRole?.name || 'general'
+  const agents = useAppStore(s => s.agents)
+  const tierAllowed = agents.find(a => a.id === (activeWorkspaceId ?? roleName))?.permissionTier === 'allowed'
   const onSend = useCallback((content: string, images?: string[], fileAttachments?: FileAttachmentData[]) =>
     sendMessage(content, roleName, images, fileAttachments), [sendMessage, roleName])
   const onAbort = abortChat
   const [input, setInput] = useState('')
   const [images, setImages] = useState<string[]>([])
-  const [isDragOver, setIsDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const [allSkills, setAllSkills] = useState<SkillInfo[]>([])
@@ -398,44 +400,9 @@ export function InputBar({
     (base64) => setImages(prev => [...prev, base64])
   )
 
-  // 拖拽处理
-  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragOver(true)
-  }
-
-  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragOver(false)
-  }
-
-  const handleDrop = async (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragOver(false)
-
-    const files = e.dataTransfer?.files
-    if (!files || files.length === 0) return
-
-    // 同步取完 File 引用再异步处理（DataTransfer 在 await 后可能失效）
-    for (const file of Array.from(files)) {
-      // Electron 32+ 移除了 File.path——真实路径走 preload 的 webUtils；旧字段兜底 legacy
-      const filePath = ((window.api as any).getPathForFile?.(file) ?? (file as any).path) as string | undefined
-      if (filePath) {
-        await handleFile(filePath)
-      } else if (file.type.startsWith('image/')) {
-        // 浏览器模式：图片走 base64
-        const reader = new FileReader()
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(',')[1]
-          setImages(prev => [...prev, base64])
-        }
-        reader.readAsDataURL(file)
-      }
-    }
-  }
+  // 拖文件：整窗都接，落进这个输入框（对话区的提示层在 App 里盖着）
+  useWindowFileDrop({ onFilePath: (p) => { void handleFile(p) }, onImage: (b64) => setImages(prev => [...prev, b64]) })
+  const isDragOver = useWindowFileDragging()
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // @ 弹层开着时它先吃键（↑↓ 导航 / Enter 选中 / Esc 关闭），不与发送冲突
@@ -476,18 +443,7 @@ export function InputBar({
   const canSend = hasInputContent
 
   return (
-    <div
-      className="op-composer-dock px-5 pt-2 pb-4"
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
-      {isDragOver && (
-        <div className="max-w-[880px] mx-auto mb-2 p-3 text-center border border-dashed border-brand-400 rounded-lg bg-brand-50/50 dark:bg-brand-900/10">
-          <p className="text-[12px] text-brand-600 dark:text-brand-400">{t('chat.input.dropFiles')}</p>
-        </div>
-      )}
-
+    <div className="op-composer-dock px-5 pt-2 pb-4">
       {/* Agent 跑的时候用户挂起的待发消息（卡片堆叠） */}
       <PendingMessageStack />
 
@@ -527,7 +483,7 @@ export function InputBar({
               )
             })}
             {pendingFileAttachments.map((file, i) => (
-              <span key={`f${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-100 text-[10px] text-surface-500">
+              <span key={`f${i}`} data-testid="input-file-chip" className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-100 text-[10px] text-surface-500">
                 <FileText className="w-3 h-3" />
                 {file.fileName}
                 <span className="text-surface-300">({fmtSize(file.sizeBytes)})</span>
@@ -595,9 +551,9 @@ export function InputBar({
           {/* 右侧：思考开关 + 模型 + 发送/停止 */}
           <div className="flex-1" />
 
-          {/* 权限档位：只给编码助手。别的角色不该被迫理解"工具风险分级"这个概念，
-              而且主进程那侧也有同一道角色门（agent-overrides.ts），界面藏起来不等于关掉 */}
-          {roleName === 'coding' && <PermissionTierControl />}
+          {/* 权限档位：只给档案声明了 permission-tier: allowed 的 Agent（内置编码助手、从它复制的 Pal）。
+              别的 Agent 不该被迫理解"工具风险分级"这个概念，而且主进程那侧是同一道门（agent-overrides.ts），界面藏起来不等于关掉 */}
+          {tierAllowed && <PermissionTierControl />}
 
           {/* 模型+思考深度合一控件；会话内选模型=会话专属，重置行=跟随全局 */}
           {effectiveModelName && (

@@ -19,9 +19,10 @@ import { homedir } from 'os'
 import { randomUUID } from 'crypto'
 import { generateTitle } from './title-generator'
 import { isSafeConversationStorageId, loadConversationAttachment } from './attachment-store'
-import { loadConfig } from './config-manager'
 import { isReplayableToolMessage } from './tool-trail'
 import type { HookNotice } from '../shared/hook-contract'
+import { DEFAULT_AGENT_ID, resolveAgentId } from '../shared/agent-identity'
+import { palIdOf } from './pal-id'
 import type { MemoryNotice } from '../shared/memory-notice-contract'
 import type { ConversationGoal } from './goal-checker'
 import { dataPath } from './data-root'
@@ -177,8 +178,14 @@ export interface Conversation {
   id: string
   title: string
   role: string
+  /** 历史含义：模板 id。统一身份见 `agent` */
   agentId?: string
   workspaceId?: string
+  /** 统一的 Agent 身份（内置名或 Pal id）；读侧永远填好，老文件缺了就按 role / workspaceId / agentId 派生 */
+  agent?: string
+  /** 团队话题：属于哪个团队 / 哪个频道。建会话时定、之后不可改；workspaceId 就是这条话题的 Lead */
+  teamId?: string
+  channel?: string
   config?: ConversationConfig
   createdAt: number
   updatedAt: number
@@ -191,6 +198,9 @@ export interface ConversationSummary {
   role: string
   agentId?: string
   workspaceId?: string
+  agent?: string
+  teamId?: string
+  channel?: string
   config?: ConversationConfig
   createdAt: number
   updatedAt: number
@@ -249,7 +259,11 @@ function readConversation(id: string): Conversation | null {
     const parsed = JSON.parse(readFileSync(fd, 'utf-8')) as Conversation
     // A file cannot claim another storage identity and later turn a sidebar
     // click into an attacker-chosen path lookup.
-    return parsed && parsed.id === id ? parsed : null
+    if (!parsed || parsed.id !== id) return null
+    // 老文件没有统一身份：读侧派生，不改文件；老的 agentId（模板）并入 Pal 后当 workspaceId
+    if (!parsed.workspaceId) { const pal = palIdOf(parsed); if (pal) parsed.workspaceId = pal }
+    if (!parsed.agent) parsed.agent = resolveAgentId(parsed)
+    return parsed
   } catch {
     return null
   } finally {
@@ -314,6 +328,9 @@ function buildSummary(conv: Conversation): ConversationSummary {
     role: conv.role,
     agentId: conv.agentId,
     workspaceId: conv.workspaceId,
+    agent: resolveAgentId(conv),
+    ...(conv.teamId ? { teamId: conv.teamId } : {}),
+    ...(conv.channel ? { channel: conv.channel } : {}),
     config: conv.config,
     createdAt: conv.createdAt,
     updatedAt: conv.updatedAt,
@@ -449,19 +466,25 @@ export function listConversations(): ConversationSummary[] {
 /**
  * 创建新对话
  */
-export function createConversation(role: string, title?: string, agentId?: string, workspaceId?: string): Conversation {
+export interface TeamBinding {
+  teamId: string
+  channel?: string
+}
+
+export function createConversation(role: string, title?: string, agentId?: string, workspaceIdArg?: string, team?: TeamBinding): Conversation {
   const now = Date.now()
-  // 会话出生即钉住当时的全局激活模型预设（快照语义）：此后全局切换永不影响这条已存在的会话，
-  // 彻底免疫"运行中被翻转到另一模型"。用户在会话内换模型仍走 config.modelPresetId 覆盖。
-  // 只在存在时写入——无 activePresetId 则字段缺省，跟随全局默认。
-  const activePresetId = loadConfig().activePresetId
+  // agentId 是老字段（曾指模板）：能认出是 Pal 就并进 workspaceId，不再单独落盘
+  const workspaceId = palIdOf({ workspaceId: workspaceIdArg, agentId })
+  // 出生不钉模型：空会话跟随全局默认；第一次真跑起来才钉住（agent-overrides.resolveAgentOverrides 末尾那段），
+  // 之后全局切换不再影响它，除非用户在会话里手动换（所有者定的规则，2026-09-10）
   const conv: Conversation = {
     id: randomUUID(),
     title: title || '新对话',
-    role,
-    ...(agentId ? { agentId } : {}),
+    // Pal 的会话 role 槽位一律中性（默认角色）：人设在 Pal 自己的目录里，借任何内置角色都会连它的闸门一起借来
+    role: workspaceId ? DEFAULT_AGENT_ID : role,
     ...(workspaceId ? { workspaceId } : {}),
-    ...(activePresetId ? { config: { modelPresetId: activePresetId } } : {}),
+    agent: resolveAgentId({ workspaceId, role }),
+    ...(team ? { teamId: team.teamId, ...(team.channel ? { channel: team.channel } : {}) } : {}),
     createdAt: now,
     updatedAt: now,
     messages: []

@@ -37,8 +37,13 @@ import {
   type ModelConfig,
 } from './config-manager'
 import { createStableContextTransform } from './context-window-policy'
-import { createSecurityHook } from './pi-security'
-import { readToolsConfig } from './agent-workspace-store'
+import { createSecurityHook, type PermissionTier } from './pi-security'
+import { formatHookStatusForPrompt, loadActiveHooks, type HookScope } from './hooks/hook-registry'
+import { hasHandlers, runBeforeAgentStartHooks, type HookChain } from './hooks/hook-chain'
+import { PiCoreToolAuthorizer, composePiCoreAfterToolCall, composePiCoreBeforeToolCall } from './agent-runtime/pi-core-tool-adapter'
+import { getWorkspace, readToolsConfig, type AgentToolsConfig } from './agent-workspace-store'
+import { buildTeamPromptLayer, intersectToolsConfig, resolveTeamScope, type TeamScope } from './team-store'
+import { parseFrontmatter } from '../shared/frontmatter'
 import { isolatedStreamSimple } from './isolated-stream-signal'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { ChatSource } from './agent-runtime/contracts'
@@ -61,11 +66,23 @@ const SUBAGENT_TOOL_BLACKLIST: ReadonlySet<string> = new Set([
   'present_to_user',
   'set_rule', // 规则是用户对主 agent 说的；子 agent 替用户定规则等于越权
   'subagent', // P3 注册 subagent 工具后生效——同进程嵌套套娃
+  'manage_team', // 团队的名单与章程只有 Lead 在人在场时能动
+  'conversations', // 跨会话是主 agent 以本对话名义做的事；子代理替它给别的对话发消息等于冒名
 ])
 
+/** 成员一次交接最多跑多少轮（成员是完整的 Pal，比 explorer 这类档位要多；仍是 runaway 安全网） */
+const MEMBER_MAX_TURNS = 60
+
 export interface RunChildAgentOptions {
-  /** profile 名（必须在 ~/.openpipal/subagents/ 已注册） */
-  profile: string
+  /** profile 名（必须在 ~/.openpipal/subagents/ 已注册）；交接给团队成员（pal）时不用 */
+  profile?: string
+  /**
+   * 团队交接：成员的 Pal id。成员以自己的人设 / 记忆 / 技能 / 规则起跑，再叠团队层（成员版）；
+   * 工具 = 成员配置 ∩ 团队边界，工作目录 = 父级本轮的（团队的），source 继承父级。深度 1：成员不能再交接。
+   */
+  pal?: string
+  teamId?: string
+  channel?: string
   /** 主 agent 委派的任务描述（会作为子 agent 的第一条 user message） */
   task: string
   /** 可选 inline system prompt，追加在 profile body 之后 */
@@ -109,6 +126,8 @@ export interface ChildAgentUpdate {
 }
 
 export interface ChildAgentResult {
+  /** 交接给团队成员时：成员的 Pal id（交接卡按它取 mark 与名字） */
+  palId?: string
   /** 子 agent 完整 message history */
   messages: Message[]
   /** 子 agent 最后一条 assistant message 的 text content（汇报给主 agent 的内容） */
@@ -190,19 +209,69 @@ function filterTools(allTools: AgentTool[], profile: SubagentProfile): AgentTool
   return tools
 }
 
+interface TeamMemberRun {
+  palId: string
+  scope: TeamScope
+  profile: SubagentProfile
+  toolsConfig: AgentToolsConfig
+  /** 团队天花板压下来的档位；auto 天花板对成员就是"不设"（成员本来也没有档位开关） */
+  permissionTier?: PermissionTier
+}
+
+/**
+ * 交接给团队成员：成员本人的人设 + 团队层（成员版）+ 成员记忆，包装成一个临时 profile。
+ * 名单校验在这里再做一遍（工具层已经校过）：runner 是库函数，别的入口也可能直接调。
+ */
+function resolveTeamMemberRun(options: RunChildAgentOptions): TeamMemberRun {
+  const palId = options.pal!
+  if (!options.teamId) throw new Error('交接给成员只能在团队话题里（缺 teamId）')
+  const scope = resolveTeamScope(options.teamId, options.channel)
+  if (!scope) throw new Error(`团队 ${options.teamId}${options.channel ? ` › ${options.channel}` : ''} 不存在或没有成员`)
+  const member = scope.members.find(m => m.id === palId)
+  if (!member) throw new Error(`「${palId}」不在团队名单里`)
+  const workspace = getWorkspace(palId)
+  if (!workspace) throw new Error(`成员 ${member.name} 的目录读不到`)
+  let prompt = parseFrontmatter(workspace.agentMd || '').body
+  prompt += `\n\n${buildTeamPromptLayer(scope, palId, 'member')}`
+  if (workspace.memories.length > 0) {
+    prompt += '\n\n## 你的记忆\n\n以下是你积累的领域知识和用户偏好，请在回答时参考：\n\n'
+    for (const mem of workspace.memories) {
+      const content = mem.content.replace(/^---[\s\S]*?---\n*/m, '').trim()
+      if (content) prompt += `### ${mem.name}\n${content}\n\n`
+    }
+  }
+  return {
+    palId,
+    scope,
+    profile: {
+      name: member.name,
+      description: member.description || '',
+      maxTurns: MEMBER_MAX_TURNS,
+      systemPrompt: prompt.trim(),
+      filePath: workspace.dir,
+      builtIn: false
+    },
+    toolsConfig: intersectToolsConfig(readToolsConfig(palId), scope.toolsConfig),
+    ...(scope.tier === 'readonly' ? { permissionTier: 'readonly' as const } : {})
+  }
+}
+
 /**
  * 启动一个子 Agent 完成委派任务。
  * 同进程 new Agent() — 与主 Agent 隔离 message history、隔离 token 计数，
  * 但共享 OpenPipal 工具栈和 MCP 连接。
  */
 export async function runChildAgent(options: RunChildAgentOptions): Promise<ChildAgentResult> {
-  const profile = getSubagentProfile(options.profile)
+  const member = options.pal ? resolveTeamMemberRun(options) : null
+  const profile = member ? member.profile : getSubagentProfile(options.profile ?? '')
   if (!profile) {
     throw new Error(
       `Unknown subagent profile: "${options.profile}". ` +
       `Run 'ls ~/.openpipal/subagents/' to check available profiles.`
     )
   }
+  // 成员以自己的身份跑：技能 / 工具配置 / 租户边界都按成员的目录算；普通档位沿用父级的
+  const childWorkspaceId = member ? member.palId : options.workspaceId
 
   // 1. system prompt: profile body + 可选 persona + 技能段
   //    子 agent 此前完全拿不到技能索引（不走 buildSystemPrompt）——这里补上，
@@ -210,15 +279,17 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
   const basePrompt = options.persona
     ? `${profile.systemPrompt}\n\n## 本次任务的附加指引（来自主 agent）\n${options.persona}`
     : profile.systemPrompt
-  const skillCatalog = await loadPiCoreSkillCatalog({ workspaceId: options.workspaceId })
-  const systemPrompt = basePrompt + skillCatalog.promptSection
+  const skillCatalog = await loadPiCoreSkillCatalog({ workspaceId: childWorkspaceId })
+  let systemPrompt = basePrompt + skillCatalog.promptSection
+  // 成员这一趟的生命周期信号：规则处理函数与授权都看它；父级 abort 或本趟结束都收掉
+  const lifecycle = new AbortController()
 
   // 2. 工具构建：复用主 agent 的工具工厂（保证子 agent 看到的工具与主 agent 一致）
   //    askUserResolver 是 buildPiTools 强制需要的参数；子 agent 不会真用到 ask_user
   //    （已在黑名单），传一个空 resolver 即可
   const askUserResolver = new AskUserResolver()
   const source = options.source ?? 'desktop'
-  const toolsCfg = options.workspaceId ? readToolsConfig(options.workspaceId) : undefined
+  const toolsCfg = member ? member.toolsConfig : (options.workspaceId ? readToolsConfig(options.workspaceId) : undefined)
   // The parent Runtime has already resolved this turn's cwd. Keep product tools,
   // execution backend and the security hook on that exact same directory.
   const workingDir = options.workingDir || toolsCfg?.workingDir || getWorkingDir()
@@ -227,10 +298,11 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
   const productTools = buildOpenPipalProductTools(source, askUserResolver, {
     roleName: options.roleName,
     workingDir,
-    workspaceId: options.workspaceId,
+    workspaceId: childWorkspaceId,
     conversationId: options.conversationId,
     disabledTools: toolsCfg?.disabledTools,
     executeCodeBackend: execution.executeCode,
+    permissionTier: member?.permissionTier,
   })
   const executionTools: AgentTool[] = execution.tools.map((tool) => ({
     ...tool,
@@ -243,10 +315,12 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
     {
       disabledTools: toolsCfg?.disabledTools,
       roleName: options.roleName,
-      conversationId: options.conversationId
+      conversationId: options.conversationId,
+      permissionTier: member?.permissionTier
     }
   )
-  const mcpTools = buildMcpBridgeTools(undefined, options.conversationId, source)
+  // 成员的 MCP 白名单 = 成员 ∩ 团队；普通档位沿用旧行为（不过滤，跟父级同一份）
+  const mcpTools = buildMcpBridgeTools(member ? toolsCfg?.mcpServers : undefined, options.conversationId, source)
   // 双重保险，与主 pi-core 路径对齐（见 pi-core-tool-adapter.ts）：每个工具单独盖 executionMode:
   // 'sequential'，不只靠下面 Agent 的全局 toolExecution 兜底——万一某天全局开关被改掉/漏配，
   // 子 agent 的工具仍强制串行执行。
@@ -254,6 +328,43 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
     filterToolsForChatSource(source, [...builtinTools, ...mcpTools]),
     profile
   ).map((tool) => ({ ...tool, executionMode: 'sequential' as const }))
+
+  // 2b. 团队规则（设计稿 §5 第③层"规则加硬拦"）：成员也过——自己的 hooks/ + 团队的 rules/（+ 频道的）。
+  //     普通档位（explorer / advisor）沿用旧行为：不装规则，只过安全员。
+  let hookChain: HookChain | undefined
+  if (member) {
+    const hookScope: HookScope = {
+      workspaceId: member.palId,
+      teamId: member.scope.teamId,
+      ...(member.scope.channel ? { channel: member.scope.channel } : {})
+    }
+    try {
+      const active = await loadActiveHooks(undefined, hookScope)
+      for (const failure of active.failures) console.warn(`[Hooks] 成员 ${profile.name} 的规则 ${failure.id} 没生效：${failure.error}`)
+      const status = formatHookStatusForPrompt(active.report, [], active.agentScanError)
+      if (status) systemPrompt = `${systemPrompt}\n\n${status}`
+      if (active.hooks.length > 0) {
+        hookChain = {
+          hooks: active.hooks,
+          ctx: {
+            conversationId: options.conversationId,
+            workingDir,
+            roleName: options.roleName,
+            workspaceId: member.palId,
+            agentId: member.palId,
+            source,
+            signal: lifecycle.signal
+          }
+        }
+        console.log(`[Hooks] 成员 ${profile.name} 生效 ${active.hooks.length} 条规则：${active.hooks.map(h => h.id).join(', ')}`)
+        if (hasHandlers(hookChain, 'before_agent_start')) {
+          systemPrompt = await runBeforeAgentStartHooks(hookChain, { type: 'before_agent_start', prompt: options.task, systemPrompt })
+        }
+      }
+    } catch (error) {
+      console.warn(`[Hooks] 成员 ${profile.name} 规则加载异常，本趟不带规则：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
 
   // 3. 模型路由：modelOverride > profile.model > 主 agent 当前会话模型。
   // 子 Agent 不能回退到进程全局 getPiModel()/getEffectiveModelConfig()，否则会话固定
@@ -284,11 +395,28 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
     // 子 agent 的档位（advisor 等）可能与主会话不同 provider key——同款注入防并发互踩
     streamFn: withSessionStreamOptions(isolatedStreamSimple, modelConfig),
     // 子 agent 同样过三层安全（分类/审计/路径黑名单）——不挂 hook 时 Pi 直接跳过整段检查，
-    // advisor 的 read 可以无审计读 ~/.ssh。无 UI 通道 → needs_confirmation 由默认 handler 拒绝。
-    beforeToolCall: createSecurityHook(options.conversationId, undefined, {
-      workspaceId: options.workspaceId,
-      workingDir,
-    }),
+    // advisor 的 read 可以无审计读 ~/.ssh。needs_confirmation 走会话的内联授权卡（同一个 conversationId，
+    // 卡出现在这条话题里）；没有渲染层时由默认 handler 拒绝。
+    // 团队成员：规则 → 安全员，与主链路同一份组合（pi-core-tool-adapter），规则拦下的也进审计。
+    ...(member
+      ? {
+          beforeToolCall: composePiCoreBeforeToolCall({
+            authorizer: new PiCoreToolAuthorizer({
+              conversationId: options.conversationId,
+              scope: { workspaceId: member.palId, workingDir, teamId: member.scope.teamId },
+              tier: member.permissionTier
+            }),
+            hookChain,
+            isInterrupted: () => false
+          }),
+          afterToolCall: composePiCoreAfterToolCall({ hookChain, onInterrupt: () => undefined })
+        }
+      : {
+          beforeToolCall: createSecurityHook(options.conversationId, undefined, {
+            workspaceId: childWorkspaceId,
+            workingDir,
+          }, undefined)
+        }),
     // 与主 Agent 同一口径：只限制异常大的单条工具结果，不按年龄/消息数卸载历史。
     transformContext: createStableContextTransform(),
     onPayload: createModelPayloadAdapter(modelConfig),
@@ -368,14 +496,15 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
     }
   })
 
-  // 7. abort 桥接：外部 signal → agent.abort()
+  // 7. abort 桥接：外部 signal → agent.abort()（规则与授权看的 lifecycle 也一起收）
   let onAbort: (() => void) | undefined
   if (options.signal) {
     if (options.signal.aborted) {
       unsubscribe()
+      lifecycle.abort()
       throw new Error('Subagent aborted before start')
     }
-    onAbort = () => agent.abort()
+    onAbort = () => { lifecycle.abort(); agent.abort() }
     options.signal.addEventListener('abort', onAbort, { once: true })
   }
 
@@ -385,6 +514,7 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
     await agent.waitForIdle()
   } finally {
     unsubscribe()
+    lifecycle.abort()
     if (options.signal && onAbort) {
       options.signal.removeEventListener('abort', onAbort)
     }
@@ -399,6 +529,7 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
   emit(lastError ? 'error' : 'complete')
 
   return {
+    ...(member ? { palId: member.palId } : {}),
     messages: childMessages,
     finalText,
     usage,

@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow, dialog, shell, clipboard, app } from 'electron'
+import { setPeerRuntime, setPeerTurnWindowGetter } from './conversation-peer'
 import { writeFileSync, readFileSync, copyFileSync, mkdirSync, statSync } from 'fs'
 import type { FSWatcher } from 'fs'
 import os, { homedir } from 'os'
@@ -77,7 +78,6 @@ import { isBrowserWriteTool, targetHostForCommand, grantSessionHost } from './br
 import { detectGitRemoteUse } from './git-policy'
 import { grantAlwaysProject } from './git-policy-store'
 import { writePermissionToStream } from './http-server'
-import { listAgentTemplates, getAgentTemplate, createAgentTemplate, updateAgentTemplate, deleteAgentTemplate } from './agent-template-manager'
 import { resolveAgentOverrides, resolveExecutionRoleName } from './agent-overrides'
 import { listWorkspaces, getWorkspace, getWorkspaceDir, createWorkspace, deleteWorkspace, getAgentOutputsDir } from './agent-workspace-store'
 import {
@@ -90,7 +90,9 @@ import { executeAgentDreaming } from './agent-dreamer'
 import { executeAutoDream, forceAutoDream } from './memory-dreamer'
 import { isAutoMemoryEnabled, setAutoMemoryEnabled } from './config-manager'
 import { readMark, writeMark, type MarkScope } from './agent-mark-store'
-import { getCurrentRole, getRoleConfig, getRoleAssetsDir, listRoleAssets, listRoleSystemFolders, listRoleSystemTree, listDesignSystems, getDesignSystemManifest, readRoleManifest, getDsReview, saveDsReview, DsReview } from './role-manager'
+import { createTeam, deleteTeam, foundTeam, getTeamDetail, listTeams, onTeamChanged, readTeamFile, resolveTeamScope, writeTeamMd } from './team-store'
+import { DEFAULT_AGENT_ID } from '../shared/agent-identity'
+import { getRoleConfig, getRoleAssetsRoot, listRoleAssets, listRoleSystemFolders, listRoleSystemTree, listDesignSystems, getDesignSystemManifest, readRoleManifest, getDsReview, saveDsReview, DsReview } from './role-manager'
 import { getDesignSystemResourceCapability, readDesignSystemJsonResource, readDesignSystemResource } from './design-system-resource'
 import { scanMemoryFiles, readMemoryFile, deleteMemoryFile, getGlobalMemoryDir, getMemoryRoot, listArchivedMemories, restoreArchivedMemory, isWithinMemoryRoot } from './memory-store'
 import { saveArtifact as saveArtifactToDisk, loadArtifact as loadArtifactFromDisk, deleteArtifactsForConversation, listArtifactHistory, loadCompiledArtifact, findArtifactFileById, coarseTypeFromFile, EPHEMERAL_ARTIFACT_TYPES, listConversationArtifacts, evictThumbCache } from './artifact-store'
@@ -119,6 +121,7 @@ import {
 import { getLocaleState, updateLocalePreference } from './locale-manager'
 import { mainError, tMain } from './main-i18n'
 import { dataPath, getDataRoot } from './data-root'
+import { copyBuiltinAsPal, listAgentSummaries } from './agent-registry'
 
 // Agent Runtime 全栈懒加载：router 保留 legacy 的按需加载和失败重试语义。
 const agentService = getAgentRuntime
@@ -196,7 +199,7 @@ function shouldSkipMemoryExtraction(
   // A running turn owns the role snapshot captured when its lease started.
   // UI edits made while it is running apply to the next turn; mixing the new
   // policy flag with the old turn's extraction target would cross role bounds.
-  const roleName = capturedRoleName || (conversationId ? peekConversation(conversationId)?.role : undefined) || getCurrentRole().name
+  const roleName = capturedRoleName || (conversationId ? peekConversation(conversationId)?.role : undefined) || DEFAULT_AGENT_ID
   const roleCfg = getRoleConfig(roleName)
   if (roleCfg?.memoryEnabled === false) {
     console.log(`[Memory] 角色 ${roleName} 已关闭记忆抽取（memory: off），跳过本次 executeExtraction`)
@@ -242,6 +245,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     if (win && !win.isDestroyed()) win.webContents.send('memory:updated', conversationId ?? null, notice)
   }
 
+  // 团队目录一动（组长改名 / 写章程 / 建成员 / 团队记忆落盘）→ 渲染层当场刷新左栏与团队面板，不等话题跑完
+  onTeamChanged((teamId) => {
+    const win = getWindow()
+    if (win && !win.isDestroyed()) win.webContents.send('team:changed', teamId)
+  })
+
   // 界面语言由 Main 持有唯一事实源：renderer 只消费解析后的状态。
   // 广播/原生菜单刷新由 locale-manager 的统一订阅者负责，避免多个入口各自补副作用。
   ipcMain.handle('locale:get-state', () => getLocaleState())
@@ -263,6 +272,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.on('chat:transcript-persistence-ack', (event, ack: TranscriptPersistenceAck) => {
     acknowledgeTranscriptPersistence(event.sender, ack)
   })
+
+  // 跨会话：对方那轮用同一个 Runtime 跑；跑完 → conv:peer-turn 让界面刷新 / 点亮未读
+  setPeerRuntime(getAgentRuntime)
+  setPeerTurnWindowGetter(getWindow)
 
   // 注册 AI 标题更新回调 → 通知前端刷新对话列表
   setTitleUpdateCallback((id, title) => {
@@ -422,7 +435,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       // The global current role can be changed by another conversation while
       // this Agent is running. Pin the conversation-owned role now so the
       // completion-side memory extractor cannot inherit a different run's role.
-      executionRoleName = overrides?.roleName || getCurrentRole().name
+      executionRoleName = overrides?.roleName || DEFAULT_AGENT_ID
       const { agentChat } = await agentService()
       for await (const event of agentChat(messages, execution.signal, 'desktop', overrides, (handle) => {
         // 挂到本会话运行槽，供 chat:steer/chat:queue 注入；被顶掉的旧槽是孤儿、置 agent 无害
@@ -619,12 +632,17 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       }).catch(() => {})
     }
 
-    // Agent Workspace dreaming（fire-and-forget）
-    if (workspaceId && messages.length >= 2) {
-      executeAgentDreaming(workspaceId, messages, (result) => {
-        // 独立 Agent 的整理：memories 是条数，agent.md 改了再算一项
+    // Agent Workspace dreaming（fire-and-forget）。团队话题：同一台引擎，记忆落团队目录、胶囊写明是团队记忆
+    // （scope 在跑完后现解——组长这一轮可能刚改了名、建了成员）
+    const teamConv = peekConversation(cid)
+    const teamScope = teamConv?.teamId ? resolveTeamScope(teamConv.teamId, teamConv.channel) : null
+    const teamName = teamScope?.name
+    const dreamTarget = teamScope ? { team: teamScope } : workspaceId ? { workspaceId } : null
+    if (dreamTarget && messages.length >= 2) {
+      executeAgentDreaming(dreamTarget, messages, (result) => {
+        // memories 是条数，agent.md 改了再算一项；团队胶囊要说清是哪个团队、记了什么
         if (result.memories > 0 || result.agentMdUpdated) {
-          emitMemoryNotice(conversationId, { type: 'dreamed', actionsApplied: result.memories + (result.agentMdUpdated ? 1 : 0) })
+          emitMemoryNotice(conversationId, { type: 'dreamed', actionsApplied: result.memories + (result.agentMdUpdated ? 1 : 0), ...(teamName ? { team: teamName, summary: result.names.join('、') } : {}) })
         }
       }).catch(() => {})
     }
@@ -718,7 +736,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
 
   // ---- 对话管理 IPC ----
   ipcMain.handle('conv:list', () => listConversations())
-  ipcMain.handle('conv:create', (_event, role: string, title?: string, agentId?: string, workspaceId?: string) => createConversation(role, title, agentId, workspaceId))
+  ipcMain.handle('conv:create', (_event, role: string, title?: string, agentId?: string, workspaceId?: string, team?: { teamId: string; channel?: string }) =>
+    createConversation(role, title, agentId, workspaceId, 'desktop', team && typeof team.teamId === 'string' ? { teamId: team.teamId, ...(typeof team.channel === 'string' ? { channel: team.channel } : {}) } : undefined))
   ipcMain.handle('conv:get', (_event, id: string) => getConversation(id))
   // 序列化读（评审 H2）：切会话读历史必须排在该会话飞行中的后台 append 之后，否则水位线基于旧快照
   ipcMain.handle('conv:get-messages', (_event, id: string) => getConversationMessagesSerialized(id))
@@ -1072,12 +1091,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle('plugins:uninstall', (_event, name: string) => uninstallPlugin(name))
   ipcMain.handle('plugins:set-disabled', (_event, name: string, disabled: boolean) => togglePlugin(name, disabled))
 
-  // ---- Agent 模板 CRUD ----
-  ipcMain.handle('agent:list', () => listAgentTemplates())
-  ipcMain.handle('agent:get', (_event, id: string) => getAgentTemplate(id))
-  ipcMain.handle('agent:create', (_event, data: any) => createAgentTemplate(data))
-  ipcMain.handle('agent:update', (_event, id: string, data: any) => updateAgentTemplate(id, data))
-  ipcMain.handle('agent:delete', (_event, id: string) => { deleteAgentTemplate(id); return { ok: true } })
+  // 统一身份：一份列表（内置 → Pal）给选择器和「我的 Pal」页；复制内置成 Pal（模板已并入 Pal，没有模板 CRUD 了）
+  ipcMain.handle('agents:list', () => listAgentSummaries())
+  ipcMain.handle('agents:copy-builtin', (_event, id: string) => copyBuiltinAsPal(id) ?? null)
 
   // ---- Agent Workspace ----
   ipcMain.handle('workspace:list', () => listWorkspaces())
@@ -1088,6 +1104,17 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return { ...ws, dir: getWorkspaceDir(id) }
   })
   ipcMain.handle('workspace:delete', (_event, id: string) => { deleteWorkspace(id); return { ok: true } })
+  // 团队（teams/<id>/）：与 Pal 同一簇 IPC，不新造前缀
+  ipcMain.handle('workspace:list-teams', () => listTeams())
+  ipcMain.handle('workspace:get-team', (_event, id: string) => {
+    const detail = getTeamDetail(id)
+    return detail ? { ...detail, tasks: listTasks({ teamId: id }) } : null
+  })
+  ipcMain.handle('workspace:found-team', () => foundTeam())
+  ipcMain.handle('workspace:create-team', (_event, data: { name: string; members: string[]; lead?: string; tier?: 'readonly' | 'auto' | 'full'; charter?: string }) => createTeam(data))
+  ipcMain.handle('workspace:write-team-md', (_event, id: string, content: string) => { writeTeamMd(id, String(content ?? '')); return { ok: true } })
+  ipcMain.handle('workspace:delete-team', (_event, id: string) => ({ ok: deleteTeam(id) }))
+  ipcMain.handle('workspace:read-team-file', (_event, id: string, relPath: string) => readTeamFile(id, String(relPath ?? '')))
 
   /**
    * 列产物目录（per-agent 或全局）。
@@ -1353,8 +1380,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle('task:list', (_event, filter?: { workspaceId?: string; enabledOnly?: boolean }) => listTasks(filter))
   ipcMain.handle('task:get', (_event, id: string) => getTask(id))
   ipcMain.handle('task:create', (_event, data: any) => {
-    // 自动填充 role（用户创建任务时的当前角色）— 决定任务执行后对话归属
-    const withRole = { ...data, role: data.role || getCurrentRole()?.name }
+    // 没记 role 的任务归默认角色（通用助手）——没有"当前角色"可以借了
+    const withRole = { ...data, role: data.role || DEFAULT_AGENT_ID }
     const task = createTask(withRole)
     scheduleTask(task)
     return task
@@ -1484,10 +1511,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     }
   })
 
-  ipcMain.handle('assets:list-tree', async () => listRoleAssets())
+  ipcMain.handle('assets:list-tree', async (_event, roleName?: string) => listRoleAssets(roleName))
 
   // 角色资产库子文件夹里的"系统"（含 SKILL.md 的文件夹）——教学风格等角色专属长期档案，教师助手 P0 首个消费者
-  ipcMain.handle('assets:list-role-systems', async () => listRoleSystemFolders())
+  ipcMain.handle('assets:list-role-systems', async (_event, roleName?: string) => listRoleSystemFolders(roleName))
 
   // 档案预览的目录树（路径限定在角色资产库内，main 侧校验；递归一次给全）
   ipcMain.handle('assets:list-role-system-tree', async (_e, dirPath: string) => listRoleSystemTree(dirPath))
@@ -1515,8 +1542,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   })
 
   ipcMain.handle('assets:delete', async (_event, assetPath: string) => {
-    // 两个合法根：角色资产库（历史入库件）+ workspace/uploads（preflow 来源新落点）
-    const roots = [getRoleAssetsDir(), dataPath('workspace', 'uploads')]
+    // 两个合法根：各角色的资产库（历史入库件）+ workspace/uploads（preflow 来源新落点）
+    const roots = [getRoleAssetsRoot(), dataPath('workspace', 'uploads')]
     if (!roots.some(r => assetPath.startsWith(r + '/') || assetPath.startsWith(r))) {
       throw new Error('拒绝删除资产目录外的文件')
     }
@@ -1746,7 +1773,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   setRealtimeWindowRef(getWindow)
   initializeDurableVoiceSession()
 
-  ipcMain.handle('realtime:config', () => getRealtimeConfig())
+  ipcMain.handle('realtime:config', (_event, roleName?: string) => getRealtimeConfig(roleName))
   ipcMain.handle('realtime:start', (event, ctx?: any) =>
     startDurableVoiceSession(ctx, event.sender))
   ipcMain.on('realtime:stop', () => {

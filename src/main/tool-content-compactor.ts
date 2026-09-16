@@ -3,19 +3,9 @@
  *
  * Model-visible tool arguments/results are no longer reduced here. They remain
  * in the append-only conversation until the whole-history token compactor runs.
- * The helpers below only keep the expandable subagent card reasonably sized and
- * recognize receipt placeholders written by older OpenPipal versions.
+ * The helper below only keeps the expandable subagent card reasonably sized.
+ * （旧版本写进历史的 `[内容已保存…]` 回执占位只剩渲染端 utils/format.ts 认它，用来标损坏态。）
  */
-
-/**
- * 回执占位识别——实案：模型把上下文里的回执当正文复制进 create_artifact，把 11KB 场景
- * 覆写成 73 字节占位（同会话 6 个产物受损）。所有会持久化"生成内容"的工具入口都要用
- * 它做门闩；文案匹配按前缀，兼容历史会话里的旧回执。
- */
-const RECEIPT_PLACEHOLDER_RE = /\[内容已保存，\d+ 字符/
-export function containsReceiptPlaceholder(text: string | undefined | null): boolean {
-  return !!text && RECEIPT_PLACEHOLDER_RE.test(text)
-}
 
 // ---- subagent 卡片数据压缩 ----
 

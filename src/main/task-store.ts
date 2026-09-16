@@ -17,6 +17,8 @@ import { homedir } from 'os'
 import { randomUUID } from 'crypto'
 import { dataPath } from './data-root'
 import { getTasksRootPath } from './credential-paths'
+import { resolveAgentId } from '../shared/agent-identity'
+import { palIdOf } from './pal-id'
 
 const TASKS_DIR = getTasksRootPath()
 const LEGACY_SCHEDULED_DIR = dataPath('scheduled-tasks')
@@ -64,7 +66,13 @@ export interface Task {
 
   /** 作用域 — 二选一或都不选（纯全局任务用当前角色） */
   workspaceId?: string  // 挂在 Workspace Agent 下
-  agentId?: string      // 指定 Agent 模板（全局任务用）
+  /** 老字段：曾指模板；模板并入 Pal 后读侧当 workspaceId（withAgent），新任务不再写 */
+  agentId?: string
+  /** 统一的 Agent 身份（内置名或 Pal id）；读侧永远填好，老任务按 workspaceId / agentId / role 派生 */
+  agent?: string
+  /** 团队级任务：触发时开一条团队话题（由 Lead 跑）；workspaceId 读侧补成 Lead */
+  teamId?: string
+  channel?: string
 
   /** 触发条件 */
   trigger: TaskTrigger
@@ -104,11 +112,18 @@ function filePath(id: string): string {
   return join(TASKS_DIR, `${id}.json`)
 }
 
+/** 读侧派生：老任务的 agentId（模板）并入 Pal 后当 workspaceId；没统一身份的补上 */
+function withAgent(task: Task): Task {
+  const workspaceId = palIdOf(task)
+  const normalized = workspaceId && !task.workspaceId ? { ...task, workspaceId } : task
+  return { ...normalized, agent: resolveAgentId(normalized) }
+}
+
 function readTaskFile(id: string): Task | null {
   const fp = filePath(id)
   if (!existsSync(fp)) return null
   try {
-    return JSON.parse(readFileSync(fp, 'utf-8'))
+    return withAgent(JSON.parse(readFileSync(fp, 'utf-8')))
   } catch {
     return null
   }
@@ -121,15 +136,16 @@ function writeTaskFile(task: Task): void {
 
 // ---- 导出 CRUD ----
 
-export function listTasks(filter?: { workspaceId?: string; enabledOnly?: boolean }): Task[] {
+export function listTasks(filter?: { workspaceId?: string; teamId?: string; enabledOnly?: boolean }): Task[] {
   ensureDir()
   const files = readdirSync(TASKS_DIR).filter(f => f.endsWith('.json'))
   const tasks: Task[] = []
 
   for (const file of files) {
     try {
-      const task: Task = JSON.parse(readFileSync(join(TASKS_DIR, file), 'utf-8'))
+      const task: Task = withAgent(JSON.parse(readFileSync(join(TASKS_DIR, file), 'utf-8')))
       if (filter?.workspaceId !== undefined && task.workspaceId !== filter.workspaceId) continue
+      if (filter?.teamId !== undefined && task.teamId !== filter.teamId) continue
       if (filter?.enabledOnly && !task.enabled) continue
       tasks.push(task)
     } catch {
@@ -148,6 +164,7 @@ export function createTask(data: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>): 
   const now = Date.now()
   const task: Task = {
     ...data,
+    agent: resolveAgentId(data),
     id: randomUUID(),
     createdAt: now,
     updatedAt: now
@@ -162,9 +179,11 @@ export function updateTask(id: string, updates: Partial<Task>): Task | null {
   const existing = readTaskFile(id)
   if (!existing) return null
 
+  const merged = { ...existing, ...updates }
   const updated: Task = {
-    ...existing,
-    ...updates,
+    ...merged,
+    // 换了 workspaceId / agentId / role 就重新派生身份，不沿用旧值
+    agent: resolveAgentId({ agent: updates.agent, workspaceId: merged.workspaceId, agentId: merged.agentId, role: merged.role }),
     id: existing.id,
     createdAt: existing.createdAt,
     updatedAt: Date.now()

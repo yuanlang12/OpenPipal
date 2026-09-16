@@ -53,6 +53,11 @@ window.api = {
   getCurrentRole: async () => ROLES.find(r => r.name === 'learner'),
   switchRole: async (name) => { window.__mockCalls.push({ method: 'switchRole', args: name }); return ROLES.find(r => r.name === name) || ROLES[0]; },
   listAgentWorkspaces: async () => WORKSPACES,
+  // 统一身份：切换器现在从这一份列表画（内置 → Pal）
+  listAgents: async () => [
+    ...ROLES.map(r => ({ id: r.name, kind: 'builtin', builtin: true, name: r.displayName || r.name, icon: r.icon })),
+    ...WORKSPACES.map(w => ({ id: w.id, kind: 'pal', builtin: false, name: w.name, icon: w.icon, description: w.description }))
+  ],
   listConversations: async () => CONVS,
   createConversation: async (role, title, agentId, workspaceId) => {
     window.__mockCalls.push({ method: 'createConversation', args: { role, title, agentId, workspaceId } });
@@ -84,8 +89,8 @@ async function setup(page: Page): Promise<void> {
 test('浏览器模式：隐藏侧栏 + 顶栏切换智能体 + 历史浮层', async ({ page }) => {
   await setup(page)
 
-  // 1. 顶栏出现：AgentSwitcher 显示当前角色 / 历史 / 新建
-  await expect(page.getByText('学习助手').first()).toBeVisible()
+  // 1. 顶栏出现：AgentSwitcher 显示这条会话的角色（启动没有会话 → 通用助手）/ 历史 / 新建
+  await expect(page.getByText('OpenPipal').first()).toBeVisible()
   await expect(page.getByRole('button', { name: '历史' })).toBeVisible()
   await expect(page.getByRole('button', { name: '新建' })).toBeVisible()
 
@@ -95,23 +100,24 @@ test('浏览器模式：隐藏侧栏 + 顶栏切换智能体 + 历史浮层', as
   await page.screenshot({ path: `${ARTIFACTS_DIR}/01-topbar.png` })
 
   // 3. 打开 AgentSwitcher：两组都在，独立 Agent 可见
-  await page.getByText('学习助手').first().click()
+  await page.getByText('OpenPipal').first().click()
   const menu = page.getByTestId('agent-switcher-menu')
-  await expect(menu.getByText('全局角色')).toBeVisible()
+  await expect(menu.getByText('OpenPipal 官方')).toBeVisible()
   await expect(menu.getByText('我的 Pal')).toBeVisible()
-  // general（OpenPipal 通用助手）现在是真实角色，应出现在全局角色组里
-  await expect(menu.getByText('OpenPipal')).toBeVisible()
+  await expect(menu.getByText('OpenPipal', { exact: true })).toBeVisible()
+  await expect(menu.getByText('学习助手')).toBeVisible()
   await expect(menu.getByText('设计助手')).toBeVisible()
   await expect(menu.getByText('论文导师')).toBeVisible()
   await page.screenshot({ path: `${ARTIFACTS_DIR}/02-switcher-open.png` })
 
-  // 3b. 选中 general → switchRole('general') 被调用
-  await menu.getByText('OpenPipal').click()
+  // 3b. 选中内置角色 = 开一条它的会话（没有全局"当前角色"可切）：createConversation 收到 role，顶栏跟着换
+  await menu.getByText('学习助手').click()
   await page.waitForTimeout(200)
-  const switched = await page.evaluate(() => (window as any).__mockCalls.find((c: any) => c.method === 'switchRole' && c.args === 'general'))
-  expect(switched, '选 OpenPipal 应调用 switchRole(general)').toBeTruthy()
+  const switched = await page.evaluate(() => (window as any).__mockCalls.find((c: any) => c.method === 'createConversation' && c.args?.role === 'learner'))
+  expect(switched, '选学习助手应以 role=learner 建会话').toBeTruthy()
+  await expect(page.getByText('学习助手').first()).toBeVisible()
   // 重新打开切换器，继续后续步骤
-  await page.getByText('OpenPipal').first().click()
+  await page.getByText('学习助手').first().click()
 
   // 4. 选中独立 Agent → createConversation 收到 workspaceId
   await page.getByText('论文导师').click()

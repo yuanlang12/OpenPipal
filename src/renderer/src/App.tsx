@@ -16,6 +16,7 @@ import { StatusBar } from './components/StatusBar'
 import { WindowControls } from './components/WindowControls'
 import { BrowserTopBar } from './components/BrowserTopBar'
 import { ChatPanel } from './components/ChatPanel'
+import { FileDropHighlight } from './components/shared/FileDrop'
 import { InputBar } from './components/InputBar'
 import { SelfCheckPreview } from './components/SelfCheckPreview'
 // 语音 UI 已改为输入框内联控件（VoiceCallInline）。
@@ -29,6 +30,7 @@ import { TasksPanel } from './components/TasksPanel'
 import { OutputCenterPanel } from './components/OutputCenterPanel'
 import { WelcomePage } from './components/WelcomePage'
 import { AgentWorkspaceInspector } from './components/AgentWorkspaceInspector'
+import { TeamInspector } from './components/TeamInspector'
 import { AskUserForm } from './components/messages/AskUserForm'
 import { WorkspacePanel } from './components/workspace/WorkspacePanel'
 import { FilesPanel } from './components/workspace/FilesPanel'
@@ -38,8 +40,8 @@ export default function App() {
   const { t } = useTranslation()
   const status = useTargetStatus()
   const { initialized, currentRole, activeView, workspacePanelOpen } = useAppStore()
-  const { convLoading, isStreaming, setupListeners, clearMessages, pendingPermission, respondPermission, messages, activeWorkspaceId, sendMessage } = useChatStore()
-  const { switchRole, setActiveView } = useAppStore()
+  const { convLoading, isStreaming, setupListeners, clearMessages, pendingPermission, respondPermission, messages, activeWorkspaceId, activeTeamId, activeChannel, sendMessage } = useChatStore()
+  const { setCurrentRoleName, setActiveView } = useAppStore()
   const { newConversation } = useChatStore()
 
   // 查找最后一条 assistant 消息的 askFields（如果它还没被用户回答）
@@ -125,9 +127,16 @@ export default function App() {
     observer.observe(node)
     return () => observer.disconnect()
   }, [chatViewMounted])
+  // 启动只载会话列表、停在欢迎页（不自动续最近会话）
   useEffect(() => {
-    if (currentRole) useChatStore.getState().initConversations(currentRole.name)
-  }, [currentRole?.name])
+    if (initialized) useChatStore.getState().initConversations()
+  }, [initialized])
+  // "正看着的角色"跟着活跃会话走：切会话 / 新建 / 首条消息钉住角色，这里同步到 appStore.currentRole；
+  // 没有活跃会话时不动（欢迎页点头像的选择留在 appStore 里，首条消息 ensureConversation 才落成会话事实）
+  // 依赖里带 activeConversationId：换到另一条同角色的会话时 role 字符串不变，但欢迎页的待定选择要被那条会话的角色盖掉
+  const activeConversationId = useChatStore(s => s.activeConversationId)
+  const activeRoleName = useChatStore(s => s.conversations.find(c => c.id === s.activeConversationId)?.role)
+  useEffect(() => { if (activeRoleName) setCurrentRoleName(activeRoleName) }, [activeConversationId, activeRoleName, setCurrentRoleName])
   useEffect(() => setupListeners(), [setupListeners])
   useArtifactWorkspaceBridge()
   useEffect(() => {
@@ -138,12 +147,7 @@ export default function App() {
     return cleanup
   }, [])
 
-  const handleSwitchRole = useCallback(async (name: string) => {
-    await switchRole(name)
-    clearMessages()
-  }, [switchRole, clearMessages])
-
-  const roleName = currentRole?.name || 'learner'
+  const roleName = currentRole?.name || 'general'
   const handleNew = useCallback(async () => {
     // 所见即所得：与 Sidebar 新建入口一致，固定 general（欢迎页可切换角色）
     await newConversation('general')
@@ -261,7 +265,6 @@ export default function App() {
             <StatusBar
               status={status}
               onClear={handleNew}
-              onSwitchRole={handleSwitchRole}
             />
             {/* Windows 才渲染：自绘 — / ×（macOS 无边框窗靠 Cmd+W / 托盘，这里返回 null） */}
             <WindowControls />
@@ -280,13 +283,22 @@ export default function App() {
           <Sidebar collapsed={sidebarCollapsed} />
         )}
 
-        {/* Agent Workspace 信息检视器 — 仅 chat view + activeWorkspaceId + 用户开启时显示 */}
-        {activeView === 'chat' && activeWorkspaceId && workspacePanelOpen && (
+        {/* Agent Workspace 信息检视器 — 仅 chat view + activeWorkspaceId + 用户开启时显示；
+            团队话题在同一个位置换成团队目录（章程 / 成员 / 频道 / 记忆 / 规则 / 共享文件 / 自动化） */}
+        {activeView === 'chat' && (activeTeamId || activeWorkspaceId) && workspacePanelOpen && (
           <div className="w-[260px] shrink-0 flex flex-col">
-            <AgentWorkspaceInspector
-              workspaceId={activeWorkspaceId}
-              onClose={() => useAppStore.getState().setWorkspacePanelOpen(false)}
-            />
+            {activeTeamId ? (
+              <TeamInspector
+                teamId={activeTeamId}
+                channel={activeChannel}
+                onClose={() => useAppStore.getState().setWorkspacePanelOpen(false)}
+              />
+            ) : (
+              <AgentWorkspaceInspector
+                workspaceId={activeWorkspaceId!}
+                onClose={() => useAppStore.getState().setWorkspacePanelOpen(false)}
+              />
+            )}
           </div>
         )}
 
@@ -297,7 +309,7 @@ export default function App() {
             study 模式下变成固定宽度右栏，chat 缩成阅读伴侣 */}
         <div
           className={[
-            'op-content-column flex flex-col min-w-0 min-h-0',
+            'op-content-column relative flex flex-col min-w-0 min-h-0',
             studyModeActive ? 'shrink-0' : 'flex-1'
           ].join(' ')}
           style={{
@@ -305,6 +317,8 @@ export default function App() {
             transition: `width ${layoutTransitionMs}ms ease-out`
           }}
         >
+          {/* 往窗口里拖文件时这一列亮一圈：欢迎页与对话页同一层提示，松手落在哪都进输入框 */}
+          {activeView === 'chat' && <FileDropHighlight />}
           {activeView === 'chat' && (
             messages.length === 0 && !isStreaming && !activeWorkspaceId ? (
               <WelcomePage
@@ -334,7 +348,7 @@ export default function App() {
                         question={pendingAskFields.question}
                         fields={pendingAskFields.fields}
                         onSubmit={(answers) => {
-                          sendMessage(answers, currentRole?.name || 'learner')
+                          sendMessage(answers, currentRole?.name || 'general')
                         }}
                       />
                     </div>

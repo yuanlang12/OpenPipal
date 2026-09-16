@@ -22,6 +22,7 @@ import {
   type ScannedPlugin
 } from '../plugin-manager'
 import { getWorkspaceDir, getWorkspaceName, getWorkspacesRootDir } from '../agent-workspace-store'
+import { getTeamsRootDir, listTeams, readTeam } from '../team-store'
 import { hookIdFor, loadHookFile, type LoadHookFileOptions } from './hook-loader'
 import type { HookEntry, HookEventName, HookLoadFailure, HookLoadResult, HookNotice, LoadedHook } from './hook-types'
 import type { HookSource, HookToggleResult } from '../../shared/hook-contract'
@@ -62,11 +63,16 @@ export function hooksDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolea
 
 /** 独立智能体规则的 hookId 容器段前缀：`agent:<id>/<文件名>` */
 export const AGENT_CONTAINER_PREFIX = 'agent:'
+/** 团队规则的容器段前缀：`team:<id>/<文件名>`；频道规则 `team:<id>/<频道>/<文件名>` */
+export const TEAM_CONTAINER_PREFIX = 'team:'
 
 export interface HookScope {
   /** 只装这个独立智能体自己的规则（运行时：跑哪个 Agent 装哪个；全局助手与内置角色不传） */
   workspaceId?: string
-  /** 把所有独立智能体的规则都算上（规则页清单） */
+  /** 团队话题：再装团队的 rules/（有频道再装频道的）——团队话题里所有成员都过（设计稿 §5 第③层） */
+  teamId?: string
+  channel?: string
+  /** 把所有独立智能体与团队的规则都算上（规则页清单） */
   allAgents?: boolean
 }
 
@@ -85,15 +91,56 @@ export function agentSource(workspaceId: string, name?: string): HookSource {
   return { kind: 'agent', id: workspaceId, name: name || workspaceId }
 }
 
-/** hookId 的容器段：插件名，或 `agent:<id>`——来源结构是事实源，前缀只在这里拼一次 */
+export function teamSource(teamId: string, name?: string): HookSource {
+  return { kind: 'team', id: teamId, name: name || teamId }
+}
+
+/** hookId 的容器段：插件名、`agent:<id>` 或 `team:<id>`——来源结构是事实源，前缀只在这里拼一次 */
 export function containerOf(source: HookSource): string {
-  return source.kind === 'agent' ? AGENT_CONTAINER_PREFIX + source.id : source.id
+  if (source.kind === 'agent') return AGENT_CONTAINER_PREFIX + source.id
+  if (source.kind === 'team') return TEAM_CONTAINER_PREFIX + source.id
+  return source.id
 }
 
 interface AgentHookDir {
   source: HookSource
+  /** hookId 的容器段。频道规则与团队规则共用 source（同一个团队），容器段多一层 `/<频道>` 才不撞名 */
+  container: string
   active: string[]
   disabled: string[]
+}
+
+/**
+ * 团队的 `teams/<id>/rules/`（有频道再加 `channels/<频道>/rules/`）：团队话题里所有成员都过，
+ * 位置即范围。规则页（allAgents）把所有团队与频道的都列出来。
+ */
+function teamRuleDirs(scope: HookScope): AgentHookDir[] {
+  const dirs: AgentHookDir[] = []
+  const push = (teamId: string, name: string, channel?: string): void => {
+    const root = channel ? join(getTeamsRootDir(), teamId, 'channels', channel) : join(getTeamsRootDir(), teamId)
+    const rulesDir = join(root, 'rules')
+    if (!existsSync(rulesDir)) return
+    const scanned = scanHooksDir(rulesDir, root, [])
+    dirs.push({
+      source: teamSource(teamId, channel ? `${name} › ${channel}` : name),
+      container: TEAM_CONTAINER_PREFIX + teamId + (channel ? `/${channel}` : ''),
+      active: scanned.active,
+      disabled: scanned.disabled
+    })
+  }
+  if (scope.allAgents) {
+    for (const team of listTeams()) {
+      push(team.id, team.name)
+      for (const channel of team.channels) push(team.id, team.name, channel)
+    }
+  } else if (scope.teamId) {
+    const team = readTeam(scope.teamId)
+    if (team) {
+      push(team.id, team.name)
+      if (scope.channel) push(team.id, team.name, scope.channel)
+    }
+  }
+  return dirs
 }
 
 /**
@@ -114,17 +161,19 @@ function agentIdsWithHooks(): string[] {
  * 位置即范围——放在这里的规则只在跑这个 Agent 时装，文件里不用再判 ctx.workspaceId。
  */
 function agentHookDirs(scope: HookScope): { dirs: AgentHookDir[]; error?: string } {
-  if (!scope.allAgents && !scope.workspaceId) return { dirs: [] }
+  if (!scope.allAgents && !scope.workspaceId && !scope.teamId) return { dirs: [] }
   try {
-    const ids = scope.allAgents ? agentIdsWithHooks() : [scope.workspaceId!]
+    const ids = scope.allAgents ? agentIdsWithHooks() : (scope.workspaceId ? [scope.workspaceId] : [])
     const dirs: AgentHookDir[] = []
     for (const id of ids) {
       const root = getWorkspaceDir(id)
       const hooksDir = join(root, 'hooks')
       if (!existsSync(hooksDir)) continue
       const scanned = scanHooksDir(hooksDir, root, [])
-      dirs.push({ source: agentSource(id, getWorkspaceName(id)), active: scanned.active, disabled: scanned.disabled })
+      const source = agentSource(id, getWorkspaceName(id))
+      dirs.push({ source, container: containerOf(source), active: scanned.active, disabled: scanned.disabled })
     }
+    dirs.push(...teamRuleDirs(scope))
     return { dirs }
   } catch (error) {
     // 独立智能体目录读不了（权限、目录被删到一半）不能连累插件规则：fail-open 只装插件规则，
@@ -157,8 +206,7 @@ function collectHookRefs({ plugins, agents }: HookInputs): HookFileRef[] {
   }
   refs.sort((a, b) => a.container.localeCompare(b.container) || a.file.localeCompare(b.file))
   for (const dir of agents) {
-    const container = containerOf(dir.source)
-    for (const file of dir.active) refs.push({ source: dir.source, container, file })
+    for (const file of dir.active) refs.push({ source: dir.source, container: dir.container, file })
   }
   return refs
 }
@@ -297,6 +345,10 @@ function locateUnder(base: string, absPath: string, accept: (parts: string[]) =>
 /** `<name>/hooks/<file>` 这一层的文件；文件名判据由调用方给（源码文件 / 含 .off 版） */
 const hookFileAt = (isName: (file: string) => boolean) => (parts: string[]): boolean =>
   parts.length === 3 && parts[1] === 'hooks' && isName(parts[2])
+/** 团队的 `<id>/rules/<file>` 或 `<id>/channels/<频道>/rules/<file>` */
+const teamRuleFileAt = (isName: (file: string) => boolean) => (parts: string[]): boolean =>
+  (parts.length === 3 && parts[1] === 'rules' && isName(parts[2]))
+  || (parts.length === 5 && parts[1] === 'channels' && parts[3] === 'rules' && isName(parts[4]))
 const manifestAt = (parts: string[]): boolean => parts.length === 2 && parts[1] === 'plugin.json'
 const isHookSource = (file: string): boolean => HOOK_EXT_RE.test(file)
 
@@ -524,8 +576,10 @@ function isHookFileName(name: string): boolean {
 export function setHookFileEnabled(file: string, enabled: boolean): HookToggleResult {
   if (typeof file !== 'string' || !file.trim()) return { ok: false, error: '缺少文件路径' }
   const toggleable = hookFileAt(isHookFileName)
-  const located = locateUnder(getPluginsRootDir(), resolve(file), toggleable) ?? locateUnder(getWorkspacesRootDir(), resolve(file), toggleable)
-  if (!located) return { ok: false, error: '不是插件或 Agent 的 hooks/ 里的规则文件' }
+  const located = locateUnder(getPluginsRootDir(), resolve(file), toggleable)
+    ?? locateUnder(getWorkspacesRootDir(), resolve(file), toggleable)
+    ?? locateUnder(getTeamsRootDir(), resolve(file), teamRuleFileAt(isHookFileName))
+  if (!located) return { ok: false, error: '不是插件、Agent 的 hooks/ 或团队的 rules/ 里的规则文件' }
   const abs = located.file
   const isOff = abs.endsWith(HOOK_OFF_SUFFIX)
   const target = enabled
@@ -564,9 +618,9 @@ function peekDescription(file: string): string | undefined {
 }
 
 /** 关掉的规则（文件 .off / 整包停用）在清单里的样子 */
-function offEntry(source: HookSource, file: string, logical: string, offReason: 'file' | 'plugin'): HookEntry {
+function offEntry(source: HookSource, container: string, file: string, logical: string, offReason: 'file' | 'plugin'): HookEntry {
   return {
-    id: hookIdFor(containerOf(source), logical),
+    id: hookIdFor(container, logical),
     source,
     file,
     description: peekDescription(file) || stemOf(logical),
@@ -583,20 +637,20 @@ export async function listHookEntries(options?: LoadHookFileOptions): Promise<Ho
   const entries: HookEntry[] = report.map((entry) => ({ ...entry }))
   const containers = [
     ...inputs.plugins.filter((plugin) => !plugin.info.invalid).map((plugin) => ({
-      source: pluginSource(plugin.info.name), active: plugin.hookFiles, disabled: plugin.disabledHookFiles, enabled: plugin.info.enabled
+      source: pluginSource(plugin.info.name), container: plugin.info.name, active: plugin.hookFiles, disabled: plugin.disabledHookFiles, enabled: plugin.info.enabled
     })),
     ...inputs.agents.map((dir) => ({ ...dir, enabled: true }))
   ]
-  for (const { source, active, disabled, enabled } of containers) {
+  for (const { source, container, active, disabled, enabled } of containers) {
     const liveFiles = new Set(active.map((file) => resolve(file)))
     for (const file of disabled) {
       const logical = file.slice(0, -HOOK_OFF_SUFFIX.length)
       // 同名的生效版已经在清单里：这份 .off 是撤销过又被重写后的残留，不列第二条同 id 的
       if (liveFiles.has(resolve(logical))) continue
-      entries.push(offEntry(source, file, logical, 'file'))
+      entries.push(offEntry(source, container, file, logical, 'file'))
     }
     if (!enabled) {
-      for (const file of active) entries.push(offEntry(source, file, file, 'plugin'))
+      for (const file of active) entries.push(offEntry(source, container, file, file, 'plugin'))
     }
   }
   return entries.sort((a, b) =>

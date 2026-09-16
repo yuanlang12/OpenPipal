@@ -287,8 +287,8 @@
 
     /* Agent Mark —— 全代码标识的配色。
      * ink/paper 是标识本体（暗色下反相，对齐素材包 mark-light.svg）；
-     * 其余是配饰色，走 token 层而不是写死 hex —— 配饰是唯一允许有色相的地方，
-     * 身体永远是 ink。加新角色 = 加一件配饰 + 挑一个这里的 hue。 */
+     * 其余八个 hue 走 token 层而不是写死 hex —— 身体一个 hue、配饰另一个 hue（搭配表在
+     * shared/agent-mark-catalog），眼睛永远是 paper 挖的洞。加新角色 = 加一件配饰 + 挑一个身体色。 */
     --sw-mark-ink:      #171714;
     --sw-mark-paper:    #FFFFFF;
     --sw-mark-red:      #C1543C;

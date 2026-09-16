@@ -6,14 +6,13 @@
  *
  * 坐标系同 geometry：中心原点，瓷砖 ±32，道具可越界到 ±56（SVG overflow: visible，
  * 不改变布局盒，所以接入时不用动任何调用处的尺寸）。
- * 颜色一律 `currentColor`，由 <g style="color: var(--sw-mark-<hue>)"> 注入。
+ * 颜色一律 `currentColor`，由 <g style="color: var(--sw-mark-<accent>)"> 注入——配饰色和身体色是两层，
+ * 配饰只画自己的形，不管自己是什么色。
  */
 
-export type AccessoryId =
-  | 'none' | 'scarf' | 'question' | 'palette' | 'briefcase' | 'headphones'
-  | 'glasses' | 'gradcap' | 'chefhat' | 'hardhat' | 'stetho' | 'coffee'
-  | 'pencil' | 'magnifier' | 'wrench' | 'crown' | 'bowtie' | 'antenna'
-  | 'catears' | 'flower' | 'note' | 'badge'
+// id 目录在 shared 里（主进程给团队建的 Pal 配头像时也要认这份清单）；这里只放 SVG
+import { ACCESSORY_IDS, MARK_ACCENTS, MARK_HUES, accentFor, isMarkHue, type AccessoryId, type MarkHue } from '../../../../shared/agent-mark-catalog'
+export { MARK_ACCENTS, MARK_HUES, accentFor, isMarkHue, type AccessoryId, type MarkHue }
 
 export interface Accessory {
   id: AccessoryId
@@ -123,19 +122,17 @@ export const ACCESSORIES: Accessory[] = [
 ]
 
 export const ACCESSORY_BY_ID = new Map<string, Accessory>(ACCESSORIES.map((a) => [a.id, a]))
+/** shared 清单里的每个 id 这里都得有画：少画一个，AgentMark 会静默回落成"不戴"（agent-mark-shapes 单测锁它为空） */
+export const UNDRAWN_ACCESSORIES: string[] = ACCESSORY_IDS.filter((id) => !ACCESSORY_BY_ID.has(id))
 
-/** 配饰色 —— 走 token 层，不写死 hex；改种子色一次换掉所有用法。 */
-export type MarkHue = 'ink' | 'red' | 'blue' | 'amber' | 'slate' | 'teal' | 'sage' | 'plum' | 'rose'
-export const MARK_HUES: MarkHue[] = ['ink', 'red', 'blue', 'amber', 'slate', 'teal', 'sage', 'plum', 'rose']
+/** 配饰色 —— 走 token 层，不写死 hex；改种子色一次换掉所有用法。色号清单在 shared（主进程组合头像时也要认） */
 export const hueVar = (hue: MarkHue): string => `var(--sw-mark-${hue})`
 
 /**
  * 磁盘上的值是**不可信的字符串** —— 主进程只保证"是个短 slug"，认不认得出归这里判。
  * 认不出就当没设置，回落到角色默认；绝不把未知 id 塞进渲染（未知色号会解析成
  * 无效的 CSS 变量，配饰直接变透明，比回落默认难查得多）。
+ * 与 shared 的 isAccessoryId 不同：那边只看在不在清单里，这边看有没有画出来。
  */
-export const isAccessoryId = (v: unknown): v is AccessoryId =>
+export const isDrawnAccessory = (v: unknown): v is AccessoryId =>
   typeof v === 'string' && ACCESSORY_BY_ID.has(v)
-
-export const isMarkHue = (v: unknown): v is MarkHue =>
-  typeof v === 'string' && (MARK_HUES as string[]).includes(v)

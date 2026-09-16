@@ -393,25 +393,14 @@ export function installWebApiShim(): void {
       error: browserUnsupported('runtimeChrome.browserShim.features.pasteToTarget').error
     }),
 
-    // Role API — HTTP 调用
-    async getRoleInitState() {
-      const res = await fetch(`${API_BASE}/role/init-state`)
-      return res.json()
+    // Role API — HTTP 调用（只剩列表：没有"当前角色"了，角色是每条对话自己的）
+    async listAgents() {
+      const res = await fetch(`${API_BASE}/api/agents`)
+      return res.ok ? res.json() : []
     },
+    async copyBuiltinAsPal() { return null },
     async getAllRoles() {
       const res = await fetch(`${API_BASE}/role/all`)
-      return res.json()
-    },
-    async getCurrentRole() {
-      const res = await fetch(`${API_BASE}/role/current`)
-      return res.json()
-    },
-    async switchRole(roleName: string) {
-      const res = await fetch(`${API_BASE}/role/switch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roleName })
-      })
       return res.json()
     },
     // 独立 Agent（workspace）列表 — /api/agents/list 返回 { builtins, agents }，这里只取 agents。
@@ -587,11 +576,6 @@ export function installWebApiShim(): void {
     async installPlugin() { return browserUnsupported('runtimeChrome.browserShim.features.installPlugin') },
     async uninstallPlugin() { return browserUnsupported('runtimeChrome.browserShim.features.uninstallPlugin') },
     async setPluginDisabled() { return { ok: true } },
-    async listAgentTemplates() { return [] },
-    async getAgentTemplate() { return null },
-    async createAgentTemplate() { return null },
-    async updateAgentTemplate() { return null },
-    async deleteAgentTemplate() { return null },
     async listTasks() { return [] },
     async getTask() { return null },
     async createTask() { return null },

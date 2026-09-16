@@ -22,7 +22,7 @@ type OrbVisualState = 'idle' | 'recording' | 'transcribing' | 'thinking' | 'erro
 export function OrbView() {
   const sendMessage = useChatStore((s) => s.sendMessage)
   const isStreaming = useChatStore((s) => s.isStreaming)
-  const roleName = useAppStore((s) => s.currentRole?.name || 'learner')
+  const roleName = useAppStore((s) => s.currentRole?.name || 'general')
 
   const onTranscript = useCallback(
     (text: string) => {

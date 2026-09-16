@@ -23,6 +23,7 @@ import { RoleAvatar, type RoleAvatarRole } from './shared/RoleAvatar'
 import { ModelControl, type ThinkingLevel } from './shared/ModelControl'
 import { WorkingDirBar } from './shared/WorkingDirBar'
 import { PermissionTierControl } from './shared/PermissionTierControl'
+import { useAppStore } from '../stores/appStore'
 import { RoleArchiveViewer } from './RoleArchiveViewer'
 import { stripDcSuffix } from '../utils/format'
 import { DesignSystemView } from './artifacts/DesignSystemView'
@@ -273,6 +274,7 @@ function PreflowDropdown({
 }
 
 export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, manifest, onSubmit, onSkip, onOpenConversation }: Props) {
+  const tierAllowed = useAppStore(s => s.agents).find(a => a.id === roleName)?.permissionTier === 'allowed'
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' || i18n.language.startsWith('en') ? 'en' : 'zh-CN'
   const displayManifest = useMemo(
@@ -411,7 +413,7 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
       }).catch(() => {})
     } else {
       // dsSelector 关闭的角色（如 teacher）改读角色资产库子文件夹（教学风格等）；浏览器 shim 无此端点
-      ;(window.api as any)?.listRoleSystems?.().then((list: any) => {
+      ;(window.api as any)?.listRoleSystems?.(roleName).then((list: any) => {
         if (cancelled || !Array.isArray(list)) return
         setRoleSystems(list)
         // 一套都没有 → 库区默认落在"系统" tab：空态本身是最强的引导位，创建入口不该藏在第二个 tab 后面
@@ -562,13 +564,11 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
     <div className="flex-1 overflow-y-auto min-h-0 bg-surface-0" data-testid="preflow-composer">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-6 pb-10">
 
-        {/* 角色标识（左上，wordmark 位） */}
+        {/* 角色标识（左上，wordmark 位）：mark 裸画、不套圆——它自己就是圆角方，套圆会把身体和配饰裁成一个色饼（所有者 2026-09-16） */}
         <div className="flex items-center gap-2 mb-8">
-          <div className="w-7 h-7 rounded-full bg-surface-100 dark:bg-surface-50 flex items-center justify-center overflow-hidden">
-            {role
-              ? <RoleAvatar role={role} size={16} className="text-brand-500 dark:text-brand-300" imgClassName="w-full h-full rounded-full object-cover" />
-              : <span className="text-sm">{roleIcon}</span>}
-          </div>
+          {role
+            ? <RoleAvatar role={role} size={28} imgClassName="w-7 h-7 rounded-lg object-cover" />
+            : <span className="w-7 h-7 rounded-lg bg-surface-100 dark:bg-surface-50 grid place-items-center text-sm">{roleIcon}</span>}
           <span className="text-[14px] font-semibold text-ink-primary dark:text-surface-700">{roleDisplayName}</span>
         </div>
 
@@ -867,8 +867,8 @@ export function RolePreflowPanel({ roleName, roleIcon, roleDisplayName, role, ma
               // 这一页的问题就是"在哪个仓库里干活"，最近用过的那几个直接列出来
               recents
               // 权限档位挂在目录名右边：这一排本来就是"这条会话怎么跑"。
-              // 只给编码助手（主进程那侧同一道角色门），别的角色不该被迫理解工具风险分级。
-              trailing={roleName === 'coding' ? <PermissionTierControl /> : undefined}
+              // 只给档案声明了 permission-tier: allowed 的（主进程那侧同一道门），别的不该被迫理解工具风险分级。
+              trailing={tierAllowed ? <PermissionTierControl /> : undefined}
             />
           )
           : <div className="mb-8" />}

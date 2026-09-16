@@ -171,8 +171,9 @@ describe('renderer transcript integrity barrier', () => {
     'rejects the desktop barrier when an %s questions anchor append fails',
     async (route) => {
       vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // 追加被拒会改走整段 replace（id 撞了那类永久拒绝的自愈路）；两条路都失败才算落盘失败
       const harness = createRendererHarness({
-        apiOverrides: { appendMessages: async () => ({ ok: false }) }
+        apiOverrides: { appendMessages: async () => ({ ok: false }), replaceMessages: async () => ({ ok: false }) }
       })
       const { useChatStore } = await import('../../src/renderer/src/stores/chatStore')
       useChatStore.setState({

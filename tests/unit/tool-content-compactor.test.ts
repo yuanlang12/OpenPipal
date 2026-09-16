@@ -1,17 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import {
-  compactSubagentCardData,
-  containsReceiptPlaceholder
-} from '../../src/main/tool-content-compactor'
+import { compactSubagentCardData } from '../../src/main/tool-content-compactor'
 
-describe('tool-content-compactor 仅服务 UI/旧数据防护', () => {
-  it('识别旧版本的回执占位，防止模型把占位写回产物', () => {
-    expect(containsReceiptPlaceholder('[内容已保存，11390 字符；需要时重新读取]')).toBe(true)
-    expect(containsReceiptPlaceholder('<html>[内容已保存，10 字符；…]</html>')).toBe(true)
-    expect(containsReceiptPlaceholder('正常作业正文')).toBe(false)
-    expect(containsReceiptPlaceholder(undefined)).toBe(false)
-  })
-
+describe('tool-content-compactor 仅服务 UI', () => {
   it('subagent 展开卡数据收窄不影响主对话的模型轨迹', () => {
     const source = {
       finalText: '结论'.repeat(1000),

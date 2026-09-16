@@ -71,6 +71,7 @@ import {
 } from './pi-core-tool-adapter'
 import { hasHandlers, runBeforeAgentStartHooks, type HookChain, type HookToolCaller } from '../hooks/hook-chain'
 import { formatHookNoticeForModel, formatHookStatusForPrompt, loadActiveHooks, probeHookChanges, probeHookFileWrite, refreshHookSignatures, snapshotHookSignatures, type HookReportEntry, type HookScope } from '../hooks/hook-registry'
+import { formatReconciledForModel, reconcileArtifactSidecarWrites, SIDECAR_WRITE_CHANNELS } from '../artifact-reconcile'
 import { isRuleWriteActive, listPendingRuleDescriptions } from '../hooks/rule-writer'
 import { createHookToolCaller } from '../hooks/hook-tool-bridge'
 import type { HookContext } from '../hooks/hook-types'
@@ -381,6 +382,8 @@ async function* runPiCoreAgentChat(
     : { systemPrompt: '', roleName: executionRoleName }
 
   const eventQueue = new AsyncQueue<AgentEvent>()
+  // 每条工具开跑的时刻：产物库对账只看这段时间里改过的 sidecar（见 artifact-reconcile.ts）
+  let toolStartedAt = 0
   const adapter = new PiEventAdapter()
   const lifecycleController = new AbortController()
   const lifecycleSignal = lifecycleController.signal
@@ -429,12 +432,16 @@ async function* runPiCoreAgentChat(
   // 用户规则（插件 hooks/）：工具装配完才装——规则借的就是这一轮的工具；
   // 在预算估算之前跑 before_agent_start，改过的提示词按改过的算预算。
   // 范围贯穿本轮：装规则、指纹基线、shell 探针看的都是同一批文件（插件 + 正在跑的那个 Agent）
-  const hookScope: HookScope = { workspaceId: workspace.workspaceId }
+  const hookScope: HookScope = {
+    workspaceId: workspace.workspaceId,
+    ...(overrides?.teamId ? { teamId: overrides.teamId, ...(overrides.channel ? { channel: overrides.channel } : {}) } : {})
+  }
   const { chain: hookChain, report: hookReport, agentScanError: hookScanError } = await resolveHookChain({
     conversationId: overrides?.conversationId,
     workingDir: workspace.workingDir,
     roleName: executionRoleName,
     workspaceId: workspace.workspaceId,
+    agentId: overrides?.agentId,
     source,
     signal: lifecycleSignal
   }, conversationShort, createHookToolCaller({
@@ -443,7 +450,7 @@ async function* runPiCoreAgentChat(
     authorization: {
       conversationId: overrides?.conversationId,
       onConfirmation: permissionHandler,
-      scope: { workspaceId: workspace.workspaceId, workingDir: workspace.workingDir },
+      scope: { workspaceId: workspace.workspaceId, workingDir: workspace.workingDir, teamId: overrides?.teamId },
       tier: overrides?.permissionTier
     },
     onCall: (log) => console.log(
@@ -595,7 +602,7 @@ async function* runPiCoreAgentChat(
     const authorizer = new PiCoreToolAuthorizer({
       conversationId: overrides?.conversationId,
       onConfirmation: permissionHandler,
-      scope: { workspaceId: workspace.workspaceId, workingDir: workspace.workingDir },
+      scope: { workspaceId: workspace.workspaceId, workingDir: workspace.workingDir, teamId: overrides?.teamId },
       tier: overrides?.permissionTier
     })
     const cleanups: Array<() => void> = []
@@ -662,36 +669,48 @@ async function* runPiCoreAgentChat(
         // shell 命令开跑前把规则文件指纹刷到"此刻"：跑完的探针只报这条命令期间出现的变化，
         // 别的会话、插件页在此之前动的文件不会被算到这条会话头上
         onToolStart: (toolName) => {
+          toolStartedAt = Date.now()
           if (toolName === 'bash' || toolName === 'powershell') refreshHookSignatures(hookBaseline, hookScope)
         }
       }),
       afterToolCall: composePiCoreAfterToolCall({
         hookChain,
         onInterrupt: () => { interruptedByQuestion = true },
-        // 模型刚写完的文件若是规则：加载器当场给结论——对话流一行提醒 + 回给模型一句话
-        probeWrittenFile: async (toolName, args) => {
-          let notices: Awaited<ReturnType<typeof probeHookFileWrite>>
+        // 模型刚写完的文件若是规则：加载器当场给结论——对话流一行提醒 + 回给模型一句话；
+        // 若直写了本会话的产物文件：产物库对账——面板同步、jsx 重编译，同样回给模型一句事实
+        probeWrittenFile: async (toolName, args, toolCallId) => {
+          const notes: string[] = []
+          let notices: Awaited<ReturnType<typeof probeHookFileWrite>> = []
           if (toolName === 'write' || toolName === 'edit') {
-            if (typeof args.path !== 'string') return undefined
-            notices = await probeHookFileWrite(args.path, workspace.workingDir, undefined, hookBaseline, hookScope)
+            if (typeof args.path === 'string') {
+              notices = await probeHookFileWrite(args.path, workspace.workingDir, undefined, hookBaseline, hookScope)
+            }
           } else if (toolName === 'bash' || toolName === 'powershell') {
             if (isRuleWriteActive()) {
               // 后台（set_rule → Evolver）正在写规则：此刻多出来的文件是它的，结论由它自己送；
               // 这里只把基线推到"此刻"，不然下一条 shell 命令还会把它报成本轮建的
               refreshHookSignatures(hookBaseline, hookScope)
-              return undefined
+            } else {
+              // 模型用 shell 建的文件不知道路径，拿本轮基线比一遍：新的、改过的都当场加载
+              notices = await probeHookChanges(hookBaseline, undefined, hookScope)
             }
-            // 模型用 shell 建的文件不知道路径，拿本轮基线比一遍：新的、改过的都当场加载
-            notices = await probeHookChanges(hookBaseline, undefined, hookScope)
-          } else {
-            return undefined
           }
-          if (notices.length === 0) return undefined
           for (const notice of notices) {
             console.log(`[Hooks] conv=${conversationShort} 规则${notice.status === 'ok' ? '已生效' : '没生效'}：${notice.hookId}${notice.error ? ` — ${notice.error}` : ''}`)
             eventQueue.push({ type: 'hook_notice', notice })
           }
-          return notices.map(formatHookNoticeForModel).join('\n')
+          if (notices.length > 0) notes.push(notices.map(formatHookNoticeForModel).join('\n'))
+
+          if (SIDECAR_WRITE_CHANNELS.has(toolName)) {
+            const reconciled = reconcileArtifactSidecarWrites(overrides?.conversationId, toolStartedAt)
+            for (const item of reconciled) {
+              console.log(`[Artifacts] conv=${conversationShort} 直写对账：${item.artifact.id}${item.recompiled ? '（jsx 已重编译）' : ''}${item.compileError ? ` — 编译失败 ${item.compileError}` : ''}`)
+              // 与 edit_artifact 的结果同一条路：渲染端按 artifact 事件刷新面板、落锚点
+              eventQueue.push({ type: 'artifact', artifact: item.artifact, toolCallId })
+            }
+            if (reconciled.length > 0) notes.push(formatReconciledForModel(reconciled))
+          }
+          return notes.length > 0 ? notes.join('\n') : undefined
         }
       }),
       shouldStopAfterTurn: () => interruptedByQuestion,

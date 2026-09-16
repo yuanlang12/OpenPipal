@@ -607,6 +607,7 @@ export function ModelSettings() {
   }
 
   const handleSwitch = async (id: string) => {
+    // 只改全局默认：空会话本来就跟着全局走（出生不钉），开聊了的会话钉着自己那一个，不受这里影响
     await window.api.switchModelPreset?.(id)
     await loadPresets()
   }

@@ -340,6 +340,30 @@ describe('mcp_execute cancellation propagation', () => {
       expect(mocks.callMcpToolStructured).not.toHaveBeenCalled()
     })
 
+    it('hands the resolved tool annotations to classification', async () => {
+      mocks.resolveMcpToolServerIdentity.mockImplementation((_toolName, _conversationId, scope) => ({
+        serverName: scope?.serverName || 'test-server',
+        serverBinding: scope?.serverBinding || TEST_SERVER_BINDING,
+        annotations: { readOnlyHint: true }
+      }))
+      mocks.classifyToolRisk.mockReturnValue({ level: 'safe', reason: 'read only' })
+      mocks.callMcpTool.mockResolvedValue('ok')
+      mocks.executeInQuickJS.mockImplementation(async (_code, toolsApi) => {
+        const value = await toolsApi.call('list_things', { id: '1' })
+        return { logs: [value], elapsedMs: 1 }
+      })
+
+      const tool = buildMcpBridgeTools(undefined, 'annotated-call')[0]
+      await tool.execute('call-annotated', { code: 'tools.call("list_things")' }, new AbortController().signal)
+
+      expect(mocks.classifyToolRisk).toHaveBeenCalledWith(
+        'list_things',
+        { id: '1' },
+        { origin: 'mcp', mcpAnnotations: { readOnlyHint: true } }
+      )
+      expect(mocks.requestUserConfirmation).not.toHaveBeenCalled()
+    })
+
     it('keeps a safe MCP tool callable for scheduler turns', async () => {
       mocks.classifyToolRisk.mockReturnValue({ level: 'safe', reason: 'read only' })
       mocks.callMcpTool.mockResolvedValue('safe result')

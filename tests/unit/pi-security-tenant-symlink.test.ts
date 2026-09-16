@@ -4,8 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   assessToolScopeWithRoots,
-  canonicalizeSecurityPath,
-  isArtifactSidecarPath
+  canonicalizeSecurityPath
 } from '../../src/main/pi-security'
 
 const roots: string[] = []
@@ -54,10 +53,6 @@ describe('OpenPipal tenant scope canonical paths', () => {
       .toBe(canonicalizeSecurityPath(path.join(agentsRoot, 'other-agent', 'secret.md')))
     expect(canonicalizeSecurityPath(path.join(workingDir, 'dangling-conversation.json')))
       .toBe(canonicalizeSecurityPath(path.join(conversationsRoot, 'new-other-conversation.json')))
-    expect(isArtifactSidecarPath(
-      path.join(workingDir, 'own-artifact-alias', 'component.jsx'),
-      ownArtifactRoot
-    )).toBe(true)
     const otherAgent = assessToolScopeWithRoots(
       'read',
       { path: 'foreign-agent/secret.md' },

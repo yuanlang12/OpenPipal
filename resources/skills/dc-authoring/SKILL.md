@@ -73,6 +73,10 @@ class Component extends DCLogic {
 
 - **纯静态设计（无状态、无交互、无参数）：整个 `<script type="text/x-dc">` 标签省略。**
 - `./support.js` 永远写这一个相对路径，**绝不自己实现它的任何部分**；漏写了宿主会补进 `<head>`。
+  用 `create_artifact` 交付时宿主渲染会内联它。**写成工作区里的普通文件、要本地打开或自己截图时，先调
+  `copy_starter_component(kind: "support.js")` 把运行时（连 vendor/react）拷进项目目录**——它们不在工作区里，别去磁盘上搜。
+  本地打开的文件里 `<script src="./support.js">` 之前要先放 vendor 两行 `<script src="./vendor/react*.js">`；用到 x-import 预制件
+  （deck-stage.js / doc-page.js 等）的，同样先 `copy_starter_component` 拷进来、再在 support.js 之前加一行 `<script src="./deck-stage.js"></script>` 预载——support.js 不联网也不读盘，不会自己去取 from 文件。
 - 逻辑块只认第一个 `script[data-dc-script]`（没有才退而找 `script[type="text/x-dc"]`）。
   `data-dc-script` 这个标记同时是宿主的锚点（语法校验、调参持久化、模板边界检查都按它定位），**别省**。
 - `data-props` 的 JSON 写在**这个 script 标签**上，双引号一律转义成 `&quot;`。

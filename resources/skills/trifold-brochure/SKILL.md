@@ -168,5 +168,5 @@ description: 三折页宣传册——一张横版纸的正反两面、每面三�
 3. 目视核对：三栏是否等宽、内容有没有压到折线余量里、有没有被纸边裁掉、
    相邻文本的包围盒有没有相交。
 4. 内容核对：封面在外侧最右栏、封底在外侧中间栏、内折翼在外侧最左栏（§2）。
-5. 要成品文件就 `export_artifact(format='pdf')`，落 `~/.openpipal/outputs/`；
+5. 要成品文件就 `export_artifact(format='pdf')`，落本会话的 `~/.openpipal/outputs/<会话id>/`（回执里带路径）；
    PDF 应该是 2 页横版，页数不对说明 `.page` 的结构错了。

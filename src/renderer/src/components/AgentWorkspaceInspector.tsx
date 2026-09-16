@@ -21,6 +21,13 @@ import { TaskEditor } from './TaskEditor'
 import type { Task } from '../types'
 import { useTranslation } from 'react-i18next'
 import { formatLocaleDateTime } from '../i18n/formatters'
+import { parseFrontmatter } from '../../../shared/frontmatter'
+
+/** agent.md 的声明（frontmatter）与正文分开：声明单独一行灰字，正文渲染 Markdown——解析器与主进程同一份 */
+function splitFrontmatter(content: string): { declarations: string[]; body: string } {
+  const { frontmatter, body } = parseFrontmatter(content)
+  return { declarations: Object.entries(frontmatter).map(([k, v]) => `${k}: ${v}`), body }
+}
 
 interface Props {
   workspaceId: string
@@ -311,9 +318,20 @@ export function AgentWorkspaceInspector({ workspaceId, onClose }: Props) {
                 </button>
               )}
             </div>
-            <div className="prose-light text-[12px] [&_h1]:text-[14px] [&_h2]:text-[13px] [&_h3]:text-[12px] [&_p]:text-[12px]">
-              <Markdown content={selectedNode.content} />
-            </div>
+            {/* agent.md 头部的声明（permission-tier / skills / artifacts…）不是人设正文：单独一行灰字，正文只渲染 body */}
+            {(() => {
+              const { declarations, body } = splitFrontmatter(selectedNode.content)
+              return (
+                <>
+                  {declarations.length > 0 && (
+                    <p className="mb-2 text-[11px] font-mono text-surface-400 break-words" data-testid="agent-md-declarations">{declarations.join(' · ')}</p>
+                  )}
+                  <div className="prose-light text-[12px] [&_h1]:text-[14px] [&_h2]:text-[13px] [&_h3]:text-[12px] [&_p]:text-[12px]">
+                    <Markdown content={body} />
+                  </div>
+                </>
+              )
+            })()}
           </>
         ) : (
           <p className="text-[11px] text-surface-300 text-center py-8">

@@ -35,3 +35,23 @@ export function getDataRoot(): string {
 export function dataPath(...segments: string[]): string {
   return join(getDataRoot(), ...segments)
 }
+
+/** 会话 id 的形状（UUID）。outputs/ 下只有这种名字的子目录算"某个会话的产物目录"，别的子目录是历史上手写进去的 bundle */
+export const CONVERSATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function isConversationOutputsDirName(name: string): boolean {
+  return CONVERSATION_ID_RE.test(name)
+}
+
+/**
+ * 模型产物按会话分目录：`~/.openpipal/outputs/<conversationId>/`（2026-09-12 起）。
+ * export_artifact / generate_document 的文件、render_artifact 的截图都落这里；安全层据此放行"自己的目录"、
+ * 拦"根与别的会话的目录"，不用再对 outputs 单开一条特判。
+ * 没有会话 id（定时任务面、旧调用）或 id 不是合法路径段时退回共享根，行为同以前。
+ * 用户自己点导出按钮产的文件仍落根——那是用户的动作，不是某个会话的产物。
+ */
+export function outputsDirFor(conversationId?: string | null): string {
+  const id = typeof conversationId === 'string' ? conversationId.trim() : ''
+  const safeSegment = !!id && /^[\w.-]+$/.test(id) && id !== '.' && id !== '..'
+  return safeSegment ? dataPath('outputs', id) : dataPath('outputs')
+}

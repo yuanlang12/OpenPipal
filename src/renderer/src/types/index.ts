@@ -44,6 +44,9 @@ export interface SourceStatusPatch {
   errorMessage?: string
 }
 
+/** 统一身份的一行摘要（内置 / Pal 同一种），来自主进程 agents:list——形状只在 shared 定义一次 */
+export type { AgentSummary } from '../../../shared/agent-identity'
+
 export interface RoleInfo {
   name: string
   displayName: string
@@ -52,7 +55,7 @@ export interface RoleInfo {
   /** 角色头像 data URL(system-agents/<role>/avatar.* 存在时);无则渲染端回落 Lucide */
   avatarDataUrl?: string
   /** 捏头像的配饰组合 —— 来自 system-agents/<role>/mark.json，文件式 opt-in */
-  mark?: { accessory?: string; hue?: string; shape?: string }
+  mark?: { accessory?: string; hue?: string; accent?: string; shape?: string }
 }
 
 export interface PermissionRequestData {
@@ -95,6 +98,7 @@ export type ChatMessageKind =
   | 'task-trigger'  // 任务触发时的系统内部消息（prompt + event 数据），UI 隐藏
   | 'runtime-context' // 本轮 prompt 附带的易变上下文快照（时间/前台应用/产物清单），UI 隐藏、AI 回放时原样读取——落盘副本与实发字节一致是前缀缓存命中的前提
   | 'inject-notice' // 消息插队的 turn 边界通知（"已引导对话" / "已加入跟单队列"），左对齐细灰字，不发给 AI
+  | 'peer-message'  // 另一条对话经 conversations 工具发来的消息：当用户消息渲染（inferMessageKind 归成 user），气泡上方标来源
 
 /** 规则的跨进程形状只在 shared 定义一次；渲染层沿用 HookNoticePayload 这个名字 */
 export type { HookNotice as HookNoticePayload, HookEntry, HookSource } from '../../../shared/hook-contract'
@@ -237,6 +241,9 @@ export interface SilentLogEntry {
 }
 
 export interface Task {
+  /** 团队级任务：触发时开一条团队话题 */
+  teamId?: string
+  channel?: string
   id: string
   name: string
   enabled: boolean

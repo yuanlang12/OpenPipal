@@ -11,7 +11,6 @@ import { useTranslation } from 'react-i18next'
 interface StatusBarProps {
   status: TargetAppStatus
   onClear: () => void
-  onSwitchRole: (roleName: string) => void
 }
 
 export function StatusBar({ status }: StatusBarProps) {

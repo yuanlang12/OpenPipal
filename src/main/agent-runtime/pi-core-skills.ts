@@ -14,6 +14,7 @@ import {
   listGlobalSkillDirs,
   readDisabledSkillNames
 } from '../openpipal-skill-sources'
+import { getAgent } from '../agent-registry'
 
 export interface PiCoreSkillCatalog {
   skills: Skill[]
@@ -72,21 +73,27 @@ function formatCatalogPrompt(skills: Skill[]): string {
 export async function loadPiCoreSkillCatalog(options: {
   workspaceId?: string
   roleName?: string
+  /** 统一身份；给了就按它的档案算作用域（Pal / 模板：自己的 + 自荐或被点名的全局技能） */
+  agentId?: string
 }): Promise<PiCoreSkillCatalog> {
   const env = new NodeExecutionEnv({ cwd: process.cwd() })
   const diagnostics: SkillDiagnostic[] = []
   try {
     let skills: Skill[]
-    if (options.workspaceId) {
-      // 独立智能体：自己的目录 + 声明了 agent-scope: all 的全局技能（同名自己的优先；全局禁用照样禁）。
-      // 与 skill-manager.resolveSkillScope 同一条规则——菜单里列的和模型看到的必须是同一份
-      const own = await mergeFirstWins(env, [getAgentSkillsDir(options.workspaceId)], diagnostics)
+    const profile = getAgent(options.agentId ?? options.workspaceId)
+    // 独立智能体：自己的目录 + 全局里自荐（agent-scope: all）或被这个 Agent 点名（frontmatter skills:）的技能
+    //（同名自己的优先；全局禁用照样禁）。档案解析不到的 workspaceId（目录坏了）退回只装它自己的目录，点名为空。
+    // 与 skill-manager.resolveSkillScope 同一条规则——菜单里列的和模型看到的必须是同一份
+    const palDirs = profile?.kind === 'pal' ? profile.skillDirs : (options.workspaceId ? [getAgentSkillsDir(options.workspaceId)] : null)
+    if (palDirs) {
+      const own = await mergeFirstWins(env, palDirs, diagnostics)
       const global = await mergeFirstWins(env, listGlobalSkillDirs(), diagnostics)
       const disabled = new Set(readDisabledSkillNames())
       const ownNames = new Set(own.map((skill) => skill.name))
+      const named = new Set(profile?.kind === 'pal' ? profile.policies.skills : [])
       skills = [
         ...own,
-        ...global.filter((skill) => !ownNames.has(skill.name) && !disabled.has(skill.name) && isAgentWideSkillFile(skill.filePath))
+        ...global.filter((skill) => !ownNames.has(skill.name) && !disabled.has(skill.name) && (named.has(skill.name) || isAgentWideSkillFile(skill.filePath)))
       ]
     } else {
       const global = await mergeFirstWins(env, listGlobalSkillDirs(), diagnostics)

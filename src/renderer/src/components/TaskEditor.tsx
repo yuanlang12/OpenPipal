@@ -14,7 +14,7 @@ import type { TFunction } from 'i18next'
 import { X, FolderOpen, Clock, MessageSquare, BookOpen, Webhook, Copy, Check, Moon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { Task, TaskTrigger, ScheduleConfig } from '../types'
-import type { WorkspaceSummary, AgentTemplateSummary } from '../stores/agentStore'
+import type { WorkspaceSummary } from '../stores/agentStore'
 import { TaskTemplates } from './TaskTemplates'
 import { WorkspaceAvatar } from './agent-mark'
 
@@ -30,7 +30,6 @@ interface Props {
   /** 可选的 workspace 列表（用于全局模式下切换作用域） */
   workspaces?: WorkspaceSummary[]
   /** 可选的 agent 模板列表 */
-  agents?: AgentTemplateSummary[]
   onSave: (data: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>) => void
   onCancel: () => void
   onDelete?: () => void
@@ -74,7 +73,7 @@ function scheduleFromConfig(cfg?: ScheduleConfig): ScheduleMode {
 
 type TriggerKind = 'schedule' | 'webhook'
 
-export function TaskEditor({ task, lockedWorkspaceId, workspaces = [], agents = [], onSave, onCancel, onDelete }: Props) {
+export function TaskEditor({ task, lockedWorkspaceId, workspaces = [], onSave, onCancel, onDelete }: Props) {
   const { t } = useTranslation()
   const existingSchedule = task?.trigger.type === 'schedule' ? task.trigger.schedule : undefined
   const existingWebhookSecret = task?.trigger.type === 'webhook' ? task.trigger.secret : undefined
@@ -82,7 +81,6 @@ export function TaskEditor({ task, lockedWorkspaceId, workspaces = [], agents = 
   const [name, setName] = useState(task?.name || '')
   const [prompt, setPrompt] = useState(task?.prompt || '')
   const [workspaceId, setWorkspaceId] = useState<string | undefined>(lockedWorkspaceId || task?.workspaceId)
-  const [agentId, setAgentId] = useState<string | undefined>(task?.agentId)
   const [convMode, setConvMode] = useState<'persistent' | 'per-run'>(task?.conversationMode || 'per-run')
 
   const [triggerKind, setTriggerKind] = useState<TriggerKind>(task?.trigger.type === 'webhook' ? 'webhook' : 'schedule')
@@ -134,7 +132,6 @@ export function TaskEditor({ task, lockedWorkspaceId, workspaces = [], agents = 
       name: name.trim(),
       enabled: task?.enabled ?? true,
       workspaceId: workspaceId || undefined,
-      agentId: workspaceId ? undefined : agentId,
       trigger: buildTrigger(),
       prompt: prompt.trim(),
       conversationMode: convMode,
@@ -168,10 +165,6 @@ export function TaskEditor({ task, lockedWorkspaceId, workspaces = [], agents = 
     if (workspaceId) {
       const ws = workspaces.find(w => w.id === workspaceId)
       return ws ? palLabel(ws) : 'Workspace'
-    }
-    if (agentId) {
-      const a = agents.find(x => x.id === agentId)
-      return a ? `${a.icon || '🤖'} ${a.name}` : t('tasks.editor.scope.agentTemplate')
     }
     return t('tasks.editor.scope.selectAgent')
   }
@@ -248,12 +241,9 @@ export function TaskEditor({ task, lockedWorkspaceId, workspaces = [], agents = 
                   {showScopeMenu && (
                     <ScopeMenu
                       workspaces={workspaces}
-                      agents={agents}
                       selectedWs={workspaceId}
-                      selectedAgent={agentId}
-                      onPickGlobal={() => { setWorkspaceId(undefined); setAgentId(undefined); setShowScopeMenu(false) }}
-                      onPickWs={(id) => { setWorkspaceId(id); setAgentId(undefined); setShowScopeMenu(false) }}
-                      onPickAgent={(id) => { setAgentId(id); setWorkspaceId(undefined); setShowScopeMenu(false) }}
+                      onPickGlobal={() => { setWorkspaceId(undefined); setShowScopeMenu(false) }}
+                      onPickWs={(id) => { setWorkspaceId(id); setShowScopeMenu(false) }}
                     />
                   )}
                 </div>
@@ -385,16 +375,13 @@ export function TaskEditor({ task, lockedWorkspaceId, workspaces = [], agents = 
 // ---- 子组件：作用域选择菜单 ----
 
 function ScopeMenu({
-  workspaces, agents, selectedWs, selectedAgent,
-  onPickGlobal, onPickWs, onPickAgent
+  workspaces, selectedWs,
+  onPickGlobal, onPickWs
 }: {
   workspaces: WorkspaceSummary[]
-  agents: AgentTemplateSummary[]
   selectedWs?: string
-  selectedAgent?: string
   onPickGlobal: () => void
   onPickWs: (id: string) => void
-  onPickAgent: (id: string) => void
 }) {
   const { t } = useTranslation()
 
@@ -402,7 +389,7 @@ function ScopeMenu({
     <div className="absolute bottom-full mb-1 left-0 w-60 max-h-72 overflow-y-auto bg-surface-0 dark:bg-surface-50 rounded-lg shadow-xl border border-surface-100 py-1 z-10">
       <button
         onClick={onPickGlobal}
-        className={`w-full px-3 py-2 text-left text-[12px] hover:bg-surface-50 dark:hover:bg-surface-100 ${!selectedWs && !selectedAgent ? 'text-brand-600' : 'text-surface-600'}`}
+        className={`w-full px-3 py-2 text-left text-[12px] hover:bg-surface-50 dark:hover:bg-surface-100 ${!selectedWs ? 'text-brand-600' : 'text-surface-600'}`}
       >
         <div className="font-medium">🌐 {t('tasks.editor.scope.globalCurrentRole')}</div>
       </button>
@@ -418,22 +405,6 @@ function ScopeMenu({
               className={`w-full px-3 py-1.5 text-left text-[12px] hover:bg-surface-50 dark:hover:bg-surface-100 ${selectedWs === w.id ? 'text-brand-600' : 'text-surface-600'}`}
             >
               {palLabel(w)}
-            </button>
-          ))}
-        </>
-      )}
-      {agents.length > 0 && (
-        <>
-          <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-surface-300 mt-1">
-            {t('tasks.editor.scope.agentTemplates')}
-          </div>
-          {agents.map(a => (
-            <button
-              key={a.id}
-              onClick={() => onPickAgent(a.id)}
-              className={`w-full px-3 py-1.5 text-left text-[12px] hover:bg-surface-50 dark:hover:bg-surface-100 ${selectedAgent === a.id ? 'text-brand-600' : 'text-surface-600'}`}
-            >
-              <span className="mr-1.5">{a.icon || '🤖'}</span>{a.name}
             </button>
           ))}
         </>

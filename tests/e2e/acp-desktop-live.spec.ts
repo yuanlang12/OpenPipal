@@ -450,9 +450,8 @@ test('真机：内置角色的专属技能进得了编辑器的斜杠菜单，�
   test.setTimeout(120_000)
   await assertPortFree()
 
-  const { app, home, dispose } = await launchIsolatedElectron({
-    config: { role: 'teacher' }
-  })
+  // 没有全局"当前角色"了（统一身份第 4 段）：编辑器要哪个角色，session/new 用 _meta 点名
+  const { app, home, dispose } = await launchIsolatedElectron()
   let client: AcpClient | undefined
 
   try {
@@ -480,7 +479,7 @@ test('真机：内置角色的专属技能进得了编辑器的斜杠菜单，�
       info: { name: 'openpipal-live-role-skills', version: '1.0.0' },
       capabilities: {}
     })
-    await client.call('session/new', { cwd: join(home, 'live-role-skills') })
+    await client.call('session/new', { cwd: join(home, 'live-role-skills'), _meta: { 'openpipal.io/agentId': 'teacher' } })
     await waitFor(
       () => client!.updates.some(u => u.update.sessionUpdate === 'available_commands_update'),
       'available_commands_update'

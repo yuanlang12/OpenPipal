@@ -7,17 +7,19 @@ import { dataPath } from './data-root'
 
 export const DEFAULT_DISABLED_BUILTINS = ['doc', 'slides', 'spreadsheet', 'pdf']
 
+/** 出厂资源根：打包版在 Resources/，开发版在仓库 resources/；不在 electron 里跑（QA 脚本、单测）时按当前目录 */
+function builtInResourcesRoot(): string {
+  if (app?.isPackaged) return process.resourcesPath
+  return join(app?.getAppPath?.() ?? process.cwd(), 'resources')
+}
+
 export function getBuiltInSkillsDir(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'skills')
-    : join(app.getAppPath(), 'resources', 'skills')
+  return join(builtInResourcesRoot(), 'skills')
 }
 
 export function getBuiltInRoleSkillsDir(roleName: string): string | null {
   if (!/^[a-z0-9_-]+$/i.test(roleName)) return null
-  return app.isPackaged
-    ? join(process.resourcesPath, 'system-agents', roleName, 'skills')
-    : join(app.getAppPath(), 'resources', 'system-agents', roleName, 'skills')
+  return join(builtInResourcesRoot(), 'system-agents', roleName, 'skills')
 }
 
 export function getUserSkillsDir(): string {

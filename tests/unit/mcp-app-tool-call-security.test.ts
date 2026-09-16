@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   isMcpToolFromBoundServer: vi.fn(),
+  getBoundMcpToolAnnotations: vi.fn(),
   callMcpToolStructuredFromBoundServer: vi.fn(),
   extractTextFromContentBlocks: vi.fn(),
   classifyToolRisk: vi.fn(),
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../src/main/mcp-manager', () => ({
   isMcpToolFromBoundServer: mocks.isMcpToolFromBoundServer,
+  getBoundMcpToolAnnotations: mocks.getBoundMcpToolAnnotations,
   callMcpToolStructuredFromBoundServer: mocks.callMcpToolStructuredFromBoundServer,
   extractTextFromContentBlocks: mocks.extractTextFromContentBlocks
 }))
@@ -170,6 +172,23 @@ describe('MCP App reverse tool-call authorization', () => {
       { namespace: `mcp:say-server:${SERVER_BINDING}`, argumentScoped: true }
     )
     expect(mocks.callMcpToolStructuredFromBoundServer).toHaveBeenCalledOnce()
+  })
+
+  it('passes the bound tool\'s annotations into classification', async () => {
+    mocks.getBoundMcpToolAnnotations.mockReturnValue({ readOnlyHint: true })
+    mocks.callMcpToolStructuredFromBoundServer.mockResolvedValue({ content: [] })
+    mocks.extractTextFromContentBlocks.mockReturnValue('ok')
+
+    await callMcpToolFromApp({
+      serverName: 'say-server',
+      serverBinding: SERVER_BINDING,
+      toolName: 'list_voices',
+      args: {},
+      conversationId: 'conv-1'
+    })
+
+    expect(mocks.getBoundMcpToolAnnotations).toHaveBeenCalledWith(SERVER_BINDING, 'say-server', 'list_voices', 'conv-1')
+    expect(mocks.classifyToolRisk).toHaveBeenCalledWith('list_voices', {}, { origin: 'mcp', mcpAnnotations: { readOnlyHint: true } })
   })
 
   it('fails closed for historical views that have no connection binding', async () => {

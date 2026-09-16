@@ -35,10 +35,11 @@ describe('关闭时提示词不留记忆痕迹', () => {
       'src/main/agent-runtime/openpipal-prompt-core.ts', 'utf8'
     )
     // 召回受总闸约束，而不是只看角色级标志
-    expect(source).toContain('const memoryOn = isAutoMemoryEnabled() && role.memoryEnabled !== false')
+    // 记忆开关从这个 Agent 的档案取（内置角色 memory: off 的声明在 agent.md frontmatter，Pal 同样能声明）
+    expect(source).toContain('const memoryOn = isAutoMemoryEnabled() && agent.policies.memory')
     expect(source).toContain('const memories = !memoryOn')
     // 工作区提示词按同一个闸控制记忆格式与读写指引
-    expect(source).toContain('buildWorkspaceLayoutPrompt(overrides?.workspaceId, role.name, memoryOn, effectiveWorkingDir)')
+    expect(source).toContain('buildWorkspaceLayoutPrompt(overrides?.workspaceId, memoryOn, effectiveWorkingDir, assetLibrary)')
     expect(source).toContain("const memoryFormat = !memoryEnabled ? '' : `")
     expect(source).toContain('const memoryRules = memoryEnabled')
     expect(source).toContain('const globalMemoryRules = memoryEnabled')

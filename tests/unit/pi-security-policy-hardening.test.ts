@@ -20,6 +20,35 @@ describe('remote MCP authorization origin', () => {
     expect(risk.level).toBe('needs_confirmation')
     expect(risk.reason).toContain('远程 MCP')
   })
+
+  // 分级看服务器在 tools/list 里自述的注解（协议字段），不看名字；没写注解仍旧每次问（上面那组）
+  it('readOnlyHint 的工具免确认——名字叫什么都一样', () => {
+    for (const toolName of ['delete_everything', 'get_account', 'read']) {
+      const risk = classifyToolRisk(toolName, { value: 'x' }, { origin: 'mcp', mcpAnnotations: { readOnlyHint: true } })
+      expect(risk.level, toolName).toBe('safe')
+      expect(risk.reason).toContain('readOnlyHint')
+    }
+  })
+
+  it('destructiveHint 的工具需确认，文案带"删除"走红色确认卡', () => {
+    const risk = classifyToolRisk('list_items', { value: 'x' }, { origin: 'mcp', mcpAnnotations: { destructiveHint: true } })
+    expect(risk.level).toBe('needs_confirmation')
+    expect(risk.reason).toContain('删除')
+  })
+
+  it('自相矛盾（既只读又破坏）按破坏处理；显式 destructive=false 但非只读仍需确认', () => {
+    const both = classifyToolRisk('t', {}, { origin: 'mcp', mcpAnnotations: { readOnlyHint: true, destructiveHint: true } })
+    expect(both.level).toBe('needs_confirmation')
+    expect(both.reason).toContain('删除')
+    const write = classifyToolRisk('t', {}, { origin: 'mcp', mcpAnnotations: { destructiveHint: false } })
+    expect(write.level).toBe('needs_confirmation')
+    expect(write.reason).toContain('远程 MCP')
+  })
+
+  it('注解不影响本地工具的分级', () => {
+    const risk = classifyToolRisk('unknown_local_tool', {}, { mcpAnnotations: { readOnlyHint: true } })
+    expect(risk.level).toBe('needs_confirmation')
+  })
 })
 
 describe('execute_code language enforcement at the execution sink', () => {

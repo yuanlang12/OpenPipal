@@ -16,15 +16,15 @@ import { shutdownOAuth } from './mcp-oauth'
 import { initSkills, reloadSkills, preloadSkillEngine } from './skill-manager'
 import { initSubagents, preloadSubagentEngine } from './subagent-manager'
 import { initializeOptionalStartupCapability } from './startup-capability-readiness'
-import { initRoles, switchRole, getAllRoles, getCurrentRole, RoleConfig, getDisabledApps, getDetectedApps, getDetectedAppLabels, isAppFollowingEnabled, setAppFollowingEnabled, setDisabledApps } from './role-manager'
-import { migrateLegacyTemplates } from './agent-template-manager'
+import { initRoles, getAllRoles, RoleConfig, getDisabledApps, getDetectedApps, getDetectedAppLabels, isAppFollowingEnabled, setAppFollowingEnabled, setDisabledApps } from './role-manager'
+import { migrateLegacyTemplates, migrateTemplatesIntoPals } from './agent-template-manager'
 import { migrateLegacyWorkspaces, ensureAgentOutputsDirs } from './agent-workspace-store'
 import { gcArtifactDebris } from './artifact-store'
 import { BROWSER_APPS } from './app-detector'
 import { startHttpServer, setInlinePermissionResolver } from './http-server'
 import { initSandbox, resetSandbox } from './sandbox-manager'
 import { applyLoginShellPath } from './login-shell-path'
-import { initializeSecurityStorage, setInlinePermissionSender } from './pi-security'
+import { initializeSecurityStorage, setConversationTeamResolver, setInlinePermissionSender } from './pi-security'
 import { initMemoryExtractor } from './memory-extractor'
 import { initMemoryDreamer, setDreamStatusCallback } from './memory-dreamer'
 import { migrateJsonlToMarkdown, ensureMemoryDir, getGlobalMemoryDir } from './memory-store'
@@ -34,7 +34,7 @@ import { changeMainLocale, initializeMainI18n, tMain } from './main-i18n'
 import { createLatestLocaleApplier } from './locale-apply-queue'
 import { DATA_DIR_NAME, dataPath, getOpenPipalHome } from './data-root'
 import { safeExternalHttpUrl } from './external-navigation-policy'
-import { drainConversationService, initializeConversationService } from './conversation-service'
+import { drainConversationService, initializeConversationService, peekConversation } from './conversation-service'
 import { shutdownDurableVoiceSession } from './durable-voice-session'
 import { platformWindowOptions, trayIconFile } from './platform-window'
 
@@ -165,13 +165,8 @@ try {
   }
 } catch { /* 迁移失败不影响启动 */ }
 
-// 角色相关 IPC
+// 角色相关 IPC——只剩列表：没有"当前角色"了，角色是每条对话自己的（统一身份第 4 段）
 ipcMain.handle('role:get-all', () => getAllRoles())
-ipcMain.handle('role:get-current', () => getCurrentRole())
-ipcMain.handle('role:switch', (_event, roleName: string) => {
-  const role = switchRole(roleName)
-  return role
-})
 // 设置相关 IPC
 ipcMain.handle('settings:get-apps', () => ({
   enabled: isAppFollowingEnabled(),
@@ -192,11 +187,6 @@ ipcMain.handle('settings:set-app-following-enabled', (_event, enabled: boolean) 
   if (typeof enabled !== 'boolean') throw new TypeError('App following enabled must be a boolean')
   setAppFollowingEnabled(enabled)
   return { ok: true, enabled }
-})
-
-ipcMain.handle('role:get-init-state', () => {
-  const { hasRole, role } = initRoles()
-  return { hasRole, role }
 })
 
 // 本地 STT（whisper.cpp）IPC — Phase 3/4
@@ -307,7 +297,9 @@ function createWindow(): void {
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
+    // 控制台不再每次自动弹（所有者 2026-09-16）：渲染层的报错本来就转发进主进程日志（上面的 console-message），
+    // 要看面板就 OPENPIPAL_DEVTOOLS=1 npm run dev，或在窗口里按 Cmd+Option+I
+    if (process.env['OPENPIPAL_DEVTOOLS'] === '1') mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
@@ -316,6 +308,8 @@ function createWindow(): void {
 
   // 设置内联权限发送器（会话流模式）
   setInlinePermissionSender(sendInlinePermissionRequest, () => mainWindow)
+  // 同频道话题的产物目录互通：安全员按会话 id 反查团队（设计稿 §4.1）
+  setConversationTeamResolver((conversationId) => peekConversation(conversationId)?.teamId)
   // 浏览器 POST /api/permission 的回传走桌面同一个 resolver
   setInlinePermissionResolver(resolveInlinePermission)
 
@@ -354,8 +348,10 @@ app.whenReady().then(async () => {
   // 路径迁移（幂等）：必须在 initRoles 之前，顺序很重要 —
   //   1. 先把 agents/*.json（旧 templates）搬到 agent-templates/，腾出 agents/ 目录
   //   2. 再把 workspaces/ 搬到 agents/（现在目录已清空）
+  //   3. 最后把 agent-templates/*.json 并入 agents/<id>/（统一身份第 5 段：模板就是 Pal）
   migrateLegacyTemplates()
   migrateLegacyWorkspaces()
+  migrateTemplatesIntoPals()
   ensureAgentOutputsDirs()
   // 一次性清扫 artifact 磁盘垃圾：ephemeral 过程物 sidecar（todos-*/questions-*/goal-*.json，
   // 改为不落盘之前的历史遗留）+ 孪生 .txt 副本（缺 language 误落盘，与强类型文件字节相同）

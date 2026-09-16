@@ -67,7 +67,7 @@ export function TasksPanel() {
   const { t: translate, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage || i18n.language
   const { tasks, loading, loadTasks, createTask, updateTask, deleteTask, toggleTask, triggerNow, patchTask } = useTaskStore()
-  const { workspaces, templates, loadWorkspaces, loadTemplates } = useAgentStore()
+  const { workspaces, teams, loadWorkspaces, loadTeams } = useAgentStore()
 
   const [editing, setEditing] = useState<Task | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -95,7 +95,7 @@ export function TasksPanel() {
   useEffect(() => {
     loadTasks()
     loadWorkspaces()
-    loadTemplates()
+    loadTeams()
 
     // 订阅任务执行事件，实时更新 UI
     if (!window.api?.onTaskExecuted) return
@@ -116,15 +116,12 @@ export function TasksPanel() {
     return m
   }, [workspaces])
 
-  const agentNameMap = useMemo(() => {
-    const m = new Map<string, string>()
-    for (const a of templates) m.set(a.id, a.name)
-    return m
-  }, [templates])
+
+  const teamNameMap = useMemo(() => new Map(teams.map(x => [x.id, x.name])), [teams])
 
   const scopeLabel = (t: Task): string => {
+    if (t.teamId) return `👥 ${teamNameMap.get(t.teamId) || t.teamId.slice(0, 8)}${t.channel ? ` › ${t.channel}` : ''}`
     if (t.workspaceId) return `🤖 ${workspaceNameMap.get(t.workspaceId) || t.workspaceId.slice(0,8)}`
-    if (t.agentId) return `📋 ${agentNameMap.get(t.agentId) || t.agentId.slice(0,8)}`
     return `🌐 ${translate('tasks.scope.global')}`
   }
 
@@ -312,7 +309,6 @@ export function TasksPanel() {
       {showCreate && (
         <TaskEditor
           workspaces={workspaces}
-          agents={templates}
           onSave={handleCreate}
           onCancel={() => setShowCreate(false)}
         />
@@ -321,7 +317,6 @@ export function TasksPanel() {
         <TaskEditor
           task={editing}
           workspaces={workspaces}
-          agents={templates}
           onSave={handleUpdate}
           onCancel={() => setEditing(null)}
           onDelete={() => handleDelete(editing.id)}

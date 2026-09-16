@@ -229,19 +229,13 @@ const api = {
     ipcRenderer.on('target:app-changed', handler)
     return () => ipcRenderer.removeListener('target:app-changed', handler)
   },
-  // 角色管理
-  getRoleInitState: (): Promise<{ hasRole: boolean; role: any }> => {
-    return ipcRenderer.invoke('role:get-init-state')
-  },
+  // 角色管理——只剩列表：没有"当前角色"了，角色是每条对话自己的
   getAllRoles: (): Promise<any[]> => {
     return ipcRenderer.invoke('role:get-all')
   },
-  getCurrentRole: (): Promise<any> => {
-    return ipcRenderer.invoke('role:get-current')
-  },
-  switchRole: (roleName: string): Promise<any> => {
-    return ipcRenderer.invoke('role:switch', roleName)
-  },
+  // 统一身份：一份列表（内置 → Pal → 模板）
+  listAgents: (): Promise<any[]> => ipcRenderer.invoke('agents:list'),
+  copyBuiltinAsPal: (id: string): Promise<any> => ipcRenderer.invoke('agents:copy-builtin', id),
   // 窗口按钮（Windows 自绘 — / ×；× 收进托盘）与不透明窗底色对齐
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   hideWindow: (): Promise<void> => ipcRenderer.invoke('window:hide'),
@@ -268,9 +262,15 @@ const api = {
     ipcRenderer.on('acp:status-changed', handler)
     return () => ipcRenderer.removeListener('acp:status-changed', handler)
   },
+  // 团队目录变了（组长改名 / 写章程 / 建成员 / 团队记忆落盘）：渲染层自己去重新拉团队与 Pal 列表
+  onTeamChanged: (callback: (teamId: string) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, teamId: string): void => callback(teamId)
+    ipcRenderer.on('team:changed', handler)
+    return () => ipcRenderer.removeListener('team:changed', handler)
+  },
   // 对话管理
   listConversations: (): Promise<any[]> => ipcRenderer.invoke('conv:list'),
-  createConversation: (role: string, title?: string, agentId?: string, workspaceId?: string): Promise<any> => ipcRenderer.invoke('conv:create', role, title, agentId, workspaceId),
+  createConversation: (role: string, title?: string, agentId?: string, workspaceId?: string, team?: { teamId: string; channel?: string }): Promise<any> => ipcRenderer.invoke('conv:create', role, title, agentId, workspaceId, team),
   getConversation: (id: string): Promise<any> => ipcRenderer.invoke('conv:get', id),
   getConversationMessages: (id: string): Promise<any[]> => ipcRenderer.invoke('conv:get-messages', id),
   appendMessages: (id: string, messages: any[]): Promise<any> => ipcRenderer.invoke('conv:append-messages', id, messages),
@@ -343,7 +343,7 @@ const api = {
     return () => ipcRenderer.removeListener('locale:changed', handler)
   },
   // Realtime Voice
-  getRealtimeConfig: (): Promise<{
+  getRealtimeConfig: (roleName?: string): Promise<{
     provider: string
     url: string
     model: string
@@ -351,7 +351,7 @@ const api = {
     apiVersion: string
     voice: string
     hasKey: boolean
-  }> => ipcRenderer.invoke('realtime:config'),
+  }> => ipcRenderer.invoke('realtime:config', roleName),
   getVoiceConfig: (): Promise<{
     provider: string
     baseUrl: string
@@ -544,17 +544,20 @@ const api = {
     ipcRenderer.invoke('plugins:install', source, opts),
   uninstallPlugin: (name: string): Promise<any> => ipcRenderer.invoke('plugins:uninstall', name),
   setPluginDisabled: (name: string, disabled: boolean): Promise<any> => ipcRenderer.invoke('plugins:set-disabled', name, disabled),
-  // Agent 模板
-  listAgentTemplates: (): Promise<any[]> => ipcRenderer.invoke('agent:list'),
-  getAgentTemplate: (id: string): Promise<any> => ipcRenderer.invoke('agent:get', id),
-  createAgentTemplate: (data: any): Promise<any> => ipcRenderer.invoke('agent:create', data),
-  updateAgentTemplate: (id: string, data: any): Promise<any> => ipcRenderer.invoke('agent:update', id, data),
-  deleteAgentTemplate: (id: string): Promise<any> => ipcRenderer.invoke('agent:delete', id),
   // Agent Workspace
   listAgentWorkspaces: (): Promise<any[]> => ipcRenderer.invoke('workspace:list'),
   getAgentWorkspace: (id: string): Promise<any> => ipcRenderer.invoke('workspace:get', id),
   createAgentFromConversation: (conversationId: string): Promise<any> => ipcRenderer.invoke('workspace:create-from-conversation', conversationId),
   deleteAgentWorkspace: (id: string): Promise<any> => ipcRenderer.invoke('workspace:delete', id),
+  // 团队
+  listTeams: (): Promise<any[]> => ipcRenderer.invoke('workspace:list-teams'),
+  getTeam: (id: string): Promise<any> => ipcRenderer.invoke('workspace:get-team', id),
+  /** 组建团队：先造默认组长，回来的团队名单只有它；之后在话题里跟组长聊出章程和成员 */
+  foundTeam: (): Promise<any> => ipcRenderer.invoke('workspace:found-team'),
+  createTeam: (data: { name: string; members: string[]; lead?: string; tier?: 'readonly' | 'auto' | 'full'; charter?: string }): Promise<any> => ipcRenderer.invoke('workspace:create-team', data),
+  writeTeamMd: (id: string, content: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('workspace:write-team-md', id, content),
+  deleteTeam: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('workspace:delete-team', id),
+  readTeamFile: (id: string, relPath: string): Promise<string | null> => ipcRenderer.invoke('workspace:read-team-file', id, relPath),
   /** 列产物目录（workspaceId 空=全局 outputs/，有值=该 agent outputs/） */
   listAgentOutputs: (workspaceId?: string): Promise<Array<{ name: string; path: string; size: number; mtime: number; ext: string }>> =>
     ipcRenderer.invoke('workspace:list-outputs', workspaceId),
@@ -590,6 +593,12 @@ const api = {
     ipcRenderer.on('task:executed', handler)
     return () => ipcRenderer.removeListener('task:executed', handler)
   },
+  // 跨会话：别的对话发来消息、这条对话跑完一轮回复（conversation-peer）——刷新列表 / 重载 / 点亮未读
+  onPeerTurn: (callback: (conversationId: string, from: string) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, conversationId: string, from: string): void => callback(conversationId, from)
+    ipcRenderer.on('conv:peer-turn', handler)
+    return () => ipcRenderer.removeListener('conv:peer-turn', handler)
+  },
   // 文件操作
   openFile: (filePath: string): Promise<string> => ipcRenderer.invoke('file:open', filePath),
   revealFile: (filePath: string): Promise<void> => ipcRenderer.invoke('file:reveal', filePath),
@@ -617,8 +626,8 @@ const api = {
   uploadFile: (sourcePath: string): Promise<{ fileName: string; path: string; sizeBytes: number }> =>
     ipcRenderer.invoke('file:upload', sourcePath),
   // 角色资产库子文件夹里的长期档案；教学风格优先以「风格.md」为入口，SKILL.md 仅兼容旧档案
-  listRoleSystems: (): Promise<Array<{ name: string; path: string; description?: string; entryFile: string }>> =>
-    ipcRenderer.invoke('assets:list-role-systems'),
+  listRoleSystems: (roleName?: string): Promise<Array<{ name: string; path: string; description?: string; entryFile: string }>> =>
+    ipcRenderer.invoke('assets:list-role-systems', roleName),
   // 档案预览的目录树（限定角色资产库内，递归）
   listRoleSystemTree: (dirPath: string): Promise<Array<{ name: string; kind: 'dir' | 'file'; sizeBytes?: number; children?: any[] }>> =>
     ipcRenderer.invoke('assets:list-role-system-tree', dirPath),
@@ -633,9 +642,9 @@ const api = {
    *        scope='agent' → agents/<uuid>/mark.json（用户自建 Agent）
    * 都是文件式 opt-in，删掉文件就回落默认。
    */
-  getMark: (scope: 'role' | 'agent', id: string): Promise<{ accessory?: string; hue?: string } | null> =>
+  getMark: (scope: 'role' | 'agent' | 'team', id: string): Promise<{ accessory?: string; hue?: string; accent?: string; shape?: string } | null> =>
     ipcRenderer.invoke('mark:get', scope, id),
-  saveMark: (scope: 'role' | 'agent', id: string, config: { accessory: string; hue: string }): Promise<boolean> =>
+  saveMark: (scope: 'role' | 'agent' | 'team', id: string, config: { accessory: string; hue: string; accent?: string; shape?: string }): Promise<boolean> =>
     ipcRenderer.invoke('mark:save', scope, id, config),
   // 同传目标语言(interpreter 角色;源自动识别)
   getInterpretLangs: (): Promise<{ targetLanguages: string[]; current: string }> =>
@@ -651,8 +660,8 @@ const api = {
   // 画布圈画评论：截取本窗口页面指定区域（含 iframe 内容与笔迹）
   captureRegion: (rect: { x: number; y: number; width: number; height: number }): Promise<{ base64: string } | null> =>
     ipcRenderer.invoke('window:capture-region', rect),
-  listAssetsTree: (): Promise<Record<string, Array<{ fileName: string; path: string; sizeBytes: number }>>> =>
-    ipcRenderer.invoke('assets:list-tree'),
+  listAssetsTree: (roleName?: string): Promise<Record<string, Array<{ fileName: string; path: string; sizeBytes: number }>>> =>
+    ipcRenderer.invoke('assets:list-tree', roleName),
   // 设计系统一等产物库（~/.openpipal/design-systems/，含 SKILL.md 的文件夹 = 一套系统）
   listDesignSystems: (): Promise<Array<{ name: string; path: string }>> =>
     ipcRenderer.invoke('assets:list-design-systems'),

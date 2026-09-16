@@ -54,7 +54,9 @@ export function buildPiCoreHarnessTools(options: PiCoreToolBuildOptions): PiCore
     conversationId: options.overrides?.conversationId,
     roleBrief: options.overrides?.roleBrief,
     executeCodeBackend: execution.executeCode,
-    permissionTier: options.overrides?.permissionTier
+    permissionTier: options.overrides?.permissionTier,
+    teamId: options.overrides?.teamId,
+    channel: options.overrides?.channel
   })
   const productAndExecutionTools = filterOpenPipalTools<AgentHarnessTool<ExecutionToolContext>>(
     [

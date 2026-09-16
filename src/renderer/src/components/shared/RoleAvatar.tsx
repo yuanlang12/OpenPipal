@@ -3,7 +3,7 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { getBuiltinRoleNameKey } from '../../../../shared/i18n/resources'
 import { AgentMark } from '../agent-mark'
-import { isAccessoryId, isMarkHue, isMarkShape, type AccessoryId, type MarkHue, type MarkShape } from '../agent-mark'
+import { isDrawnAccessory, isMarkHue, isMarkShape, type AccessoryId, type MarkHue, type MarkShape } from '../agent-mark'
 import { getMarkOverride, loadMark, useMarkOverrides } from '../agent-mark/markStore'
 
 /**
@@ -13,7 +13,7 @@ import { getMarkOverride, loadMark, useMarkOverrides } from '../agent-mark/markS
  *   1. role.avatarDataUrl 有图 → 圆形 <img>（用户上传，落盘 system-agents/<role>/avatar.png）
  *   2. 其余一律 <AgentMark>：同一套眼睛 + 角色自己的配饰
  *
- * 眼型是核心符号，六个角色一模一样，一个像素都不改；身份挂在配饰和配饰自带的那点颜色上。
+ * 眼型是核心符号，六个角色一模一样，一个像素都不改；身份挂在身体色 + 配饰（配饰另配一个搭得上的色）。
  * 配饰组合可被 role.mark 覆盖（来自 system-agents/<role>/mark.json，文件式 opt-in，
  * 同 layout.json；不存在就用下面的角色默认）。
  *
@@ -24,6 +24,7 @@ import { getMarkOverride, loadMark, useMarkOverrides } from '../agent-mark/markS
 export interface MarkConfig {
   accessory?: string
   hue?: string
+  accent?: string
   shape?: string
 }
 
@@ -49,12 +50,15 @@ const LEGACY_ROLE_NAME_ALIASES: Record<string, string> = {
 
 export interface ResolvedMark {
   accessory: AccessoryId
+  /** 身体色 */
   hue: MarkHue
+  /** 配饰色；内置默认不写，按搭配表取身体色的搭子 */
+  accent?: MarkHue
   /** 内置角色默认都是圆角方；用户捏过的从 mark.json 来 */
   shape?: MarkShape
 }
 
-/** 角色 → 默认配饰。加内置角色时在这里登记一件配饰 + 一个色，不要动眼型。 */
+/** 角色 → 默认配饰 + 身体色。加内置角色时在这里登记一件配饰 + 一个色，不要动眼型。 */
 const ROLE_MARK: Record<string, ResolvedMark> = {
   general: { accessory: 'none', hue: 'ink' },
   teacher: { accessory: 'scarf', hue: 'red' },
@@ -81,8 +85,9 @@ export function resolveRoleMark(role: RoleAvatarRole): ResolvedMark {
   const base = ROLE_MARK[canonical] ?? DEFAULT_MARK
   const live = getMarkOverride('role', role.name)
   return {
-    accessory: firstValid(isAccessoryId, [live?.accessory, role.mark?.accessory]) ?? base.accessory,
+    accessory: firstValid(isDrawnAccessory, [live?.accessory, role.mark?.accessory]) ?? base.accessory,
     hue: firstValid(isMarkHue, [live?.hue, role.mark?.hue]) ?? base.hue,
+    accent: firstValid(isMarkHue, [live?.accent, role.mark?.accent]) ?? base.accent,
     shape: firstValid(isMarkShape, [live?.shape, role.mark?.shape]) ?? base.shape ?? 'square',
   }
 }
@@ -134,6 +139,7 @@ export function RoleAvatar({
       state={status}
       accessory={mark.accessory}
       hue={mark.hue}
+      accent={mark.accent}
       shape={mark.shape}
       size={size}
       animated={animated}

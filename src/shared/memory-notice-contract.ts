@@ -7,4 +7,6 @@ export interface MemoryNotice {
   memories?: { name: string; type: string; scope: string }[]
   actionsApplied?: number
   summary?: string
+  /** 团队话题里的整理：落的是团队记忆，胶囊要说清是哪个团队 */
+  team?: string
 }

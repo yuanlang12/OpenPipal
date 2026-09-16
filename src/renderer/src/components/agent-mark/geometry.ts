@@ -12,6 +12,10 @@
  * resources/brand 的 agent-icon-atlas-mark.svg 同一套数。
  */
 
+// 轮廓清单在 shared 里（主进程给团队建的 Pal 组合头像时也要认）；这里只负责把它画出来
+import { MARK_SHAPES, isMarkShape, type MarkShape } from '../../../../shared/agent-mark-catalog'
+export { MARK_SHAPES, isMarkShape, type MarkShape }
+
 export const SAMPLES = 64
 export const HALF = 32
 export const CORNER = 4
@@ -129,11 +133,6 @@ export function radiusAtAngle(radii: number[], angle: number): number {
 // 思考态"身体缩成一颗点"的动画对每种形状都成立。角度按 ANGLES：0 在右、π/2 在下（SVG y 朝下）、
 // 3π/2 在上。眼睛是 mask 挖在身体上的洞，换轮廓不用动眼睛。
 
-export const MARK_SHAPES = ['square', 'circle', 'drop', 'hexagon', 'cloud', 'triangle'] as const
-export type MarkShape = (typeof MARK_SHAPES)[number]
-
-export const isMarkShape = (value: unknown): value is MarkShape =>
-  typeof value === 'string' && (MARK_SHAPES as readonly string[]).includes(value)
 
 const TOP = (3 * Math.PI) / 2
 const BOTTOM = Math.PI / 2

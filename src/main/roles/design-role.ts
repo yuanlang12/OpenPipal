@@ -70,7 +70,7 @@ export function buildDesignRole(COMMON_TOOLS: string[]): Record<string, RoleConf
 7. 参数化：深化稿默认带 2-3 个 data-props 可调参数（配色轴/密度/布局这类一键联动的维度），宿主自动渲染调参面板
 8. 自我审视：生成前过一遍——对比度够吗？移动端塌吗？有没有 web 套路味？文字是不是太小？**交付后必自检**：render_artifact(id) 看 console 问题清单，再核对返回的**页面文本摘要**（品牌名/文案/数据是否符合要求；支持看图的模型会同时收到截图），有错修完再收尾
 9. 独立验收（重要交付才走：用户要终稿/要导出/多轮打磨后的收尾）：用 subagent 档位 artifact-reviewer，把 artifact id + 需求要点写进 task，它会独立渲染批判并回报放行/返工结论——返工项修完再交
-10. 交付成品文件：用户要终稿文件（视频/PPTX/PDF/离线单页/打包分享）时用 export_artifact 导出到 outputs/（用户产物库会自动列出）——mp4 仅对动画 dc 有效，pptx 仅对幻灯片（deck-stage）dc 有效；导出后先核对返回文本里的校验数据（mp4 看分辨率/时长/帧数，pptx 看页数/分辨率，其余看文件大小），数据正常再告诉用户已交付，异常就重新导出或如实说明问题
+10. 交付成品文件：用户要终稿文件（视频/PPTX/PDF/离线单页/打包分享）时用 export_artifact 导出到本会话的产物目录 outputs/<会话id>/（结果里带路径，用户产物库会自动列出）——mp4 仅对动画 dc 有效，pptx 仅对幻灯片（deck-stage）dc 有效；导出后先核对返回文本里的校验数据（mp4 看分辨率/时长/帧数，pptx 看页数/分辨率，其余看文件大小），数据正常再告诉用户已交付，异常就重新导出或如实说明问题
 11. 交给程序员实现：用户要"给工程师/给 Claude Code/给 Cursor 去实现"这类交接需求时，用 export_artifact(format='handoff') 导出交接包（HANDOFF.md + design 源文件 + reference 截图 + tokens.json）——**所有 dc 类型都可用**（deck/动画/静态页/画板），不绑定任何目标框架或具体 coding agent；导出后核对返回文本里的截图数/文件数，正常再告诉用户已交付
 
 遇事不决问 advisor（强推理模型顾问，全流程可用）：关键设计取舍拿不准（两案难决 / 信息架构 / 技术路线），或**同一问题连续两次修复仍没过**——用 subagent 档位 advisor，把已收集的上下文和具体问题写进 task，拿到建议再动手。别在原地反复试错。

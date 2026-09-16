@@ -11,6 +11,7 @@ import { app } from 'electron'
 import { createOAuthProvider, awaitAuthorizationCode, hasPersistedOAuthSession, revokeOAuthSession } from './mcp-oauth'
 import { dataPath } from './data-root'
 import { getUserMcpConfigPath } from './credential-paths'
+import { describeMcpToolAnnotations, pickMcpToolAnnotations, type McpToolAnnotations } from './mcp-tool-annotations'
 
 /**
  * MCP server 配置 — 二选一:
@@ -64,6 +65,8 @@ interface McpToolInfo {
   description: string
   inputSchema: Record<string, unknown>
   ui?: McpToolUiMeta
+  /** 服务器在 tools/list 里自述的副作用形状；风险分级与 tools.describe 都用它 */
+  annotations?: McpToolAnnotations
 }
 
 interface ConnectedServer {
@@ -152,6 +155,8 @@ function resolveMcpTool(
 export interface McpToolServerIdentity {
   serverName: string
   serverBinding: string
+  /** 该工具的注解（有才带）——授权前就在手上，不用再查一次 */
+  annotations?: McpToolAnnotations
 }
 
 /** Resolve the exact connected-server identity used before authorization. */
@@ -164,6 +169,7 @@ export function resolveMcpToolServerIdentity(
   return resolved ? {
     serverName: resolved.server.name,
     serverBinding: resolved.server.connectionId,
+    ...(resolved.tool.annotations ? { annotations: resolved.tool.annotations } : {})
   } : null
 }
 
@@ -293,7 +299,8 @@ async function connectServer(
       const info: McpToolInfo = {
         name: t.name,
         description: t.description || '',
-        inputSchema: (t.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} }
+        inputSchema: (t.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
+        annotations: pickMcpToolAnnotations((t as any).annotations)
       }
       const uiMeta = (t as any)._meta?.ui as { resourceUri?: string; permissions?: string[]; csp?: Record<string, unknown>; visibility?: string[] } | undefined
       if (uiMeta?.resourceUri) {
@@ -429,7 +436,8 @@ export async function authorizeMcpServer(name: string): Promise<{ ok: boolean; e
       const info: McpToolInfo = {
         name: t.name,
         description: t.description || '',
-        inputSchema: (t.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} }
+        inputSchema: (t.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
+        annotations: pickMcpToolAnnotations((t as any).annotations)
       }
       const uiMeta = (t as any)._meta?.ui as { resourceUri?: string; permissions?: string[]; csp?: Record<string, unknown>; visibility?: string[] } | undefined
       if (uiMeta?.resourceUri) {
@@ -797,6 +805,17 @@ export function isMcpToolFromBoundServer(
   return !!server?.tools.some(tool => tool.name === toolName)
 }
 
+/** 精确绑定的那台 server 上该工具的注解（MCP Apps 反向调用授权前用） */
+export function getBoundMcpToolAnnotations(
+  serverBinding: string,
+  serverName: string,
+  toolName: string,
+  sessionId?: string
+): McpToolAnnotations | undefined {
+  const server = resolveBoundMcpServer(serverBinding, serverName, sessionId)
+  return server?.tools.find(tool => tool.name === toolName)?.annotations
+}
+
 /**
  * Exact-bound structured sink for MCP Apps reverse calls. The lookup and call
  * use one ConnectedServer object, so global/session same-name servers and a
@@ -922,9 +941,11 @@ export function describeMcpTool(
       return `  ${name}${req}: ${type}${desc}`
     }).join('\n')
 
+    const sideEffects = describeMcpToolAnnotations(tool.annotations)
     return [
       `${tool.name} (${server.name})`,
       tool.description,
+      ...(sideEffects ? [sideEffects] : []),
       '',
       `参数:`,
       params || '  (无参数)',
@@ -1104,7 +1125,8 @@ export async function registerSessionMcpServers(
         const info: McpToolInfo = {
           name: t.name,
           description: t.description || '',
-          inputSchema: (t.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} }
+          inputSchema: (t.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
+          annotations: pickMcpToolAnnotations((t as any).annotations)
         }
         const uiMeta = (t as any)._meta?.ui as { resourceUri?: string; permissions?: string[]; csp?: Record<string, unknown>; visibility?: string[] } | undefined
         if (uiMeta?.resourceUri) {

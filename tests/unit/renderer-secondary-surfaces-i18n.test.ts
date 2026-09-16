@@ -115,7 +115,7 @@ describe('secondary renderer surfaces i18n', () => {
     expect(output).toContain('entry.workspaceName')
     expect(workspace).toContain('**${task.name}**')
     expect(workspace).toContain('${task.prompt}')
-    expect(workspace).toContain('<Markdown content={selectedNode.content} />')
+    expect(workspace).toContain('<Markdown content={body} />')   // agent.md 的 frontmatter 声明单独一行，正文只渲染 body
     expect(workspace).toContain('path: `tasks/${task.id}`')
     expect(editor).toContain("useState(task?.name || '')")
     expect(editor).toContain("useState(task?.prompt || '')")
@@ -123,7 +123,6 @@ describe('secondary renderer surfaces i18n', () => {
     expect(editor).toContain('value={webhookSecret}')
     expect(editor).toContain('value={webhookUrl}')
     expect(editor).toContain('{ws.name}')   // Pal 的名字经 palLabel 原样渲染（身份走头像组件，不进翻译）
-    expect(editor).toContain('{a.name}')
     expect(templates).toContain('getBuiltinTaskTemplates(t)')
     expect(templates).toContain('onPick(tpl)')
 

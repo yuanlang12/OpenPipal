@@ -1,6 +1,8 @@
 import type { Entry, JsonlSessionMetadata, Session } from '@earendil-works/pi-agent-core'
 import type { Conversation, ConversationSummary, StoredMessage } from '../conversation-store'
 import { normalizeStoredMessage } from '../conversation-store'
+import { resolveAgentId } from '../../shared/agent-identity'
+import { palIdOf } from '../pal-id'
 import {
   OPENPIPAL_MESSAGE_EVENT,
   OPENPIPAL_PRODUCT_SNAPSHOT,
@@ -76,13 +78,20 @@ export async function projectConversation(
   ])
   const messageUpdatedAt = messages.reduce((latest, message) => Math.max(latest, message.timestamp), 0)
   const agentId = product ? product.agentId : header.initialAgentId
-  const workspaceId = product ? product.workspaceId : header.initialWorkspaceId
+  // 老的 agentId（模板）并入 Pal 后当 workspaceId 看（读侧派生，不改文件）
+  const workspaceId = palIdOf({ workspaceId: product ? product.workspaceId : header.initialWorkspaceId, agentId })
+  const role = product?.role ?? header.initialRole
+  // 统一身份：快照 / 文件头写了就用，老文件按 workspaceId / agentId / role 派生（读侧派生，不改文件）
+  const agent = (product ? product.agent : header.initialAgent) ?? resolveAgentId({ workspaceId, agentId, role })
   return {
     id: metadata.id,
     title: product?.title ?? header.initialTitle,
-    role: product?.role ?? header.initialRole,
+    role,
     ...(agentId ? { agentId } : {}),
     ...(workspaceId ? { workspaceId } : {}),
+    agent,
+    ...(header.initialTeamId ? { teamId: header.initialTeamId } : {}),
+    ...(header.initialChannel ? { channel: header.initialChannel } : {}),
     ...(product?.config ? { config: product.config } : {}),
     createdAt: header.initialCreatedAt,
     updatedAt: product?.updatedAt ?? Math.max(header.initialCreatedAt, messageUpdatedAt),
@@ -104,6 +113,9 @@ export function summarizeConversation(conversation: Conversation): ConversationS
     role: conversation.role,
     ...(conversation.agentId ? { agentId: conversation.agentId } : {}),
     ...(conversation.workspaceId ? { workspaceId: conversation.workspaceId } : {}),
+    agent: resolveAgentId(conversation),
+    ...(conversation.teamId ? { teamId: conversation.teamId } : {}),
+    ...(conversation.channel ? { channel: conversation.channel } : {}),
     ...(conversation.config ? { config: conversation.config } : {}),
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,

@@ -59,3 +59,7 @@ __pycache__/
 # 规矩功能真机验收（tests/e2e/hook-rule-live.spec.ts）留下的证据：截图之外还有隔离 HOME 里的
 # 插件目录、规矩文件、run.log。全是每跑一次就整批重写的过程物，同上不进版本。
 tests/artifacts/hook-rule-live/
+# 团队真机验收（tests/e2e/team-live.spec.ts）留下的证据，同上：隔离 HOME 里的 Pal / 团队目录与 run.log 每跑一次整批重写
+tests/artifacts/team-live/
+tests/artifacts/team-founding-live/
+tests/artifacts/team-scenario-live/

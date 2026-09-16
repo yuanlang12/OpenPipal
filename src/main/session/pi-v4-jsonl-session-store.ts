@@ -25,6 +25,7 @@ import {
 } from './openpipal-session-events'
 import { SecureSessionFileSystem } from './secure-session-filesystem'
 import { SessionIndex } from './session-index'
+import { resolveAgentId } from '../../shared/agent-identity'
 import type {
   CreateOpenPipalSession,
   OpenPipalOperationOutcome,
@@ -56,6 +57,7 @@ function productSnapshotOf(conversation: Conversation): OpenPipalProductSnapshot
     role: conversation.role,
     ...(conversation.agentId ? { agentId: conversation.agentId } : {}),
     ...(conversation.workspaceId ? { workspaceId: conversation.workspaceId } : {}),
+    agent: resolveAgentId(conversation),
     ...(conversation.config ? { config: conversation.config } : {}),
     updatedAt: conversation.updatedAt,
   }
@@ -216,6 +218,9 @@ export class PiV4JsonlSessionStore implements OpenPipalSessionStore {
         initialCreatedAt: conversation.createdAt,
         ...(conversation.agentId ? { initialAgentId: conversation.agentId } : {}),
         ...(conversation.workspaceId ? { initialWorkspaceId: conversation.workspaceId } : {}),
+        initialAgent: resolveAgentId(conversation),
+        ...(conversation.teamId ? { initialTeamId: conversation.teamId } : {}),
+        ...(conversation.channel ? { initialChannel: conversation.channel } : {}),
       }
       const metadata = toJsonValue(header)
       if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') {
@@ -458,6 +463,8 @@ export class PiV4JsonlSessionStore implements OpenPipalSessionStore {
           : (current.config ? { config: current.config } : {})),
         updatedAt: Date.now(),
       }
+      // 身份跟着改过的字段走：换了 role / workspaceId / agentId 就重新派生，不沿用旧值
+      snapshot.agent = (has('agent') && update.agent) ? update.agent : resolveAgentId({ workspaceId: snapshot.workspaceId, agentId: snapshot.agentId, role: snapshot.role })
       await this.appendProductSnapshot(session, snapshot)
       if (snapshot.title !== current.title) await session.setName(snapshot.title)
       const conversation = this.cacheProjection({
@@ -466,6 +473,7 @@ export class PiV4JsonlSessionStore implements OpenPipalSessionStore {
         role: snapshot.role,
         ...(snapshot.agentId ? { agentId: snapshot.agentId } : { agentId: undefined }),
         ...(snapshot.workspaceId ? { workspaceId: snapshot.workspaceId } : { workspaceId: undefined }),
+        agent: snapshot.agent,
         ...(snapshot.config ? { config: snapshot.config } : { config: undefined }),
         updatedAt: snapshot.updatedAt,
       })

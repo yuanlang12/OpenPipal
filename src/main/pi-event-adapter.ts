@@ -746,6 +746,7 @@ export class PiEventAdapter {
           const finalText: string = sub.finalText || ''
           const cardData = JSON.stringify(compactSubagentCardData({
             profile: sub.profileName,
+            ...(sub.palId ? { palId: sub.palId } : {}),
             modelId: sub.modelId,
             usage: sub.usage,
             task: sub.task,

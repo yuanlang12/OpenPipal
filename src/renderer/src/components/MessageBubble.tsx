@@ -24,6 +24,7 @@ import { toolLabel } from '../chat/toolPhrases'
 import { getMessageKind, isRenderableToolMessage } from '../chat/messages'
 import { useTranslation } from 'react-i18next'
 import { formatMessageContentForDisplay, injectNoticeContentForDisplay } from '../chat/messageDisplay'
+import { parsePeerMessage } from '../../../shared/peer-message-contract'
 
 interface MessageBubbleProps {
   message: ChatMessage
@@ -39,6 +40,8 @@ interface MessageBubbleProps {
   /** 本条渲染在 ProcessGroup 展开区里(过程栏)—— 去掉页脚操作行/时间戳:整轮耗时已经写在
    *  分割线上,过程里只留内容本身,一列到底全部左对齐。复制/重新生成属于台面上的结论。 */
   inProcess?: boolean
+  /** 气泡下面的一行小标签（只给第一条用户消息：会话简报——任务类型 / 项目名 / 来源资料），不进气泡 */
+  footer?: React.ReactNode
 }
 
 export function formatMessageTime(timestamp: number, locale: string): string {
@@ -88,6 +91,7 @@ function messageBubblePropsEqual(prev: MessageBubbleProps, next: MessageBubblePr
     prev.onSaveAsAgent === next.onSaveAsAgent &&
     prev.isLastStreaming === next.isLastStreaming &&
     prev.inProcess === next.inProcess &&
+    prev.footer === next.footer &&
     messagesRenderEqual(prev.message, next.message)
   )
 }
@@ -330,7 +334,7 @@ function RuntimeInterruptedNotice() {
   )
 }
 
-function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenerate, onEditAndResend, onSaveAsAgent, isLastStreaming = false, inProcess = false }: MessageBubbleProps) {
+function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenerate, onEditAndResend, onSaveAsAgent, isLastStreaming = false, inProcess = false, footer }: MessageBubbleProps) {
   const { t, i18n } = useTranslation()
   const messageKind = getMessageKind(message)
   const isUser = message.role === 'user'
@@ -420,8 +424,7 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
   // 这是 Codex 的核心视觉协议:过程 vs 最终结果二分。
   // 用户消息靠右(左右布局),浅 parchment 气泡 + 圆角,无头无像;
   // assistant = 裸文本靠左填满列,跟过程内容同栏。
-  return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-msg animate-fade-in`}>
+  const bubble = (
       <div className={`group ${
         isUser
           ? 'max-w-msg-user rounded-xl sw-chat-user-bubble bg-surface-100 text-ink-primary'
@@ -451,6 +454,12 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
           <ThinkingCollapsible content={message.thinkingContent} />
         )}
 
+        {/* 别的对话发来的：来源小字 */}
+        {isUser && message.messageKind === 'peer-message' && (
+          <div className="mb-1 text-[11px] text-surface-400" data-testid="peer-message-from">
+            {t('chat.message.fromPeer', { from: parsePeerMessage(message.content)?.from ?? '' })}
+          </div>
+        )}
         {/* Content */}
         {isUser ? (
           onEditAndResend ? (
@@ -527,6 +536,10 @@ function MessageBubbleComponent({ message, appName, roleIcon, onSend, onRegenera
         </div>
         )}
       </div>
+  )
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-msg animate-fade-in`}>
+      {footer ? <div className="flex flex-col items-end min-w-0 max-w-full">{bubble}{footer}</div> : bubble}
     </div>
   )
 }

@@ -51,40 +51,7 @@ function getRoleSeedDir(roleName: string): string | null {
   return null
 }
 
-interface ParsedMd {
-  frontmatter: Record<string, string>
-  body: string
-}
-
-/**
- * 极简 YAML frontmatter 解析——只支持 `key: value` 和 `key: a, b, c` 形式
- * 不支持嵌套、列表字面量（[a,b]）、引号转义等复杂语法——我们用不到
- */
-function parseFrontmatter(content: string): ParsedMd {
-  const lines = content.split('\n')
-  if (lines[0]?.trim() !== '---') {
-    return { frontmatter: {}, body: content }
-  }
-  const frontmatter: Record<string, string> = {}
-  let endIdx = -1
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i].trim() === '---') { endIdx = i; break }
-    const m = lines[i].match(/^([a-zA-Z_][\w-]*)\s*:\s*(.*)$/)
-    if (m) {
-      const key = m[1].trim()
-      let value = m[2].trim()
-      // 去掉可能的首尾引号
-      if ((value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1)
-      }
-      frontmatter[key] = value
-    }
-  }
-  if (endIdx === -1) return { frontmatter: {}, body: content }
-  const body = lines.slice(endIdx + 1).join('\n').replace(/^\n+/, '')
-  return { frontmatter, body }
-}
+import { parseFrontmatter } from '../shared/frontmatter'
 
 /**
  * 解析 tools 字段。支持 `*`（继承 common）和 `*, a, b`（继承 common 再加 a b）

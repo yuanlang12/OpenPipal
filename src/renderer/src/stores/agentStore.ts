@@ -1,20 +1,5 @@
 import { create } from 'zustand'
 
-export interface AgentTemplateSummary {
-  id: string
-  name: string
-  description: string
-  icon: string
-  workingDir?: string
-  createdAt: number
-  updatedAt: number
-}
-
-export interface AgentTemplate extends AgentTemplateSummary {
-  systemPrompt: string
-  tools?: string[]
-}
-
 // ---- Workspace Agent（文件系统驱动）----
 
 export interface WorkspaceSummary {
@@ -22,6 +7,7 @@ export interface WorkspaceSummary {
   name: string
   icon: string
   description: string
+  category?: string
   createdAt: number
   updatedAt: number
   memoryCount: number
@@ -53,60 +39,84 @@ export interface Workspace {
   dir: string
 }
 
+// ---- 团队（teams/<id>/）----
+
+export type TeamTier = 'readonly' | 'auto' | 'full'
+
+export interface TeamSummary {
+  id: string
+  name: string
+  lead: string
+  members: string[]
+  tier: TeamTier
+  channels: string[]
+  createdAt: number
+  updatedAt: number
+}
+
 interface AgentState {
-  templates: AgentTemplateSummary[]
   workspaces: WorkspaceSummary[]
+  teams: TeamSummary[]
   loading: boolean
   creating: boolean
 }
 
 interface AgentActions {
-  loadTemplates: () => Promise<void>
-  createTemplate: (data: Omit<AgentTemplate, 'id' | 'createdAt' | 'updatedAt'>) => Promise<AgentTemplate>
-  updateTemplate: (id: string, data: Partial<AgentTemplate>) => Promise<void>
-  deleteTemplate: (id: string) => Promise<void>
   // Workspace
   loadWorkspaces: () => Promise<void>
   createFromConversation: (conversationId: string) => Promise<Workspace>
   deleteWorkspace: (id: string) => Promise<void>
+  // Team
+  loadTeams: () => Promise<void>
+  /** 团队目录变了（主进程 team:changed / 话题跑完兜底）：团队列表与 Pal 列表（组长刚建的成员）一起重拉 */
+  refreshTeams: () => Promise<void>
+  /** 组建：主进程先造默认组长 + 团队目录；名字、章程、成员都在话题里跟组长聊出来 */
+  foundTeam: () => Promise<TeamSummary>
+  createTeam: (data: { name: string; members: string[]; lead?: string; tier?: TeamTier; charter?: string }) => Promise<TeamSummary>
+  deleteTeam: (id: string) => Promise<void>
 }
 
-export const useAgentStore = create<AgentState & AgentActions>((set) => ({
-  templates: [],
+export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
   workspaces: [],
+  teams: [],
   loading: false,
   creating: false,
 
-  loadTemplates: async () => {
-    set({ loading: true })
+  // ---- Team ----
+
+  loadTeams: async () => {
     try {
-      const list = await window.api.listAgentTemplates!()
-      set({ templates: list })
+      const list = await window.api.listTeams?.() || []
+      set({ teams: list })
     } catch (err) {
-      console.error('[AgentStore] 加载失败:', err)
-    } finally {
-      set({ loading: false })
+      console.error('[AgentStore] 团队加载失败:', err)
     }
   },
 
-  createTemplate: async (data) => {
-    const created = await window.api.createAgentTemplate!(data)
-    const list = await window.api.listAgentTemplates!()
-    set({ templates: list })
-    return created
+  refreshTeams: async () => {
+    await Promise.all([get().loadTeams(), get().loadWorkspaces()])
   },
 
-  updateTemplate: async (id, data) => {
-    await window.api.updateAgentTemplate!(id, data)
-    const list = await window.api.listAgentTemplates!()
-    set({ templates: list })
+  foundTeam: async () => {
+    const team = await window.api.foundTeam!()
+    const [teams, workspaces] = await Promise.all([window.api.listTeams?.() || [], window.api.listAgentWorkspaces?.() || []])
+    set({ teams, workspaces })
+    return team
   },
 
-  deleteTemplate: async (id) => {
-    await window.api.deleteAgentTemplate!(id)
-    const list = await window.api.listAgentTemplates!()
-    set({ templates: list })
+  createTeam: async (data) => {
+    const team = await window.api.createTeam!(data)
+    const list = await window.api.listTeams?.() || []
+    set({ teams: list })
+    return team
   },
+
+  deleteTeam: async (id) => {
+    await window.api.deleteTeam!(id)
+    const list = await window.api.listTeams?.() || []
+    set({ teams: list })
+  },
+
 
   // ---- Workspace ----
 

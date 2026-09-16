@@ -18,7 +18,7 @@ import {
 import { getAgentRuntime } from './agent-runtime'
 import type { ChatMessage, AgentOverrides } from './agent-runtime/contracts'
 import { resolveAgentOverrides } from './agent-overrides'
-import { getAgentTemplate } from './agent-template-manager'
+import { resolveTeamScope } from './team-store'
 import {
   appendMessages,
   createConversation,
@@ -36,12 +36,11 @@ import {
   readAllWorkspaceTriggers,
   clearWorkspaceTriggers
 } from './agent-workspace-store'
-import { getCurrentRole } from './role-manager'
 import { registerTaskSchedulerControl } from './task-scheduler-control'
 import { acquireConversationExecution } from './conversation-execution-coordinator'
 import { isWebhookSecretValid } from './local-http-auth'
 import { tMain } from './main-i18n'
-import { PAL_BASE_ROLE } from '../shared/pal-contract'
+import { DEFAULT_AGENT_ID } from '../shared/agent-identity'
 
 // ---- 状态 ----
 
@@ -200,15 +199,22 @@ async function ensureConversation(task: Task): Promise<EnsuredConversation> {
     }
     return { conversationId: task.boundConversationId, createdNow: false }
   }
-  // 新建会话：Pal / 模板的任务用中性角色（人设在它自己的目录里，见 pal-contract）；
-  // 全局角色的任务用记录的 role，缺失则回落到当前活跃 role
-  const role = (task.workspaceId || task.agentId) ? PAL_BASE_ROLE : (task.role || getCurrentRole()?.name || 'learner')
+  // 团队级任务：开一条团队话题，由频道的 Lead 跑（人设的定时 / webhook 是团队话题的两个"前门"之一）
+  const team = task.teamId ? resolveTeamScope(task.teamId, task.channel) : null
+  if (task.teamId && !team) {
+    throw new Error(`任务绑定的团队 ${task.teamId}${task.channel ? ` › ${task.channel}` : ''} 不存在或没有成员，已停止执行`)
+  }
+  const workspaceId = team ? team.lead : task.workspaceId
+  // 新建会话：Pal 的任务 role 槽位给默认角色（人设在它自己的目录里，槽位只是老结构的技术字段）；
+  // 内置角色的任务用记录的 role，缺失则回落默认角色（通用助手）
+  const role = workspaceId ? DEFAULT_AGENT_ID : (task.role || DEFAULT_AGENT_ID)
   const conv = await createConversation(
     role,
     `[自动化] ${task.name}`,
-    task.agentId,
-    task.workspaceId,
-    'scheduler'
+    undefined,
+    workspaceId,
+    'scheduler',
+    team ? { teamId: team.teamId, ...(team.channel ? { channel: team.channel } : {}) } : undefined
   )
 
   // persistent 模式首次执行：绑定会话
@@ -425,15 +431,14 @@ async function runTaskInConversation(
   if (task.workspaceId && !getWorkspace(task.workspaceId)) {
     throw new Error(`Workspace ${task.workspaceId} 未找到`)
   }
-  if (task.agentId && !getAgentTemplate(task.agentId)) {
-    throw new Error(`Agent 模板 ${task.agentId} 未找到`)
+  if (task.teamId && !resolveTeamScope(task.teamId, task.channel)) {
+    throw new Error(`团队 ${task.teamId}${task.channel ? ` › ${task.channel}` : ''} 未找到或没有成员`)
   }
 
   // Use the same persisted conversation config and Agent/workspace resolution
   // as desktop, HTTP and realtime entry points. This preserves the pinned
   // model, working directory, thinking controls, role brief and goal.
   let overrides: AgentOverrides = resolveAgentOverrides({
-    agentId: task.agentId,
     workspaceId: task.workspaceId,
     conversationId,
     conversationConfig: conversation.config
@@ -618,9 +623,7 @@ export async function executeTask(taskId: string, options?: ExecuteOptions): Pro
 
   const abort = new AbortController()
   runningControllers.set(taskId, abort)
-  const scope = task.workspaceId ? `ws=${task.workspaceId.slice(0,8)}`
-              : task.agentId ? `agent=${task.agentId.slice(0,8)}`
-              : 'global'
+  const scope = task.workspaceId ? `ws=${task.workspaceId.slice(0,8)}` : 'global'
 
   try {
     throwIfTaskAborted(abort.signal)

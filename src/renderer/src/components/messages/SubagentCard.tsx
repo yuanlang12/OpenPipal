@@ -17,6 +17,7 @@
  */
 
 import { useMemo, useState } from 'react'
+import { WorkspaceAvatar } from '../agent-mark'
 import { useTranslation } from 'react-i18next'
 import { Sparkles, CheckCircle2, AlertCircle, ChevronDown } from 'lucide-react'
 import type { ChatMessage } from '../../types'
@@ -43,6 +44,8 @@ interface ChildMessage {
 
 interface CardData {
   profile?: string
+  /** 团队交接：成员的 Pal id（卡头画成员自己的头像，标签换成"交接给"） */
+  palId?: string
   modelId?: string
   usage?: {
     input?: number
@@ -227,10 +230,12 @@ export function SubagentCard({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-start mb-msg animate-fade-in">
       <div className="group/sub max-w-msg w-full rounded-lg border border-brand-200/60 dark:border-brand-700/60 bg-brand-50/40 dark:bg-brand-900/20 overflow-hidden">
-        {/* 顶部：profile + status + via modelId */}
-        <div className="min-w-0 flex items-center gap-2 px-3 py-2 border-b border-brand-100/60 dark:border-brand-800/60">
-          <Sparkles className="w-3.5 h-3.5 text-brand-500 shrink-0" />
-          <span className="text-chat-label font-semibold text-brand-700 dark:text-brand-300 shrink-0">{t('chat.subagent.label')}</span>
+        {/* 顶部：profile + status + via modelId（团队交接：成员头像 + "交接给 成员名"） */}
+        <div className="min-w-0 flex items-center gap-2 px-3 py-2 border-b border-brand-100/60 dark:border-brand-800/60" data-testid="subagent-card-header" data-pal-id={data.palId || undefined}>
+          {data.palId
+            ? <WorkspaceAvatar workspaceId={data.palId} icon="🤝" size={16} className="text-sm leading-none shrink-0" />
+            : <Sparkles className="w-3.5 h-3.5 text-brand-500 shrink-0" />}
+          <span className="text-chat-label font-semibold text-brand-700 dark:text-brand-300 shrink-0">{data.palId ? t('chat.subagent.handoff') : t('chat.subagent.label')}</span>
           <span
             className="min-w-0 truncate text-chat-label text-surface-700 font-medium"
             title={data.profile}

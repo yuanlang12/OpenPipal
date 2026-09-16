@@ -34,7 +34,8 @@ export function HistoryPopover() {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
   const rootRef = useRef<HTMLDivElement>(null)
 
-  const { groups, external: acpConversations } = useConversationGroups(debouncedQuery)
+  const { teams: teamThreads, groups, external: acpConversations } = useConversationGroups(debouncedQuery)
+  const teamItems = teamThreads.flatMap(g => g.channels.flatMap(l => l.items))
   const workspaceMap = new Map(workspaces.map(w => [w.id, { icon: w.icon, name: w.name }]))
 
   // ACP 外部会话默认折叠；搜索时自动展开（有匹配却藏着会让人以为搜不到），
@@ -168,7 +169,7 @@ export function HistoryPopover() {
 
           {/* 列表 */}
           <div className="flex-1 overflow-y-auto p-1.5">
-            {groups.length === 0 && acpConversations.length === 0 ? (
+            {groups.length === 0 && acpConversations.length === 0 && teamItems.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-[11px] text-surface-300">
                   {t(debouncedQuery ? 'shell.history.noMatches' : 'shell.history.noConversations')}
@@ -176,6 +177,14 @@ export function HistoryPopover() {
               </div>
             ) : (
               <>
+                {teamItems.length > 0 && (
+                  <div className="mb-1">
+                    <div className="px-2 pt-2 pb-1">
+                      <span className="text-[10px] font-semibold text-surface-300 uppercase tracking-wider">{t('shell.history.teams')}</span>
+                    </div>
+                    {teamItems.map(renderConvRow)}
+                  </div>
+                )}
                 {groups.map(({ label, items }) => (
                   <div key={label} className="mb-1">
                     <div className="px-2 pt-2 pb-1">
