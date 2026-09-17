@@ -178,6 +178,7 @@ const api = {
   },
   listHooks: (): Promise<any[]> => ipcRenderer.invoke('hooks:list'),
   setHookEnabled: (file: string, enabled: boolean): Promise<any> => ipcRenderer.invoke('hooks:set-enabled', file, enabled),
+  deleteHook: (file: string): Promise<any> => ipcRenderer.invoke('hooks:delete', file),
   // 今日按模型用量/成本（卡片展开时拉一次；聚合在读侧，见 usage-log.ts）
   getTodayUsage: (): Promise<Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }>> =>
     ipcRenderer.invoke('usage:get-today'),

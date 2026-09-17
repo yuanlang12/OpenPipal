@@ -28,13 +28,14 @@ hook 文件。用户看不到你的过程，写好后只会看到一行「已定
 4. 只写这一个文件；这个目录之外的什么都碰不到，也不要试
 5. 最后一句话回复：写了 / 改了哪个文件（不用贴代码）
 
-## 三个事件
+## 四个事件
 
 | 事件 | 什么时候跑 | 能做什么 | 返回 |
 |---|---|---|---|
 | `tool_call` | 工具执行前 | 原地改 `event.input`；或拦下 | `{ block: true, reason: '…' }`，放行就不返回 |
 | `tool_result` | 工具执行后、模型看到之前 | 改结果 | `{ content?, details?, isError? }`，给了哪个字段换哪个 |
-| `before_agent_start` | 每轮开工前 | 改系统提示 | `{ systemPrompt }` |
+| `before_agent_start` | 每轮开工前 | 往系统提示里加一段（只能加不能减） | `{ systemPrompt: event.systemPrompt + '你的内容' }`——**必须拼上 `event.systemPrompt`**，只返回自己那段等于把角色提示和技能索引全丢掉 |
+| `agent_end` | 每轮收工后（正常说完、被停止、出错都跑，看 `event.outcome`） | 记账、收尾：`event.toolCalls` 是这轮调过的工具，`event.reply` 是最后的回复；改不了回复 | 不返回 |
 
 ## 文件模板
 
@@ -74,3 +75,4 @@ function maskNames(text: string): string {
 6. 常用工具名与参数：`read` / `write` / `edit` 用 `path`（write 另有 `content`，edit 另有 `oldText` / `newText`）；`bash` 用 `command`；`web_search` 用 `query`；`grep` / `find` / `ls` 用 `path`。
 7. 规则里要跑命令 / 读文件：`const r = await ctx.callTool('bash', { command: 'pytest -q' })`，结果在 `r.content[0].text`，`r.isError` 表示命令失败。它走的是助手自己的工具——同样的安全审核、同一个沙箱、该弹授权卡照弹。被审核拒绝会抛错，想不让规则因此失效就 try/catch。规则自己发起的调用不会再触发规则。
 8. 作用范围看位置：放在 local-rules 插件里的对所有 Agent 生效；放在某个独立智能体自己目录里的只对它生效（不用判 `ctx.workspaceId`）。只对某个内置角色（编码 / 设计…）生效的，在处理函数开头判 `ctx.roleName`（例：`if (ctx.roleName !== 'coding') return`），不靠文件名。
+9. 要跨轮记东西（累计次数、上一轮改过哪些文件、上次提醒是什么时候）用 `ctx.store`：`await ctx.store.get('key')` / `await ctx.store.set('key', value)` / `await ctx.store.delete('key')`。每条规则一个仓库，重启后还在；值必须能转成 JSON，总量 ≤ 256KB。别靠文件（要过审核）或模块级变量（App 重启、文件一改就没了）。典型搭配：`agent_end` 里记下这轮做了什么，`before_agent_start` 里读出来决定要不要加提示。

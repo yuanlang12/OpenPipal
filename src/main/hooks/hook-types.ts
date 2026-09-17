@@ -9,20 +9,35 @@
  *   }
  *
  * 事件名与形状沿用 pi 扩展系统（tool_call 可拦截可改参 / tool_result 可打补丁 /
- * before_agent_start 可改系统提示），这样 pi 社区的写法能直接搬过来。
+ * before_agent_start 可改系统提示 / agent_end 每轮收工），这样 pi 社区的写法能直接搬过来。
  * 与 pi 的差别只有一条：hook 永远跑在宿主安全员**里面**——改过的参数仍要过 pi-security，
  * 宿主标记的 terminate 不可被覆盖。组合顺序见 pi-core-tool-adapter.ts。
+ *
+ * 规则要记住跨轮的东西（累计次数、上一轮做过什么）用 ctx.store（hook-store.ts）：
+ * 每条规则一个 JSON 文件，重启后还在；模块级变量只活在这次运行里、文件一改就重置。
  */
 
-export type HookEventName = 'tool_call' | 'tool_result' | 'before_agent_start'
+export type HookEventName = 'tool_call' | 'tool_result' | 'before_agent_start' | 'agent_end'
 
-export const HOOK_EVENT_NAMES: readonly HookEventName[] = ['tool_call', 'tool_result', 'before_agent_start']
+export const HOOK_EVENT_NAMES: readonly HookEventName[] = ['tool_call', 'tool_result', 'before_agent_start', 'agent_end']
 
 /** 规则借助手的工具跑出来的结果（形状同工具回给模型的） */
 export interface HookToolResult {
   content: HookContent[]
   details?: unknown
   isError: boolean
+}
+
+/**
+ * 这条规则自己的小仓库：跨轮、跨会话、重启后还在（每条规则一个 JSON 文件，见 hook-store.ts）。
+ * 值必须能转成 JSON（函数、undefined 会丢）；单条规则总量 ≤ 256KB，超了 set 抛错。
+ */
+export interface HookStore {
+  /** 取一个值；没存过返回 undefined。拿到的是副本，改它不影响仓库 */
+  get<T = unknown>(key: string): Promise<T | undefined>
+  /** 存一个值，写进磁盘才返回；传 undefined 等于删 */
+  set(key: string, value: unknown): Promise<void>
+  delete(key: string): Promise<void>
 }
 
 export interface HookContext {
@@ -37,6 +52,11 @@ export interface HookContext {
   source: 'desktop' | 'extension' | 'acp' | 'scheduler'
   /** 这次调用的信号：用户点停止、或这个处理函数超时，都会 abort；异步工作应当尊重它 */
   signal: AbortSignal
+  /**
+   * 这条规则自己的小仓库：记"累计跑了几轮""上一轮改过哪些文件""上次提醒是什么时候"这类
+   * 跨轮状态用它，别写文件（要过审核）也别靠变量（重启就没了）。
+   */
+  store: HookStore
   /**
    * 用助手自己的工具（read / write / bash / web_search …）：同一套安全审核、同一个沙箱、
    * 同样会弹授权卡；参数按工具 schema 校验。规则自己发起的调用不再触发规则（不递归）。
@@ -90,13 +110,43 @@ export interface BeforeAgentStartHookEvent {
 }
 
 export interface BeforeAgentStartHookResult {
+  /** 只能加不能减：必须含 event.systemPrompt 原文（通常 event.systemPrompt + 你的内容）；不含的由宿主按追加处理 */
   systemPrompt?: string
 }
+
+/** 这一轮调过的一个工具（模型发起的；规则自己借的不算） */
+export interface HookToolCallRecord {
+  toolName: string
+  /** 真正执行的参数（规则改过就是改过之后的） */
+  input: Record<string, unknown>
+  isError: boolean
+}
+
+/**
+ * 每轮收工：助手这一轮说完了（或被停止、出错）之后跑。不能改回复——回复已经给用户看了；
+ * 用来记账、收尾（跑个脚本、往 ctx.store 里记这轮做了什么，下一轮 before_agent_start 再用）。
+ * 用户点了停止也会跑：它拿到的 ctx.signal 不是本轮那个，只受超时约束。
+ */
+export interface AgentEndHookEvent {
+  type: 'agent_end'
+  /** 用户这一轮说的话 */
+  prompt: string
+  /** 助手这一轮最后的回复正文（纯文本）；被停止 / 出错时可能为空 */
+  reply: string
+  /** 正常说完 / 被停止（用户点停、超时看门狗）/ 模型或服务出错 */
+  outcome: 'completed' | 'aborted' | 'error'
+  /** 这一轮按顺序调过的工具 */
+  toolCalls: HookToolCallRecord[]
+}
+
+/** agent_end 没有返回值：这一轮已经结束，没有什么可改的 */
+export type AgentEndHookResult = void
 
 export interface HookEventMap {
   tool_call: { event: ToolCallHookEvent; result: ToolCallHookResult }
   tool_result: { event: ToolResultHookEvent; result: ToolResultHookResult }
   before_agent_start: { event: BeforeAgentStartHookEvent; result: BeforeAgentStartHookResult }
+  agent_end: { event: AgentEndHookEvent; result: AgentEndHookResult }
 }
 
 export type HookHandler<E extends HookEventName = HookEventName> = (

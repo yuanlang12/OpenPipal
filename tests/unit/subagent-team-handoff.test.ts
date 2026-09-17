@@ -150,7 +150,7 @@ describe('交接给团队成员', () => {
   it('团队规则对成员生效：规则拦下的调用到不了安全员；清单进成员的系统提示', async () => {
     state.hooks = [{
       id: 'team:team-1/no-bash', pluginName: 'team:team-1', file: '/teams/team-1/rules/no-bash.ts', description: '团队里不许跑 bash',
-      handlers: { tool_call: [(event: any) => (event.toolName === 'bash' ? { block: true, reason: 'no' } : undefined)], tool_result: [], before_agent_start: [] }
+      handlers: { tool_call: [(event: any) => (event.toolName === 'bash' ? { block: true, reason: 'no' } : undefined)], tool_result: [], before_agent_start: [], agent_end: [] }
     }]
     state.scope = { ...state.scope!, channel: '批改' }
     state.probeCalls = [

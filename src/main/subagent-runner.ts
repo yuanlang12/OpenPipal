@@ -39,7 +39,8 @@ import {
 import { createStableContextTransform } from './context-window-policy'
 import { createSecurityHook, type PermissionTier } from './pi-security'
 import { formatHookStatusForPrompt, loadActiveHooks, type HookScope } from './hooks/hook-registry'
-import { hasHandlers, runBeforeAgentStartHooks, type HookChain } from './hooks/hook-chain'
+import { hasHandlers, runAgentEndHooks, runBeforeAgentStartHooks, type HookChain } from './hooks/hook-chain'
+import type { HookToolCallRecord } from './hooks/hook-types'
 import { PiCoreToolAuthorizer, composePiCoreAfterToolCall, composePiCoreBeforeToolCall } from './agent-runtime/pi-core-tool-adapter'
 import { getWorkspace, readToolsConfig, type AgentToolsConfig } from './agent-workspace-store'
 import { buildTeamPromptLayer, intersectToolsConfig, resolveTeamScope, type TeamScope } from './team-store'
@@ -430,6 +431,9 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
   let lastTool: { name: string; args: any } | undefined
   /** maxTurns 触发的主动中止标记 —— 让 caller 知道 stopReason='aborted' 是 maxTurns 而非用户/外部 signal */
   let abortedByMaxTurns = false
+  /** 收工事件（agent_end）的素材：这趟调过的工具 */
+  const toolCalls: HookToolCallRecord[] = []
+  const inflightToolCalls = new Map<string, HookToolCallRecord>()
 
   const emit = (status: ChildAgentUpdate['status']) => {
     if (!options.onUpdate) return
@@ -469,12 +473,21 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
       }
       case 'tool_execution_start':
         lastTool = { name: event.toolName, args: event.args }
+        inflightToolCalls.set(event.toolCallId, {
+          toolName: event.toolName,
+          input: event.args && typeof event.args === 'object' && !Array.isArray(event.args) ? (event.args as Record<string, unknown>) : {},
+          isError: false
+        })
         emit('streaming')
         break
-      case 'tool_execution_end':
+      case 'tool_execution_end': {
         // 工具结果会在后续 message_end 中以 toolResult message 出现，这里只触发一次 update
+        const record = inflightToolCalls.get(event.toolCallId) ?? { toolName: event.toolName, input: {}, isError: false }
+        inflightToolCalls.delete(event.toolCallId)
+        toolCalls.push({ ...record, isError: Boolean(event.isError) })
         emit('streaming')
         break
+      }
       case 'turn_end': {
         // maxTurns 防 runaway 检查 —— 注意 usage.turns 是在 message_end (role=assistant) 时累加
         // turn_end 比 message_end 后触发，此时 usage.turns 已是当前完成轮数。
@@ -526,6 +539,16 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
   }
 
   const finalText = modelFallbackNote + extractFinalText(childMessages)
+  // 成员的规则也有收工事件：与主链路同一份语义（被停止 / 出错也跑，信号只受超时约束）
+  if (hookChain && hasHandlers(hookChain, 'agent_end')) {
+    await runAgentEndHooks(hookChain, {
+      type: 'agent_end',
+      prompt: options.task,
+      reply: extractFinalText(childMessages),
+      outcome: options.signal?.aborted || abortedByMaxTurns || stopReason === 'aborted' ? 'aborted' : lastError ? 'error' : 'completed',
+      toolCalls
+    })
+  }
   emit(lastError ? 'error' : 'complete')
 
   return {

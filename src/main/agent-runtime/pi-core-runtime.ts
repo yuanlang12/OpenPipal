@@ -69,12 +69,12 @@ import {
   isPiAgentEvent,
   PiCoreToolAuthorizer
 } from './pi-core-tool-adapter'
-import { hasHandlers, runBeforeAgentStartHooks, type HookChain, type HookToolCaller } from '../hooks/hook-chain'
+import { hasHandlers, runAgentEndHooks, runBeforeAgentStartHooks, type HookChain, type HookToolCaller } from '../hooks/hook-chain'
 import { formatHookNoticeForModel, formatHookStatusForPrompt, loadActiveHooks, probeHookChanges, probeHookFileWrite, refreshHookSignatures, snapshotHookSignatures, type HookReportEntry, type HookScope } from '../hooks/hook-registry'
 import { formatReconciledForModel, reconcileArtifactSidecarWrites, SIDECAR_WRITE_CHANNELS } from '../artifact-reconcile'
 import { isRuleWriteActive, listPendingRuleDescriptions } from '../hooks/rule-writer'
 import { createHookToolCaller } from '../hooks/hook-tool-bridge'
-import type { HookContext } from '../hooks/hook-types'
+import type { AgentEndHookEvent, HookContext, HookToolCallRecord } from '../hooks/hook-types'
 import {
   buildOpenPipalRuntimeContext,
   prepareOpenPipalSystemPrompt,
@@ -134,7 +134,7 @@ function lastUserPromptText(history: ChatMessage[]): string {
  * 系统提示里的 <rules> 从它来（不读注册表的进程级快照——别的会话、规则页随时会覆盖那份）。
  */
 async function resolveHookChain(
-  ctx: Omit<HookContext, 'callTool'>,
+  ctx: Omit<HookContext, 'callTool' | 'store'>,
   conversationShort: string,
   callTool: HookToolCaller,
   scope: HookScope
@@ -195,6 +195,16 @@ function findLastAssistantMessage(
     if (message?.role === 'assistant') return message
   }
   return undefined
+}
+
+/** 助手一条消息的正文（只取 text 块；思考与工具调用块不算） */
+function assistantText(message: { content?: unknown }): string {
+  if (typeof message.content === 'string') return message.content
+  if (!Array.isArray(message.content)) return ''
+  return message.content
+    .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block: any) => block.text as string)
+    .join('\n')
 }
 
 function createAgentGoalChecker(
@@ -517,6 +527,12 @@ async function* runPiCoreAgentChat(
   let eventMappingFailed = false
   let hasToolActivity = false
   let watchdogTriggered = false
+  // 每轮收工事件（agent_end）的素材：这一轮调过的工具、最后的回复、有没有出错。runPrompt 开跑才算这一轮开始
+  let roundStarted = false
+  let runHadModelError = false
+  let lastAssistantReply = ''
+  const runToolCalls: HookToolCallRecord[] = []
+  const inflightToolCalls = new Map<string, HookToolCallRecord>()
   let currentWatchdog: ReturnType<typeof createStallWatchdog> | undefined
   let lastSystemHash = ''
   let lastToolsHash = ''
@@ -737,15 +753,27 @@ async function* runPiCoreAgentChat(
           if (event.type === 'tool_execution_start') {
             hasToolActivity = true
             currentWatchdog?.disarm()
+            // 这时的 args 已经是规则改过、安全员审过的那份（对象身份同 Agent 循环执行用的）
+            const args = event.args && typeof event.args === 'object' && !Array.isArray(event.args)
+              ? (event.args as Record<string, unknown>)
+              : {}
+            inflightToolCalls.set(event.toolCallId, { toolName: event.toolName, input: args, isError: false })
           }
-          else if (event.type === 'tool_execution_end') currentWatchdog?.arm()
+          else if (event.type === 'tool_execution_end') {
+            currentWatchdog?.arm()
+            const record = inflightToolCalls.get(event.toolCallId) ?? { toolName: event.toolName, input: {}, isError: false }
+            inflightToolCalls.delete(event.toolCallId)
+            runToolCalls.push({ ...record, isError: Boolean(event.isError) })
+          }
           else if (event.type !== 'tool_execution_update') currentWatchdog?.arm()
 
           if (event.type === 'message_end') {
             const message = event.message as any
             if (message?.stopReason === 'error') {
+              runHadModelError = true
               eventQueue.push({ type: 'error', content: message.errorMessage || 'LLM 返回错误（无内容）' })
             }
+            if (message?.role === 'assistant') lastAssistantReply = assistantText(message)
             if (message?.role === 'assistant' && message.usage) {
               usage.calls += 1
               const input = message.usage.input || 0
@@ -818,6 +846,7 @@ async function* runPiCoreAgentChat(
     // prompt continue to share the same state.
     adapter.reset()
     if (lifecycleSignal.aborted) throw new Error('Agent run aborted')
+    roundStarted = true
     const observation: ActiveTurnObservation = {
       sequence: ++nextTurnObservation,
       startedAt: Date.now(),
@@ -992,6 +1021,24 @@ async function* runPiCoreAgentChat(
     }
   }
 
+  /**
+   * 每轮收工事件：这一轮（含追加的续跑）全部结束之后、事件流关闭之前跑，规则借的工具这时还在。
+   * 被停止 / 出错也跑（规则要收尾记账），outcome 说清楚是哪种；模型问用户问题而停下的算正常收工。
+   */
+  const settleAgentEndHooks = async (): Promise<void> => {
+    if (!roundStarted || !hookChain || !hasHandlers(hookChain, 'agent_end')) return
+    const outcome: AgentEndHookEvent['outcome'] = watchdogTriggered || signal?.aborted || (lifecycleSignal.aborted && !interruptedByQuestion)
+      ? 'aborted'
+      : runHadModelError ? 'error' : 'completed'
+    await runAgentEndHooks(hookChain, {
+      type: 'agent_end',
+      prompt: lastUserPromptText(history),
+      reply: lastAssistantReply,
+      outcome,
+      toolCalls: runToolCalls
+    })
+  }
+
   const runTask = (async (): Promise<void> => {
     try {
       let bundle = await createBundle(convertHistoryToPiMessages(historyForModel, overrides?.conversationId))
@@ -1119,7 +1166,11 @@ async function* runPiCoreAgentChat(
         if (!continuation.ok) break
       }
     } finally {
-      await closeAndDrainAcceptedInputs()
+      try {
+        await closeAndDrainAcceptedInputs()
+      } finally {
+        await settleAgentEndHooks()
+      }
     }
   })()
     .catch((error) => {

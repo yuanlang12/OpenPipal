@@ -50,7 +50,7 @@ import type { VoiceConfig } from './config-manager'
 import { listSkillsMeta, setSkillDisabled, getSkillDetails, reloadSkills } from './skill-manager'
 import { importScan, importApply, deleteUserSkill, type ImportSource, type ImportApplyPayload } from './skill-import'
 import { listPlugins } from './plugin-manager'
-import { listHookEntries, setHookFileEnabled } from './hooks/hook-registry'
+import { deleteHookFile, listHookEntries, setHookFileEnabled } from './hooks/hook-registry'
 import { setRuleNoticeSink, setRuleWriter } from './hooks/rule-writer'
 import type { MemoryNotice } from '../shared/memory-notice-contract'
 import { installPlugin, uninstallPlugin, togglePlugin, type PluginInstallSource } from './plugin-import'
@@ -1083,6 +1083,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   // ---- 规则（插件 hooks/）：清单 + 文件式开关 ----
   ipcMain.handle('hooks:list', () => listHookEntries())
   ipcMain.handle('hooks:set-enabled', (_event, file: string, enabled: boolean) => setHookFileEnabled(file, enabled))
+  ipcMain.handle('hooks:delete', (_event, file: string) => deleteHookFile(file, (path) => shell.trashItem(path)))
 
   // ---- Agent Plugins 插件管理 IPC ----
   ipcMain.handle('plugins:list', () => listPlugins())

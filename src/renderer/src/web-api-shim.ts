@@ -372,6 +372,7 @@ export function installWebApiShim(): void {
     // 返回 null 而不是 []：空数组会被当成"清单里没有这条 = 文件已删除"
     listHooks: async () => null,
     setHookEnabled: async () => ({ ok: false as const, error: 'unsupported' }),
+    deleteHook: async () => ({ ok: false as const, error: 'unsupported' }),
     getTodayUsage: async () => [],
 
     // 内联权限确认(浏览器写操作)。收:SSE 的 permission 事件 → 渲染层弹气泡;

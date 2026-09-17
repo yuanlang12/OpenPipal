@@ -4,26 +4,31 @@
  * tool_call：原地改参流到后面的 handler；第一个 block 赢且 reason 带规则描述。
  * tool_result：部分补丁按字段替换，后面的 handler 看到前面改过的；非法 content 被忽略并上报。
  * before_agent_start：系统提示逐个串起来。
+ * agent_end：本轮信号已 abort 也照跑（换只受超时约束的信号）；每个 handler 拿到 ctx.store，落在规则文件旁。
  * 可靠性：抛错 / 超时 的 handler 被跳过并上报，链继续；已 abort 的信号直接不跑。
  */
 import { describe, it, expect, vi } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
 import {
+  runAgentEndHooks,
   runBeforeAgentStartHooks,
   runToolCallHooks,
   runToolResultHooks,
   hasHandlers,
   type HookChain
 } from '../../src/main/hooks/hook-chain'
-import type { HookContext, HookHandler, HookRunError, LoadedHook } from '../../src/main/hooks/hook-types'
+import type { AgentEndHookEvent, HookHandler, HookRunError, LoadedHook } from '../../src/main/hooks/hook-types'
 
-function ctx(signal = new AbortController().signal): HookContext {
+function ctx(signal = new AbortController().signal): HookChain['ctx'] {
   return { conversationId: 'conv', workingDir: '/tmp/w', roleName: 'default', source: 'desktop', signal }
 }
 
 function hook(id: string, handlers: Partial<LoadedHook['handlers']>, description = id): LoadedHook {
   return {
     id, pluginName: 'p', file: `/tmp/${id}.ts`, description,
-    handlers: { tool_call: [], tool_result: [], before_agent_start: [], ...handlers }
+    handlers: { tool_call: [], tool_result: [], before_agent_start: [], agent_end: [], ...handlers }
   }
 }
 
@@ -242,6 +247,25 @@ describe('before_agent_start 链', () => {
     const out = await runBeforeAgentStartHooks(c, { type: 'before_agent_start', prompt: '你好', systemPrompt: 'S' })
     expect(out).toBe('S\nA\nB')
   })
+
+  it('只能加不能减：漏拼原提示的返回值按追加处理并留证据，后面的规则接着串', async () => {
+    const c = chain([
+      hook('forgot', { before_agent_start: [() => ({ systemPrompt: '只有我这段' })] }),
+      hook('mutates', { before_agent_start: [(e) => { e.systemPrompt = ''; return undefined }] }),
+      hook('b', { before_agent_start: [(e) => ({ systemPrompt: e.systemPrompt + '\nB' })] })
+    ])
+    const out = await runBeforeAgentStartHooks(c, { type: 'before_agent_start', prompt: '你好', systemPrompt: 'SYS' })
+    expect(out).toBe('SYS\n\n只有我这段\nB')
+    expect(c.errors).toHaveLength(1)
+    expect(c.errors[0]).toMatchObject({ hookId: 'forgot', event: 'before_agent_start' })
+  })
+
+  it('往前面插、往中间插都算"加"，原样采用', async () => {
+    const c = chain([hook('prepend', { before_agent_start: [(e) => ({ systemPrompt: 'P\n' + e.systemPrompt })] })])
+    const out = await runBeforeAgentStartHooks(c, { type: 'before_agent_start', prompt: '你好', systemPrompt: 'SYS' })
+    expect(out).toBe('P\nSYS')
+    expect(c.errors).toHaveLength(0)
+  })
 })
 
 describe('hasHandlers', () => {
@@ -252,3 +276,54 @@ describe('hasHandlers', () => {
     expect(hasHandlers(undefined, 'tool_call')).toBe(false)
   })
 })
+
+describe('agent_end 链', () => {
+  const event = (outcome: AgentEndHookEvent['outcome']): AgentEndHookEvent => ({ type: 'agent_end', prompt: '你好', reply: '好的', outcome, toolCalls: [{ toolName: 'bash', input: { command: 'ls' }, isError: false }] })
+
+  it('本轮信号已 abort 也照跑；ctx.store 落在规则文件旁的 .store/，几轮之间共用', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'openpipal-hook-chain-'))
+    try {
+      const seen: string[] = []
+      const stopped = new AbortController()
+      stopped.abort()
+      const counter: LoadedHook = {
+        ...hook('count', {}),
+        file: join(root, 'hooks', 'count.ts'),
+        handlers: {
+          tool_call: [], tool_result: [], before_agent_start: [],
+          agent_end: [async (e, c) => {
+            seen.push(`${e.outcome}:${e.toolCalls.map((t) => t.toolName).join(',')}:${c.signal.aborted}`)
+            await c.store.set('rounds', ((await c.store.get<number>('rounds')) ?? 0) + 1)
+          }]
+        }
+      }
+      const c = chain([counter], { ctx: ctx(stopped.signal) })
+      await runAgentEndHooks(c, event('aborted'))
+      await runAgentEndHooks(c, event('completed'))
+      expect(seen).toEqual(['aborted:bash:false', 'completed:bash:false'])
+      expect(c.errors).toEqual([])
+      expect(JSON.parse(readFileSync(join(root, 'hooks', '.store', 'count.json'), 'utf-8'))).toEqual({ rounds: 2 })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('抛错 / 超时的 handler 跳过并上报，后面的照跑；返回值被忽略', async () => {
+    const seen: string[] = []
+    const c = chain([
+      hook('boom', { agent_end: [() => { throw new Error('坏了') }] }),
+      hook('slow', { agent_end: [() => new Promise(() => {})] }),
+      hook('fine', { agent_end: [() => { seen.push('fine'); return { anything: 1 } as never }] })
+    ], { timeoutMs: 20 })
+    await runAgentEndHooks(c, event('completed'))
+    expect(seen).toEqual(['fine'])
+    expect(c.errors.map((e) => `${e.hookId}:${e.event}`)).toEqual(['boom:agent_end', 'slow:agent_end'])
+    expect(c.errors[1].error).toMatch(/超过 20ms/)
+  })
+
+  it('hasHandlers 认 agent_end', () => {
+    expect(hasHandlers(chain([hook('x', { agent_end: [() => undefined] })]), 'agent_end')).toBe(true)
+    expect(hasHandlers(chain([hook('x', { tool_call: [() => undefined] })]), 'agent_end')).toBe(false)
+  })
+})
+

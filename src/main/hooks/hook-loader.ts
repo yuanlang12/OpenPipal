@@ -115,7 +115,7 @@ export async function loadHookFile(
     ? rawDescription.trim().slice(0, DESCRIPTION_MAX)
     : basename(file, extname(file))
 
-  const handlers: LoadedHook['handlers'] = { tool_call: [], tool_result: [], before_agent_start: [] }
+  const handlers: LoadedHook['handlers'] = { tool_call: [], tool_result: [], before_agent_start: [], agent_end: [] }
   let registrationError: string | undefined
   const api: HookAPI = {
     on(event, handler) {

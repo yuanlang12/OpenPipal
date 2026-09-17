@@ -7,7 +7,7 @@
  *   插件被禁用就不加载 / OPENPIPAL_DISABLE_HOOKS=1 整层跳过 / 报告快照与结果一致
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs'
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -16,7 +16,7 @@ process.env.OPENPIPAL_ISOLATED_HOME = HOME
 
 const {
   loadActiveHooks, getHookReport, resetHookCache,
-  probeHookFileWrite, probeHookChanges, snapshotHookSignatures, refreshHookSignatures, setHookFileEnabled, listHookEntries, formatHookNoticeForModel
+  probeHookFileWrite, probeHookChanges, snapshotHookSignatures, refreshHookSignatures, setHookFileEnabled, deleteHookFile, listHookEntries, formatHookNoticeForModel
 } = await import('../../src/main/hooks/hook-registry')
 const { PLUGIN_SCHEMA_URL } = await import('../../src/main/plugin-manager')
 
@@ -235,6 +235,37 @@ describe('文件式开关与清单', () => {
     expect(setHookFileEnabled(join(dir, 'hooks', 'mask.ts'), false)).toEqual({ ok: true, file: join(dir, 'hooks', 'mask.ts.off') })
     const after = await listHookEntries()
     expect(after.map(e => [e.id, e.status, e.description])).toEqual([['local-rules/mask', 'off', '读成绩表前先遮名字']])
+  })
+
+  it('deleteHookFile：自己定的进废纸篓（开着的、.off 的都行）、仓库一起清；插件自带的与别处的文件拒', async () => {
+    const { openHookStore, hookStorePathFor } = await import('../../src/main/hooks/hook-store')
+    const dir = plugin('local-rules', { 'hooks/mask.ts': GOOD, 'hooks/old.ts.off': GOOD })
+    const vendor = plugin('vendor', { 'hooks/theirs.ts': GOOD })
+    const trashed: string[] = []
+    const trash = async (path: string): Promise<void> => { trashed.push(path); rmSync(path) }
+
+    const file = join(dir, 'hooks', 'mask.ts')
+    await openHookStore(file).set('count', 3)
+    expect(existsSync(hookStorePathFor(file))).toBe(true)
+
+    expect(await deleteHookFile(file, trash)).toEqual({ ok: true, file })
+    expect(await deleteHookFile(join(dir, 'hooks', 'old.ts.off'), trash)).toMatchObject({ ok: true })
+    expect(trashed).toEqual([file, join(dir, 'hooks', 'old.ts.off')])
+    expect(existsSync(hookStorePathFor(file))).toBe(false)
+    expect(await openHookStore(file).get('count')).toBeUndefined()
+    expect((await listHookEntries()).map(e => e.id)).toEqual(['vendor/theirs'])
+
+    expect(await deleteHookFile(join(vendor, 'hooks', 'theirs.ts'), trash)).toMatchObject({ ok: false, error: expect.stringContaining('卸载') })
+    expect(await deleteHookFile(join(HOME, 'Documents', 'x.ts'), trash)).toMatchObject({ ok: false })
+    expect(await deleteHookFile(join(dir, 'plugin.json'), trash)).toMatchObject({ ok: false })
+    expect(await deleteHookFile(file, trash)).toMatchObject({ ok: false, error: '文件不存在' })
+    expect(trashed).toHaveLength(2)
+
+    // 废纸篓失败：文件还在，原因带回去
+    const keep = join(dir, 'hooks', 'keep.ts')
+    writeFileSync(keep, GOOD, 'utf-8')
+    expect(await deleteHookFile(keep, async () => { throw new Error('没权限') })).toMatchObject({ ok: false, error: expect.stringContaining('没权限') })
+    expect(existsSync(keep)).toBe(true)
   })
 
   it('refreshHookSignatures：命令开跑前刷基线，之前别人动的文件不会被这条命令的探针报出来', async () => {

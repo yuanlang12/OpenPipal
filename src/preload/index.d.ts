@@ -344,6 +344,8 @@ interface OpenPipalAPI {
   listHooks?: () => Promise<HookEntry[] | null>
   /** 文件式开关：改名 `<file>` ↔ `<file>.off` */
   setHookEnabled?: (file: string, enabled: boolean) => Promise<HookToggleResult>
+  /** 删一条自己定的规则：文件进系统废纸篓；插件自带的不给删 */
+  deleteHook?: (file: string) => Promise<HookToggleResult>
   /** 今日按模型用量/成本（卡片展开时拉一次） */
   getTodayUsage?: () => Promise<Array<{ model: string; prompt: number; output: number; cacheRead: number; calls: number; cost: number }>>
   // 对话标题更新通知

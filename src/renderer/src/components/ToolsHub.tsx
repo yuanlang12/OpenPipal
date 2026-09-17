@@ -914,14 +914,12 @@ function RulesTab() {
   const unavailable = useHookStore(s => s.unavailable)
   const refresh = useHookStore(s => s.refresh)
   const setRuleEnabled = useHookStore(s => s.setEnabled)
+  const removeRule = useHookStore(s => s.remove)
   useEffect(() => { void refresh() }, [refresh])
 
   // 开关失败的原因就地显示几秒（比如同名生效版已存在），不吞掉
   const [ruleErrors, setRuleErrors] = useState<Record<string, string>>({})
-  const toggleRule = async (rule: HookEntry): Promise<void> => {
-    const result = await setRuleEnabled(rule.file, rule.status === 'off')
-    if (result.ok) return
-    const message = result.error || t('toolsHub.plugins.ruleToggleFailed')
+  const showRuleError = (rule: HookEntry, message: string): void => {
     setRuleErrors(prev => ({ ...prev, [rule.id]: message }))
     setTimeout(() => setRuleErrors(prev => {
       if (prev[rule.id] !== message) return prev
@@ -929,6 +927,14 @@ function RulesTab() {
       delete next[rule.id]
       return next
     }), 6000)
+  }
+  const toggleRule = async (rule: HookEntry): Promise<void> => {
+    const result = await setRuleEnabled(rule.file, rule.status === 'off')
+    if (!result.ok) showRuleError(rule, result.error || t('toolsHub.plugins.ruleToggleFailed'))
+  }
+  const deleteRule = async (rule: HookEntry): Promise<void> => {
+    const result = await removeRule(rule.file)
+    if (!result.ok) showRuleError(rule, result.error || t('toolsHub.rules.deleteFailed'))
   }
 
   const groups = useMemo(() => {
@@ -983,7 +989,7 @@ function RulesTab() {
           <h3 className="text-[13px] font-semibold text-surface-700 mb-2">{section.title}</h3>
           <ul className="space-y-1 rounded-lg border border-surface-100 p-3" data-testid="plugin-rules" data-rules-group={section.key}>
             {section.rules.map(rule => (
-              <RuleRow key={rule.id} rule={rule} error={ruleErrors[rule.id]} onToggle={() => { void toggleRule(rule) }} />
+              <RuleRow key={rule.id} rule={rule} error={ruleErrors[rule.id]} onToggle={() => { void toggleRule(rule) }} onDelete={() => { void deleteRule(rule) }} />
             ))}
           </ul>
         </section>
@@ -992,8 +998,11 @@ function RulesTab() {
   )
 }
 
-function RuleRow({ rule, error, onToggle }: { rule: HookEntry; error?: string; onToggle: () => void }) {
+function RuleRow({ rule, error, onToggle, onDelete }: { rule: HookEntry; error?: string; onToggle: () => void; onDelete: () => void }) {
   const { t } = useTranslation()
+  const [confirming, setConfirming] = useState(false)
+  // 只有自己定的能删（所有 Pal / 某个 Pal / 团队）；第三方插件自带的去插件页卸载
+  const deletable = rule.source.kind !== 'plugin' || rule.source.id === LOCAL_RULES_PLUGIN
   const statusLabel = rule.status === 'ok' ? t('toolsHub.plugins.ruleStatusOk')
     : rule.status === 'error' ? t('toolsHub.plugins.ruleStatusError')
       : t('toolsHub.plugins.ruleStatusOff')
@@ -1010,16 +1019,37 @@ function RuleRow({ rule, error, onToggle }: { rule: HookEntry; error?: string; o
       {error && (
         <span className="text-[10px] text-red-500 truncate min-w-0" data-testid="plugin-rule-error" title={error}>{error}</span>
       )}
-      {rule.offReason !== 'plugin' && (
-        <button
-          onClick={onToggle}
-          role="switch"
-          aria-checked={rule.status !== 'off'}
-          aria-label={t('toolsHub.plugins.ruleToggleNamed', { name: rule.description || rule.id })}
-          className={`ml-auto relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${rule.status !== 'off' ? 'bg-brand-500' : 'bg-surface-200'}`}
-        >
-          <span className={`pointer-events-none inline-block h-3 w-3 mt-0.5 transform rounded-full bg-white shadow transition duration-200 ${rule.status !== 'off' ? 'translate-x-[14px]' : 'translate-x-0.5'}`} />
-        </button>
+      {confirming ? (
+        <span className="ml-auto flex items-center gap-2 shrink-0" data-testid="rule-delete-confirm">
+          <span className="text-[11px] text-surface-500">{t('toolsHub.rules.deleteConfirm')}</span>
+          <button onClick={() => { setConfirming(false); onDelete() }} className="text-[11px] text-red-500 hover:text-red-600" data-testid="rule-delete-yes">{t('toolsHub.rules.deleteYes')}</button>
+          <button onClick={() => setConfirming(false)} className="text-[11px] text-surface-400 hover:text-surface-600">{t('toolsHub.rules.deleteNo')}</button>
+        </span>
+      ) : (
+        <span className="ml-auto flex items-center gap-2 shrink-0">
+          {deletable && (
+            <button
+              onClick={() => setConfirming(true)}
+              aria-label={t('toolsHub.rules.deleteNamed', { name: rule.description || rule.id })}
+              title={t('toolsHub.rules.deleteYes')}
+              data-testid="rule-delete"
+              className="text-surface-300 hover:text-red-500 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {rule.offReason !== 'plugin' && (
+            <button
+              onClick={onToggle}
+              role="switch"
+              aria-checked={rule.status !== 'off'}
+              aria-label={t('toolsHub.plugins.ruleToggleNamed', { name: rule.description || rule.id })}
+              className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${rule.status !== 'off' ? 'bg-brand-500' : 'bg-surface-200'}`}
+            >
+              <span className={`pointer-events-none inline-block h-3 w-3 mt-0.5 transform rounded-full bg-white shadow transition duration-200 ${rule.status !== 'off' ? 'translate-x-[14px]' : 'translate-x-0.5'}`} />
+            </button>
+          )}
+        </span>
       )}
     </li>
   )

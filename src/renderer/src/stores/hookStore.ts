@@ -18,6 +18,7 @@ interface HookState {
   loading: boolean
   refresh: () => Promise<void>
   setEnabled: (file: string, enabled: boolean) => Promise<{ ok: boolean; error?: string }>
+  remove: (file: string) => Promise<{ ok: boolean; error?: string }>
 }
 
 let pendingRefresh = false
@@ -57,6 +58,13 @@ export const useHookStore = create<HookState>((set, get) => ({
   setEnabled: async (file, enabled) => {
     if (!window.api.setHookEnabled) return { ok: false, error: 'unsupported' }
     const result = await window.api.setHookEnabled(file, enabled)
+    await get().refresh()
+    return result.ok ? { ok: true } : { ok: false, error: result.error }
+  },
+
+  remove: async (file) => {
+    if (!window.api.deleteHook) return { ok: false, error: 'unsupported' }
+    const result = await window.api.deleteHook(file)
     await get().refresh()
     return result.ok ? { ok: true } : { ok: false, error: result.error }
   }

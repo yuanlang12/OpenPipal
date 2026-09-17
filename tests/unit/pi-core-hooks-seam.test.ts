@@ -40,6 +40,16 @@ describe('pi-core-runtime 规则接线', () => {
     expect(block).toMatch(/tier: overrides\?\.permissionTier/)
   })
 
+  it('agent_end 在整轮（含续跑）收尾之后、事件流关闭之前跑；成员子 agent 也接了同一个函数', () => {
+    const drain = runtime.indexOf('await closeAndDrainAcceptedInputs()\n      } finally {\n        await settleAgentEndHooks()')
+    const done = runtime.indexOf('.finally(() => eventQueue.done())')
+    expect(drain).toBeGreaterThan(0)
+    expect(done).toBeGreaterThan(drain)
+    expect(runtime).toMatch(/runAgentEndHooks\(hookChain, \{\s*type: 'agent_end'/)
+    const subagent = readFileSync(join(__dirname, '../../src/main/subagent-runner.ts'), 'utf-8')
+    expect(subagent).toMatch(/runAgentEndHooks\(hookChain, \{\s*type: 'agent_end'/)
+  })
+
   it('规则加载失败只留日志不影响对话', () => {
     expect(runtime).toMatch(/规则加载异常，本轮不带规则/)
     expect(runtime).toMatch(/没生效：\$\{failure\.error\}/)

@@ -25,7 +25,8 @@ import { getWorkspaceDir, getWorkspaceName, getWorkspacesRootDir } from '../agen
 import { getTeamsRootDir, listTeams, readTeam } from '../team-store'
 import { hookIdFor, loadHookFile, type LoadHookFileOptions } from './hook-loader'
 import type { HookEntry, HookEventName, HookLoadFailure, HookLoadResult, HookNotice, LoadedHook } from './hook-types'
-import type { HookSource, HookToggleResult } from '../../shared/hook-contract'
+import { LOCAL_RULES_PLUGIN, type HookSource, type HookToggleResult } from '../../shared/hook-contract'
+import { removeHookStore } from './hook-store'
 
 interface CacheEntry {
   mtimeMs: number
@@ -603,6 +604,41 @@ export function setHookFileEnabled(file: string, enabled: boolean): HookToggleRe
   cache.delete(abs)
   cache.delete(target)
   return { ok: true, file: target }
+}
+
+/**
+ * 删一条规则：文件进系统废纸篓（删错了找得回来），它的仓库一起清掉。开着的、关着的（.off）都能删。
+ * 只认用户自己定的——local-rules 插件、Pal 的 hooks/、团队的 rules/；第三方插件自带的不给删（那是卸载插件的事）。
+ * trash 由调用方给（Electron 的 shell.trashItem），这里不碰 electron。
+ */
+export async function deleteHookFile(file: string, trash: (path: string) => Promise<void>): Promise<HookToggleResult> {
+  if (typeof file !== 'string' || !file.trim()) return { ok: false, error: '缺少文件路径' }
+  const deletable = hookFileAt(isHookFileName)
+  const inPlugins = locateUnder(getPluginsRootDir(), resolve(file), deletable)
+  if (inPlugins && inPlugins.name !== LOCAL_RULES_PLUGIN) return { ok: false, error: '插件自带的规则不能单独删，到插件页卸载整个插件' }
+  const located = inPlugins
+    ?? locateUnder(getWorkspacesRootDir(), resolve(file), deletable)
+    ?? locateUnder(getTeamsRootDir(), resolve(file), teamRuleFileAt(isHookFileName))
+  if (!located) return { ok: false, error: '不是 Agent 的 hooks/ 或团队的 rules/ 里的规则文件' }
+  const abs = located.file
+  if (!existsSync(abs)) return { ok: false, error: '文件不存在' }
+  try {
+    await trash(abs)
+  } catch (error) {
+    return { ok: false, error: `移到废纸篓失败：${error instanceof Error ? error.message : String(error)}` }
+  }
+  const logical = abs.endsWith(HOOK_OFF_SUFFIX) ? abs.slice(0, -HOOK_OFF_SUFFIX.length) : abs
+  // 同名的另一份（开着的 / .off 的）还在，仓库就还有主，不清
+  const sibling = logical === abs ? abs + HOOK_OFF_SUFFIX : logical
+  if (!existsSync(sibling)) {
+    try {
+      removeHookStore(logical)
+    } catch (error) {
+      console.warn(`[Hooks] 规则已删，但它的仓库没清掉：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  cache.delete(abs)
+  return { ok: true, file: abs }
 }
 
 /** 不执行代码地读 `export const description = '…'`——关掉的规则不该为了列个名字就被跑一遍 */

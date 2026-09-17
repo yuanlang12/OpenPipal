@@ -22,7 +22,7 @@ function write(name: string, source: string): string {
 }
 
 describe('hook-loader', () => {
-  it('TS 规则：description 与三类事件都被收集，import type 不影响加载', async () => {
+  it('TS 规则：description 与四类事件都被收集，import type 不影响加载', async () => {
     const file = write('mask-names.ts', `
       import type { HookAPI, ToolResultHookEvent } from 'openpipal/hooks'
       export const description = '  读成绩表前先遮名字  '
@@ -30,6 +30,7 @@ describe('hook-loader', () => {
         hook.on('tool_call', (event) => { if (event.toolName === 'bash') return { block: true, reason: 'no' } })
         hook.on('tool_result', (event: ToolResultHookEvent) => ({ content: event.content }))
         hook.on('before_agent_start', (event) => ({ systemPrompt: event.systemPrompt + '\\nX' }))
+        hook.on('agent_end', async (event, ctx) => { await ctx.store.set('last', event.outcome) })
       }
     `)
     const result = await loadHookFile(file, 'local-rules')
@@ -37,6 +38,7 @@ describe('hook-loader', () => {
     if (!result.ok) return
     expect(result.hook.id).toBe('local-rules/mask-names')
     expect(result.hook.description).toBe('读成绩表前先遮名字')
+    expect(result.hook.handlers.agent_end).toHaveLength(1)
     expect(result.hook.handlers.tool_call).toHaveLength(1)
     expect(result.hook.handlers.tool_result).toHaveLength(1)
     expect(result.hook.handlers.before_agent_start).toHaveLength(1)

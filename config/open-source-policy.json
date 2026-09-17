@@ -749,6 +749,9 @@
         "src/renderer/src/components/messages/HookNoticeRow.tsx",
         "src/renderer/src/stores/hookStore.ts",
         "tests/e2e/hook-rule-live.spec.ts",
+        "tests/e2e/hook-turn-store-live.spec.ts",
+        "tests/e2e/rules-delete.spec.ts",
+        "tests/e2e/system-prompt-guard-live.spec.ts",
         "tests/unit/hook-chain.test.ts",
         "tests/unit/hook-creator-skill.test.ts",
         "tests/unit/hook-loader.test.ts",
@@ -756,6 +759,7 @@
         "tests/unit/hook-notice-row-state.test.ts",
         "tests/unit/hook-notice-seam.test.ts",
         "tests/unit/hook-registry.test.ts",
+        "tests/unit/hook-store.test.ts",
         "tests/unit/hook-tool-bridge.test.ts",
         "tests/unit/pi-core-hook-composition.test.ts",
         "tests/unit/pi-core-hooks-seam.test.ts"

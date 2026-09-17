@@ -6,11 +6,12 @@
  *   1. 事件名集合一致；2. 面向作者的接口名两边都有；3. 范例代码真的能被 loader 加载。
  */
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { HOOK_EVENT_NAMES } from '../../src/main/hooks/hook-types'
 import { loadHookFile } from '../../src/main/hooks/hook-loader'
+import { openHookStore } from '../../src/main/hooks/hook-store'
 
 const SKILL_DIR = join(__dirname, '../../resources/skills/hook-creator')
 const runtimeTypes = readFileSync(join(__dirname, '../../src/main/hooks/hook-types.ts'), 'utf-8')
@@ -27,7 +28,7 @@ function declaredEventNames(source: string): string[] {
 }
 
 describe('hook-creator 技能', () => {
-  it('事件名与运行时一致，SKILL.md 三个都讲到了', () => {
+  it('事件名与运行时一致，SKILL.md 每个都讲到了', () => {
     const runtime = [...HOOK_EVENT_NAMES].sort()
     expect(declaredEventNames(runtimeTypes)).toEqual(runtime)
     expect(declaredEventNames(authorTypes)).toEqual(runtime)
@@ -38,7 +39,7 @@ describe('hook-creator 技能', () => {
   })
 
   it('面向作者的接口两边都有', () => {
-    const names = ['HookContext', 'HookToolResult', 'ToolCallHookEvent', 'ToolCallHookResult', 'ToolResultHookEvent', 'ToolResultHookResult', 'BeforeAgentStartHookEvent', 'BeforeAgentStartHookResult', 'HookHandler', 'HookAPI']
+    const names = ['HookContext', 'HookToolResult', 'ToolCallHookEvent', 'ToolCallHookResult', 'ToolResultHookEvent', 'ToolResultHookResult', 'BeforeAgentStartHookEvent', 'BeforeAgentStartHookResult', 'AgentEndHookEvent', 'HookToolCallRecord', 'HookStore', 'HookHandler', 'HookAPI']
     for (const name of names) {
       expect(runtimeTypes, name).toMatch(new RegExp(`export (interface|type) ${name}\\b`))
       expect(authorTypes, name).toMatch(new RegExp(`export (interface|type) ${name}\\b`))
@@ -87,6 +88,36 @@ describe('hook-creator 技能', () => {
       const event = { type: 'tool_call' as const, toolName: 'bash', toolCallId: 'c', input: { command: 'python main.py && pip install x' } }
       await venv.handlers.tool_call[0](event, ctx)
       expect(event.input.command).toBe('.venv/bin/python main.py && .venv/bin/pip install x')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('范例行为：改了代码没跑测试 → 收工记账 → 下一轮开工提醒；跑了测试就不提醒', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'openpipal-hook-examples-'))
+    try {
+      const blocks = Array.from(examples.matchAll(/```ts\n([\s\S]*?)```/g)).map((m) => m[1])
+      const file = join(root, 'hooks', 'remind-tests-next-round.ts')
+      mkdirSync(join(root, 'hooks'), { recursive: true })
+      writeFileSync(file, blocks[5], 'utf-8')
+      const r = await loadHookFile(file, 'local-rules')
+      if (!r.ok) throw new Error(r.failure.error)
+      const ctx = { workingDir: '/tmp', source: 'desktop' as const, signal: new AbortController().signal, store: openHookStore(file) }
+      const end = (toolCalls: Array<{ toolName: string; input: Record<string, unknown>; isError: boolean }>) =>
+        r.hook.handlers.agent_end[0]({ type: 'agent_end', prompt: '改一下', reply: '改好了', outcome: 'completed', toolCalls }, ctx)
+      const start = () => r.hook.handlers.before_agent_start[0]({ type: 'before_agent_start', prompt: '继续', systemPrompt: 'SYS' }, ctx)
+
+      await end([{ toolName: 'edit', input: { path: '/proj/app.py' }, isError: false }])
+      expect(await start()).toMatchObject({ systemPrompt: expect.stringContaining('没有跑测试') })
+
+      await end([{ toolName: 'edit', input: { path: '/proj/app.py' }, isError: false }, { toolName: 'bash', input: { command: 'pytest -q' }, isError: false }])
+      expect(await start()).toBeUndefined()
+
+      // 被停止的那轮不记账：上一轮的结论保留
+      await end([{ toolName: 'edit', input: { path: '/proj/app.py' }, isError: false }])
+      expect(await start()).toMatchObject({ systemPrompt: expect.stringContaining('没有跑测试') })
+      await r.hook.handlers.agent_end[0]({ type: 'agent_end', prompt: 'x', reply: '', outcome: 'aborted', toolCalls: [{ toolName: 'bash', input: { command: 'pytest' }, isError: false }] }, ctx)
+      expect(await start()).toMatchObject({ systemPrompt: expect.stringContaining('没有跑测试') })
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

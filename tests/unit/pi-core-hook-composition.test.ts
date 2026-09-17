@@ -54,7 +54,7 @@ function ctx(): HookContext {
 }
 
 function hook(id: string, handlers: Partial<LoadedHook['handlers']>, description = id): LoadedHook {
-  return { id, pluginName: 'p', file: `/tmp/${id}.ts`, description, handlers: { tool_call: [], tool_result: [], before_agent_start: [], ...handlers } }
+  return { id, pluginName: 'p', file: `/tmp/${id}.ts`, description, handlers: { tool_call: [], tool_result: [], before_agent_start: [], agent_end: [], ...handlers } }
 }
 
 describe('composePiCoreBeforeToolCall', () => {

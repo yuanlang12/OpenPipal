@@ -2062,6 +2062,11 @@ export const ZH_CN_MESSAGES = {
       empty: '还没有规则',
       emptyHint: '在对话里说一句"以后读成绩表先把学生名字遮掉"试试',
       desktopOnly: '规则清单只在桌面 App 里能看；在这里定下的规则照样生效。',
+      deleteNamed: '删除规则 {{name}}',
+      deleteConfirm: '删除这条规则？',
+      deleteYes: '删除',
+      deleteNo: '取消',
+      deleteFailed: '删除失败',
     },
     badges: {
       builtIn: '内置',
@@ -4521,6 +4526,11 @@ export const EN_MESSAGES = {
       empty: 'No rules yet',
       emptyHint: 'Try saying "from now on, mask student names before reading a grade sheet" in a conversation',
       desktopOnly: 'The rules list is only available in the desktop app; rules you set here still apply.',
+      deleteNamed: 'Delete rule {{name}}',
+      deleteConfirm: 'Delete this rule?',
+      deleteYes: 'Delete',
+      deleteNo: 'Cancel',
+      deleteFailed: 'Could not delete the rule',
     },
     badges: {
       builtIn: 'Built in',
