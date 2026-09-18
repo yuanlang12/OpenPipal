@@ -1484,7 +1484,13 @@ function createCustomCompatModel(mc: ModelConfig): Model<any> {
   const template = groqModels.find((m: any) => !m.reasoning) || groqModels[0]
   if (!template) {
     const openaiModels = piGetModels('openai' as any)
-    return { ...(openaiModels[0] || {}), id: mc.model, baseUrl: mc.baseUrl, reasoning: !!mc.supportsThinking }
+    return {
+      ...(openaiModels[0] || {}),
+      id: mc.model,
+      baseUrl: mc.baseUrl,
+      reasoning: !!mc.supportsThinking,
+      ...(mc.contextWindow ? { contextWindow: mc.contextWindow } : {})
+    }
   }
   // 覆盖 id 和 baseUrl，保留 openai-completions 的 API 调用格式
   // 对自定义兼容端点，禁用 OpenAI 专有特性以兼容各类代理（302.ai、x666 等）
@@ -1518,7 +1524,12 @@ function createCustomCompatModel(mc: ModelConfig): Model<any> {
     reasoning: !!mc.supportsThinking,  // Pi 内部条件之一：model.reasoning 必须为真
     compat,
     ...(borrowedLevels ? { thinkingLevelMap: borrowedLevels } : {}),
-    input: mc.supportsImages === false ? ['text'] : ['text', 'image']
+    input: mc.supportsImages === false ? ['text'] : ['text', 'image'],
+    // 用户填的窗口必须传给 pi-ai：它每次请求前按 contextWindow − 估算载荷 − 4096 夹 max_tokens，
+    // 最低夹到 1。2026-09-18 实案：deepseek-flash 预设填了 1M，这里漏传、pi-ai 拿到模板的 131072，
+    // 对话真实载荷过 12.7 万后工具调用之后那次请求 max_tokens=1，模型吐 1 个 token 就停，
+    // 用户看到"连续两次空完成"。其余四条构造路径都传了，这条不能例外。
+    contextWindow: mc.contextWindow || template.contextWindow
   }
 }
 

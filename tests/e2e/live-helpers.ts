@@ -116,6 +116,8 @@ export type StoreWindow = Window & {
       isStreaming: boolean
       messages: Array<{ role: string; content: unknown; messageKind?: string; toolName?: string }>
       newConversationFromWorkspace(workspaceId: string, name: string): Promise<void>
+      switchConversation(id: string): Promise<unknown>
+      regenerate(): void
     }
   }
   __appStore?: { getState(): { setActiveView(view: string): void; openToolsHub(tab: string): void } }

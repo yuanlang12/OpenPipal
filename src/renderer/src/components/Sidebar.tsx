@@ -152,7 +152,6 @@ export function Sidebar({ collapsed }: SidebarProps) {
             <ConversationAvatar
               workspaceId={conv.workspaceId}
               role={conv.role}
-              icon={conv.workspaceId ? workspaceMap.get(conv.workspaceId)?.icon : undefined}
               status={statusForConversation(conv.id)}
               animated={conv.id === activeConversationId}
               size={16}
@@ -228,7 +227,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
               <span className="shrink-0 flex items-center" data-testid="team-member-stack">
                 {[team.lead, ...team.members.filter(m => m !== team.lead)].slice(0, 3).map((memberId, index, shown) => (
                   <span key={memberId} className={`relative inline-flex ${index > 0 ? '-ml-1.5' : ''}`} style={{ zIndex: shown.length - index }} data-member-id={memberId}>
-                    <WorkspaceAvatar workspaceId={memberId} icon={workspaceMap.get(memberId)?.icon} size={16} halo className="text-[12px] leading-none" />
+                    <WorkspaceAvatar workspaceId={memberId} size={16} halo className="text-[12px] leading-none" />
                   </span>
                 ))}
               </span>
@@ -236,12 +235,14 @@ export function Sidebar({ collapsed }: SidebarProps) {
               <TeamAvatar teamId={id} size={16} className="shrink-0" />
             )}
             <span className="text-sw-base truncate flex-1" data-testid="team-name">{name}</span>
-            <ConvGroupStatusDot ids={threadIds} />
+            {/* 状态只在一处亮（所有者 2026-09-18）：展开时看各条话题行，团队行不重复转；收起时几条在跑也只在团队行转一个 */}
+            {!open && <ConvGroupStatusDot ids={threadIds} />}
           </button>
           {team && team.channels.length === 0 && (
             <div className="absolute inset-y-0 right-0 flex items-stretch rounded-r-md opacity-0 group-hover/team:opacity-100 focus-within:opacity-100 transition-opacity">
               <span className={`w-5 bg-gradient-to-r from-transparent ${teamActive ? 'to-sidebar-active' : 'to-sidebar-hover'}`} />
-              <span className={`flex items-center pr-1 ${teamActive ? 'bg-sidebar-active' : 'bg-sidebar-hover'}`}>
+              {/* 悬停条盖住了行尾的状态点，就在条里把它再画一遍：＋ 站到状态点左边，位置不打架 */}
+              <span className={`flex items-center gap-1.5 pr-3 ${teamActive ? 'bg-sidebar-active' : 'bg-sidebar-hover'}`}>
                 <button
                   onClick={() => { void openThread(id) }}
                   title={t('shell.history.newThreadIn', { name })}
@@ -251,6 +252,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
+                {!open && <ConvGroupStatusDot ids={threadIds} />}
               </span>
             </div>
           )}

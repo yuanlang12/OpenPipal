@@ -233,7 +233,7 @@ export function SubagentCard({ message }: { message: ChatMessage }) {
         {/* 顶部：profile + status + via modelId（团队交接：成员头像 + "交接给 成员名"） */}
         <div className="min-w-0 flex items-center gap-2 px-3 py-2 border-b border-brand-100/60 dark:border-brand-800/60" data-testid="subagent-card-header" data-pal-id={data.palId || undefined}>
           {data.palId
-            ? <WorkspaceAvatar workspaceId={data.palId} icon="🤝" size={16} className="text-sm leading-none shrink-0" />
+            ? <WorkspaceAvatar workspaceId={data.palId} size={16} className="text-sm leading-none shrink-0" />
             : <Sparkles className="w-3.5 h-3.5 text-brand-500 shrink-0" />}
           <span className="text-chat-label font-semibold text-brand-700 dark:text-brand-300 shrink-0">{data.palId ? t('chat.subagent.handoff') : t('chat.subagent.label')}</span>
           <span

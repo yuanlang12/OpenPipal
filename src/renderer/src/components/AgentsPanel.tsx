@@ -117,7 +117,7 @@ export function AgentsPanel() {
       meta={workspaceMeta(w, translate)}
       avatar={(
         <span className="relative grid h-9 w-9 place-items-center">
-          <WorkspaceAvatar workspaceId={w.id} icon={w.icon} size={34} />
+          <WorkspaceAvatar workspaceId={w.id} size={34} />
           <MarkStudioAffordance size={16} label={translate('agentMark.entry')} onClick={() => openMarkStudio({ scope: 'agent', roleName: w.id, displayName: w.name })} />
         </span>
       )}

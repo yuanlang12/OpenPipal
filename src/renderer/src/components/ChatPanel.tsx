@@ -273,7 +273,7 @@ export function ChatPanel({ appName }: ChatPanelProps) {
                 const w = workspaces.find(x => x.id === id)
                 return (
                   <span key={id} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-50 border border-surface-100 text-[11px] text-surface-500">
-                    <WorkspaceAvatar workspaceId={id} icon={w?.icon} size={14} className="text-xs leading-none" />
+                    <WorkspaceAvatar workspaceId={id} size={14} className="text-xs leading-none" />
                     {w?.name ?? id.slice(0, 8)}{id === activeTeam.lead ? ` · ${t('chat.team.lead')}` : ''}
                   </span>
                 )
@@ -289,7 +289,7 @@ export function ChatPanel({ appName }: ChatPanelProps) {
       )}
       {messages.length === 0 && !isStreaming && activeWorkspace && !activeTeamId && (
         <div className="flex flex-col items-center justify-center h-full px-4 pb-4 max-w-lg mx-auto" data-testid="agent-onboarding">
-          <WorkspaceAvatar workspaceId={activeWorkspace.id} icon={activeWorkspace.icon} size={56} className="text-5xl mb-3" />
+          <WorkspaceAvatar workspaceId={activeWorkspace.id} size={56} className="text-5xl mb-3" />
           <p className="font-display text-[17px] font-bold text-surface-700 tracking-tight mb-1">
             {activeWorkspace.name}
           </p>

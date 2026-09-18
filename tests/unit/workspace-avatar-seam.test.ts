@@ -40,9 +40,13 @@ describe('Pal 头像统一走头像组件', () => {
     expect(source).toMatch(/:\s*<RoleAvatar[^>]*status=\{status\}[^>]*animated=\{animated\}/)
   })
 
-  it('WorkspaceAvatar 的 className 同时管 emoji 回落与 Mark 外层——调用方按位置给字号，不用自己包一层', () => {
+  it('WorkspaceAvatar 没捏过就按 id 现算一个 Mark，不画 emoji（所有者 2026-09-18：排排站里混进 emoji 就不是一套头像）', () => {
     const source = readFileSync(resolve(COMPONENTS, 'agent-mark/WorkspaceAvatar.tsx'), 'utf8')
-    expect(source).toContain("className={className || 'text-sm'}")
+    expect(source).toMatch(/getMarkOverride\('agent', workspaceId\) \?\? fallback/)
+    expect(source).toContain('composeMark(workspaceId)')
+    expect(source).not.toMatch(/icon\b/)
     expect(source).toMatch(/<AgentMark[\s\S]*className=\{className\}/)
+    // 调用方也不再往头像里塞 emoji
+    for (const [file] of PAL_SURFACES) expect(read(file), `${file} 还在给头像传 icon`).not.toMatch(/<(?:Workspace|Conversation)Avatar[^>]*\bicon=/)
   })
 })

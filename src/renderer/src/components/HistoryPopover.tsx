@@ -107,7 +107,6 @@ export function HistoryPopover() {
           <ConversationAvatar
             workspaceId={conv.workspaceId}
             role={conv.role}
-            icon={conv.workspaceId ? workspaceMap.get(conv.workspaceId)?.icon : undefined}
             status={statusForConversation(conv.id)}
             animated={conv.id === activeConversationId}
             size={18}

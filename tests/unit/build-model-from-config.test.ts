@@ -329,3 +329,28 @@ describe('buildModelFromConfig — 自定义端点的双证据认领', () => {
     expect(model.baseUrl).toBe('https://gateway.example.com/v1')
   })
 })
+
+describe('buildModelFromConfig — 自定义 OpenAI 兼容端点的 contextWindow 必须传给 pi-ai', () => {
+  // 2026-09-18 实案：deepseek-flash 预设填了 1M，createCustomCompatModel 漏传，pi-ai 拿到 groq 模板的
+  // 131072；对话真实载荷过 12.7 万后，pi-ai 把 max_tokens 夹到 1，模型吐 1 个 token 就停，
+  // 用户看到"模型连续两次结束，但都没有返回正文或工具调用"。重新生成永远复现。
+  const templateWindow = (piGetModels('groq' as any).find((m: any) => !m.reasoning) || piGetModels('groq' as any)[0]).contextWindow
+
+  it('用户填了 contextWindow → pi 模型对象照填（openai 兼容 completions 路径）', () => {
+    const mc = baseConfig({ baseUrl: 'https://api.example.com', model: 'deepseek-flash', apiFormat: 'openai', supportsThinking: true, contextWindow: 1_000_000 })
+    const model = buildModelFromConfig(mc)
+    expect(model.api).toBe('openai-completions')
+    expect(model.contextWindow).toBe(1_000_000)
+  })
+
+  it('apiFormat 未填也一样（同一条路径）', () => {
+    const model = buildModelFromConfig(baseConfig({ model: 'any-model', contextWindow: 262_144 }))
+    expect(model.contextWindow).toBe(262_144)
+  })
+
+  it('没填 contextWindow → 保持模板值，行为不变', () => {
+    const model = buildModelFromConfig(baseConfig({ model: 'any-model' }))
+    expect(model.contextWindow).toBe(templateWindow)
+    expect(templateWindow).toBeGreaterThan(0)
+  })
+})

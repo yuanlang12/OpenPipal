@@ -210,7 +210,6 @@ export function ConversationList({ conversations, activeId, onSelect, onDelete, 
                         <ConversationAvatar
                           workspaceId={conv.workspaceId}
                           role={conv.role}
-                          icon={getWorkspaceIcon(conv.workspaceId)?.icon}
                           size={15}
                           className="text-sm text-surface-400"
                         />

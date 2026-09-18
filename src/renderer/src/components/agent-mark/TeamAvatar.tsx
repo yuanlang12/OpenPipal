@@ -9,7 +9,7 @@ import type { MarkState } from './engine'
 /**
  * 团队的头像。团队自己有一个 mark（所有者定的：不是成员头像叠）。
  *
- * 和 Pal 不同，团队没有"自己选的 emoji"可回落，所以没捏过时给一个**由 id 决定的默认 mark**
+ * 团队和 Pal 一样：没捏过时给一个**由 id 决定的默认 mark**（composeTeamMark），
  * （composeTeamMark：六边形 + 徽章 + 按 id 散列的颜色——同一个团队每次都长一样，两个团队一眼分得开，
  * 和 Pal 也不会混）。捏过（teams/<id>/mark.json）就用捏的。
  */

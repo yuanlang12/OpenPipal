@@ -962,6 +962,19 @@ async function* runPiCoreAgentChat(
     return { bundle: cleanBundle, reply: retry, stillEmpty: false }
   }
 
+  // 空完成的指纹一行落进 main.log：stopReason=length + 输出个位数 = max_tokens 被夹到贴地
+  //（pi-ai 按 model.contextWindow − 估算载荷 − 4096 夹），先对比 modelWindow 与 configWindow 是否一致，
+  // 再怀疑服务商（见 docs/claude/debugging-discipline.md "模型连续两次结束无正文"一节）。
+  const logEmptyCompletion = (stage: string, message: AssistantMessage): void => {
+    const u = message.usage
+    const prompt = (u?.input ?? 0) + (u?.cacheRead ?? 0) + (u?.cacheWrite ?? 0)
+    const blocks = Array.isArray(message.content) ? message.content.map((b) => b.type).join(',') : typeof message.content
+    console.warn(
+      `[Pi] ${stage}空完成 conv=${conversationShort} stopReason=${message.stopReason} output=${u?.output ?? '?'} prompt=${prompt} `
+      + `blocks=${blocks || 'none'} modelWindow=${(model as any).contextWindow} configWindow=${usageContextWindow}`
+    )
+  }
+
   const reportEmptyFailure = (overflow: boolean): void => {
     eventQueue.push({
       type: 'error',
@@ -980,6 +993,7 @@ async function* runPiCoreAgentChat(
       return { bundle, reply, ok: false }
     }
     if (!isEmptySuccessfulAssistantMessage(reply)) return { bundle, reply, ok: true }
+    logEmptyCompletion('首次', reply)
 
     // The OpenPipal compactor operates on the durable transcript. Once this
     // in-memory execution has already advanced, replaying only the old durable
@@ -992,7 +1006,10 @@ async function* runPiCoreAgentChat(
     const retry = await retryEmptyCompletion(bundle)
     bundle = retry.bundle
     reply = retry.reply
-    if (retry.stillEmpty) reportEmptyFailure(false)
+    if (retry.stillEmpty) {
+      logEmptyCompletion('续跑后仍', reply)
+      reportEmptyFailure(false)
+    }
     const ok = !retry.stillEmpty
       && !lifecycleSignal.aborted
       && !watchdogTriggered

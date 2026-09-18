@@ -887,6 +887,18 @@
       "overrides": [
         "reviewed-baseline-default"
       ]
+    },
+    {
+      "id": "review-post-1.2.1-live-regressions-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "tests/e2e/long-context-regen-live.spec.ts",
+        "tests/e2e/member-subagent-experiment-live.spec.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ]
     }
   ],
   "classificationOnly": true,

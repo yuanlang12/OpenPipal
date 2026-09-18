@@ -177,8 +177,9 @@ test('点开团队话题：徽标、空状态列成员、中栏换成团队目�
   await expect(inspector.getByTestId('team-inspector-name')).toContainText('备课')
   await expect(inspector.locator('[data-testid="team-inspector-member"]')).toHaveCount(4)
   await expect(inspector.locator('[data-testid="team-inspector-member"]').nth(1)).toContainText('Lead')
-  // 成员行画的是这个 Pal 自己的图标（没捏过头像就是它选的 emoji），不是统一的 🤖
-  await expect(inspector.locator('[data-testid="team-inspector-member"]').nth(0)).toContainText('📐')
+  // 成员行画的是 Mark（没捏过就按 id 现算），不是 meta 里的 emoji
+  await expect(inspector.locator('[data-testid="team-inspector-member"]').nth(0).locator('svg').first()).toBeVisible()
+  await expect(inspector.locator('[data-testid="team-inspector-member"]').nth(0)).not.toContainText('📐')
   await expect(inspector.getByText('家长沟通不提分数.md')).toBeVisible()
   await expect(inspector.getByText('no-scores.ts')).toBeVisible()
   await expect(inspector.getByText('周三公开课-v2.md')).toBeVisible()
@@ -263,4 +264,43 @@ test('组长边聊边落：主进程一说团队目录变了，左栏名字、�
   await expect(page.getByTestId('team-badge')).toHaveText(/小红书运营组/)
   await expect(page.getByTestId('team-inspector').locator('[data-testid="team-inspector-member"]')).toHaveCount(2)
   await page.screenshot({ path: `${ARTIFACTS_DIR}/06-live-refresh.png` })
+})
+
+test('运行状态点只亮一处：收起看团队行（几条在跑也只一个），展开看话题行；悬停 ＋ 站在状态点左边不重叠', async ({ page }) => {
+  await openApp(page)
+  const teams = page.getByTestId('sidebar-teams')
+  const team1 = teams.locator('[data-testid="sidebar-team"][data-team-id^="a1a1"]')
+  const team2 = teams.locator('[data-testid="sidebar-team"][data-team-id^="b2b2"]')
+  // 给没频道的「小红书运营」塞一条话题；教研组两条 + 这一条都标成在跑
+  await page.evaluate(() => {
+    const w = window as any
+    const store = w.__chatStore
+    const now = Date.now()
+    store.setState({
+      conversations: [...store.getState().conversations, { id: 'c8', title: '选题会', role: 'general', workspaceId: 'ws-2', teamId: w.__TEAMS[1].id, createdAt: now, updatedAt: now, messageCount: 1 }],
+      streamingConvIds: { c1: true, c2: true, c8: true }
+    })
+  })
+  const spinners = (scope: ReturnType<Page['locator']>) => scope.locator('[role="img"][aria-label="生成中…"]')
+  // 收起：教研组两条在跑，团队行只转一个（悬停条里的副本不算：没悬停时它在 DOM 里但不可见）
+  await expect(team1).toHaveAttribute('data-open', 'false')
+  await expect(spinners(team1.getByTestId('team-toggle'))).toHaveCount(1)
+  await page.getByTestId('sidebar').screenshot({ path: `${ARTIFACTS_DIR}/09-status-collapsed.png` })
+  // 展开：团队行不转，两条话题行各转各的
+  await team1.getByTestId('team-toggle').click()
+  await expect(team1).toHaveAttribute('data-open', 'true')
+  await expect(spinners(team1.getByTestId('team-toggle'))).toHaveCount(0)
+  await expect(spinners(team1.getByTestId('team-threads'))).toHaveCount(2)
+  await page.getByTestId('sidebar').screenshot({ path: `${ARTIFACTS_DIR}/10-status-expanded.png` })
+  // 没频道的团队收起着、有一条在跑：悬停时 ＋ 出来，状态点仍在行尾，＋ 整个在它左边
+  await expect(team2).toHaveAttribute('data-open', 'false')
+  await team2.getByTestId('team-toggle').hover()
+  const plus = team2.getByTestId('team-new-thread')
+  await expect(plus).toBeVisible()
+  const overlayDot = team2.locator('[data-testid="team-new-thread"] + [role="img"]')
+  await expect(overlayDot).toBeVisible()
+  const plusBox = (await plus.boundingBox())!
+  const dotBox = (await overlayDot.boundingBox())!
+  expect(plusBox.x + plusBox.width).toBeLessThanOrEqual(dotBox.x + 0.5)
+  await page.getByTestId('sidebar').screenshot({ path: `${ARTIFACTS_DIR}/11-status-hover-plus.png` })
 })

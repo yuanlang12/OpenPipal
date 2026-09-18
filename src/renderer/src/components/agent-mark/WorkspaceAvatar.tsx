@@ -4,40 +4,38 @@ import { isDrawnAccessory, isMarkHue } from './accessories'
 import { isMarkShape } from './geometry'
 import { getMarkOverride, loadMark, useMarkOverrides } from './markStore'
 import type { MarkState } from './engine'
+import { composeMark } from '../../../../shared/agent-mark-catalog'
 
 /**
- * 用户自建 Agent 的头像。
+ * 用户自建 Pal 的头像。
  *
- * 默认仍然是 workspace 自己的 emoji —— 那是用户为这个 Agent 选的图标，不该被我们顶掉。
- * 只有真捏过头像（agents/<id>/mark.json 存在）才换成 Agent Mark。
- * 这就是"默认 opt-in、不启用时代码路径走不到"：没捏过的 Agent 一行新逻辑都走不到。
+ * 捏过（agents/<id>/mark.json 存在）就画捏的那一个；没捏过就按 id 现算一个（composeMark：
+ * 配饰 / 身体色 / 配饰色 / 轮廓都由 id 散列，同一个 Pal 每次一样，和团队建成员时落盘的是同一套算法）。
+ * 不再回落 meta.json 里的 emoji——所有者 2026-09-18：成员排排站里混进一个 emoji 就不是一套头像了，
+ * 迁移来的老模板 Pal、Evolver 建的 Pal 都没有 mark.json，全靠这条兜底。
  */
 export function WorkspaceAvatar({
-  workspaceId, icon, size = 16, state = 'idle', animated = false, halo = false, className, ariaLabel,
+  workspaceId, size = 16, state = 'idle', animated = false, halo = false, className, ariaLabel,
 }: {
   workspaceId: string
-  icon?: string
   size?: number
   state?: MarkState
   animated?: boolean
   /** 叠放时身体描一圈背景色，见 AgentMark.halo */
   halo?: boolean
-  /** 同时管 emoji 回落的字号（默认 text-sm）与 Mark 的外层 class */
   className?: string
   ariaLabel?: string
 }): React.JSX.Element {
   useMarkOverrides()
   useEffect(() => { void loadMark('agent', workspaceId) }, [workspaceId])
 
-  const config = getMarkOverride('agent', workspaceId)
-  const accessory = isDrawnAccessory(config?.accessory) ? config.accessory : null
-  const hue = isMarkHue(config?.hue) ? config.hue : 'ink'
-  const accent = isMarkHue(config?.accent) ? config.accent : undefined
-  const shape = isMarkShape(config?.shape) ? config.shape : 'square'
+  const fallback = composeMark(workspaceId)
+  const config = getMarkOverride('agent', workspaceId) ?? fallback
+  const accessory = isDrawnAccessory(config.accessory) ? config.accessory : fallback.accessory
+  const hue = isMarkHue(config.hue) ? config.hue : fallback.hue
+  const accent = isMarkHue(config.accent) ? config.accent : undefined
+  const shape = isMarkShape(config.shape) ? config.shape : fallback.shape
 
-  if (!accessory) {
-    return <span className={className || 'text-sm'} aria-label={ariaLabel}>{icon || '🤖'}</span>
-  }
   return (
     <AgentMark state={state} accessory={accessory} hue={hue} accent={accent} shape={shape} size={size}
       animated={animated} halo={halo} className={className} ariaLabel={ariaLabel} />

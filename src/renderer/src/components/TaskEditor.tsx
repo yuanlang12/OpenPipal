@@ -20,7 +20,7 @@ import { WorkspaceAvatar } from './agent-mark'
 
 /** Pal 的身份一律走头像组件（捏过就是 Mark，没捏过是它的 emoji），不拼成字符串——拼了就又回到"这里更新了那里没有" */
 const palLabel = (ws: WorkspaceSummary): React.ReactNode => (
-  <><span className="mr-1.5 inline-flex align-middle"><WorkspaceAvatar workspaceId={ws.id} icon={ws.icon} size={14} /></span>{ws.name}</>
+  <><span className="mr-1.5 inline-flex align-middle"><WorkspaceAvatar workspaceId={ws.id} size={14} /></span>{ws.name}</>
 )
 
 interface Props {

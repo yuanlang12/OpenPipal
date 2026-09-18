@@ -196,7 +196,7 @@ export function TeamInspector({ teamId, channel, onClose }: { teamId: string; ch
             const m = memberOf(id)
             return (
               <div key={id} className="flex items-center gap-1.5 pl-6 pr-3 py-1 text-[11px] text-surface-500" data-testid="team-inspector-member">
-                <WorkspaceAvatar workspaceId={id} icon={workspaces.find(w => w.id === id)?.icon} size={14} className="text-xs leading-none shrink-0" />
+                <WorkspaceAvatar workspaceId={id} size={14} className="text-xs leading-none shrink-0" />
                 <span className="truncate flex-1">{m.name}</span>
                 {id === team.lead && <span className="text-[9px] px-1 rounded bg-surface-700 text-surface-0 dark:bg-surface-200 dark:text-surface-700">{t('teamInspector.lead')}</span>}
               </div>

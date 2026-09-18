@@ -329,6 +329,9 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
     filterToolsForChatSource(source, [...builtinTools, ...mcpTools]),
     profile
   ).map((tool) => ({ ...tool, executionMode: 'sequential' as const }))
+  // 成员不开自己的子代理这条 2026-09-18 做过对照实验（tests/e2e/member-subagent-experiment-live.spec.ts）：
+  // 60 篇 / 300 篇作文交给成员，给了它通用 subagent 也一次没用，产出与不给时一样；
+  // 300 篇时组长自己分了 6 批交接，没有一趟撞 60 轮。黑名单照旧，别再为"兼容性"放开。
 
   // 2b. 团队规则（设计稿 §5 第③层"规则加硬拦"）：成员也过——自己的 hooks/ + 团队的 rules/（+ 频道的）。
   //     普通档位（explorer / advisor）沿用旧行为：不装规则，只过安全员。
@@ -549,6 +552,7 @@ export async function runChildAgent(options: RunChildAgentOptions): Promise<Chil
       toolCalls
     })
   }
+  console.log(`[Subagent] 收工 profile="${profile.name}"${member ? '（成员）' : ''}：${usage.turns} 轮，in ${usage.input} / out ${usage.output} tokens${lastError ? `，出错 ${String(lastError).slice(0, 80)}` : ''}`)
   emit(lastError ? 'error' : 'complete')
 
   return {
