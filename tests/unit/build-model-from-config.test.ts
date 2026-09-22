@@ -16,6 +16,7 @@ import {
   adaptModelRequestPayload,
   buildModelFromConfig,
   resolveThinkingFormat,
+  withSessionStreamOptions,
   type ModelConfig
 } from '../../src/main/config-manager'
 import { getModels as piGetModels } from '@earendil-works/pi-ai/compat'
@@ -352,5 +353,50 @@ describe('buildModelFromConfig — 自定义 OpenAI 兼容端点的 contextWindo
     const model = buildModelFromConfig(baseConfig({ model: 'any-model' }))
     expect(model.contextWindow).toBe(templateWindow)
     expect(templateWindow).toBeGreaterThan(0)
+  })
+})
+
+describe('OpenCode 网关（Zen / Go）必须带 x-opencode-session', () => {
+  // 2026-09-20 实案：key 和地址都对，网关仍 400 MissingSessionID——它硬性要求这个头，
+  // 而 Pi 只在 pi-coding-agent 的 AgentSession 里补，我们走裸 pi-ai 所以一直没带。
+  const goConfig = { provider: 'opencode-go', baseUrl: '', apiKey: 'sk-test', model: (piGetModels('opencode-go' as any)[0] as any).id } as ModelConfig
+  /** 包一层 withSessionStreamOptions，把每次真正传给底层 streamFn 的 options 记下来 */
+  const recordingStream = () => {
+    const seen: any[] = []
+    const streamFn: any = withSessionStreamOptions(((_m: any, _c: any, options: any) => { seen.push(options) }) as any, { apiKey: 'sk-test' } as ModelConfig)
+    return { seen, streamFn }
+  }
+
+  it('provider=opencode-go → model.headers 自带兜底会话 id（覆盖标题/记忆/测试连接等无对话 id 的出口）', () => {
+    const model = buildModelFromConfig(goConfig)
+    expect((model as any).headers?.['x-opencode-session']).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it('custom + opencode.ai 地址 + 目录外模型名 → 按域名认，同样带头', () => {
+    const model = buildModelFromConfig(baseConfig({ baseUrl: 'https://opencode.ai/zen/go/v1', model: 'not-in-catalog' }))
+    expect((model as any).headers?.['x-opencode-session']).toBeTruthy()
+  })
+
+  it('别家端点不带（回归防守：默认路径零变化）', () => {
+    const model = buildModelFromConfig(baseConfig({ model: 'any-model' }))
+    expect((model as any).headers?.['x-opencode-session']).toBeUndefined()
+  })
+
+  it('有对话 id 的路径按对话覆盖兜底值；调用方自带的头优先', () => {
+    const model = buildModelFromConfig(goConfig)
+    const { seen, streamFn } = recordingStream()
+    streamFn(model, {}, { sessionId: 'conv-123' })
+    expect(seen[0].headers['x-opencode-session']).toBe('conv-123')
+    streamFn(model, {}, { sessionId: 'conv-123', headers: { 'x-opencode-session': 'explicit' } })
+    expect(seen[1].headers['x-opencode-session']).toBe('explicit')
+    streamFn(model, {}, {})
+    expect(seen[2].headers).toBeUndefined()
+  })
+
+  it('别家模型即使有对话 id 也不注入', () => {
+    const model = buildModelFromConfig(baseConfig({ model: 'any-model' }))
+    const { seen, streamFn } = recordingStream()
+    streamFn(model, {}, { sessionId: 'conv-123' })
+    expect(seen[0].headers).toBeUndefined()
   })
 })

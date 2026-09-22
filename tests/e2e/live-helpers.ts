@@ -8,12 +8,12 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-interface PresetLike {
+export interface PresetLike {
   name?: string
   providerId?: string
   config?: Record<string, unknown> & { model?: string; thinkingFormat?: string }
 }
-interface ProviderLike {
+export interface ProviderLike {
   id: string
   name?: string
   provider?: string
@@ -22,6 +22,23 @@ interface ProviderLike {
   apiFormat?: string
   thinkingFormat?: string
   thinkingBudgets?: unknown
+}
+
+/** 预设只存模型那一半，端点 / key / 方言在它指向的服务商实体上——拼回一份能直接用的模型配置。 */
+export function resolvePresetConfig(preset: PresetLike, providers: ProviderLike[]): Record<string, unknown> {
+  const provider = preset.providerId ? providers.find(p => p.id === preset.providerId) : undefined
+  const cfg = preset.config || {}
+  if (!provider) return cfg
+  const modelFormat = cfg.thinkingFormat
+  return {
+    ...cfg,
+    provider: provider.provider,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    ...(provider.apiFormat ? { apiFormat: provider.apiFormat } : {}),
+    thinkingFormat: modelFormat && modelFormat !== 'auto' ? modelFormat : (provider.thinkingFormat || modelFormat),
+    ...(Object.prototype.hasOwnProperty.call(cfg, 'thinkingBudgets') ? {} : { thinkingBudgets: provider.thinkingBudgets })
+  }
 }
 
 /**
@@ -41,25 +58,10 @@ export async function realModelConfig(): Promise<Record<string, unknown> | null>
   const presetQuery = process.env.OPENPIPAL_LIVE_PRESET?.trim().toLowerCase()
   if (presetQuery) {
     const providers = parsed.modelProviders || []
-    const resolve = (preset: PresetLike): Record<string, unknown> => {
-      const provider = preset.providerId ? providers.find(p => p.id === preset.providerId) : undefined
-      const cfg = preset.config || {}
-      if (!provider) return cfg
-      const modelFormat = cfg.thinkingFormat
-      return {
-        ...cfg,
-        provider: provider.provider,
-        baseUrl: provider.baseUrl,
-        apiKey: provider.apiKey,
-        ...(provider.apiFormat ? { apiFormat: provider.apiFormat } : {}),
-        thinkingFormat: modelFormat && modelFormat !== 'auto' ? modelFormat : (provider.thinkingFormat || modelFormat),
-        ...(Object.prototype.hasOwnProperty.call(cfg, 'thinkingBudgets') ? {} : { thinkingBudgets: provider.thinkingBudgets })
-      }
-    }
     const label = (p: PresetLike): string => `${p.name || '?'} / ${p.config?.model || '?'}`
     const matches = (parsed.modelPresets || [])
       .filter(p => `${p.name || ''} ${p.config?.model || ''}`.toLowerCase().includes(presetQuery))
-      .map(p => ({ preset: p, config: resolve(p) }))
+      .map(p => ({ preset: p, config: resolvePresetConfig(p, providers) }))
       .filter(m => typeof m.config.apiKey === 'string' && m.config.apiKey)
       .sort((a, b) => Number(String(a.config.baseUrl || '').includes('opencode')) - Number(String(b.config.baseUrl || '').includes('opencode')))
     if (matches.length === 0) {

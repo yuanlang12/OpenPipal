@@ -524,7 +524,8 @@ export function InputBar({
         </div>
 
         {/* 底部工具栏 —— relative：`/` 面板等浮层用 absolute bottom-full 贴着它往上弹，
-            缺定位祖先时会锚到更外层容器、整个弹到视窗外 */}
+            缺定位祖先时会锚到更外层容器、整个弹到视窗外。
+            这一排的控件统一 32px 高（h-8）：+ / 麦克风 / 权限档 / 模型 / 停止 / 发送，新加的也照这个来 */}
         <div className="relative flex items-center px-2 pb-2 gap-1 min-w-0">
           {/* 左侧："+" 直接开文件选择器；技能改成输入框里打 `/` 唤起快捷指令面板 */}
           <button
@@ -532,7 +533,7 @@ export function InputBar({
             onClick={handleFileUpload}
             title={t('chat.input.uploadFileOrImage')}
             aria-label={t('chat.input.uploadFileOrImage')}
-            className="p-1.5 rounded-md text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
+            className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
           >
             <span className="text-[16px] leading-none font-light">+</span>
           </button>
@@ -553,7 +554,7 @@ export function InputBar({
 
           {/* 权限档位：只给档案声明了 permission-tier: allowed 的 Agent（内置编码助手、从它复制的 Pal）。
               别的 Agent 不该被迫理解"工具风险分级"这个概念，而且主进程那侧是同一道门（agent-overrides.ts），界面藏起来不等于关掉 */}
-          {tierAllowed && <PermissionTierControl />}
+          {tierAllowed && <PermissionTierControl className="[&>button]:h-8 [&>button]:rounded-lg [&>button]:text-[12px]" />}
 
           {/* 模型+思考深度合一控件；会话内选模型=会话专属，重置行=跟随全局 */}
           {effectiveModelName && (

@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
-import { ChevronRight, ChevronLeft, RotateCcw } from 'lucide-react'
+import { ChevronRight, ChevronLeft, ChevronDown, RotateCcw, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../stores/chatStore'
 import { displayModelEntryName, displayModelGroupLabel } from '../../utils/modelDisplay'
 
 /**
  * 模型 + 思考深度合一控件（对话页 InputBar / 欢迎页 / 角色 preflow 三个输入面共用）。
- * 胶囊显示「模型名 · 档位」，点开两级菜单：主面板是"模型/思考深度"两行（右侧带当前值），
- * 点行进入子面板选择（子面板头部可返回）——对齐 Claude 客户端的合并控件形态。
+ * 胶囊显示「模型名 · 档位」，点开一张小卡：顶行是当前档位（大字）+ 右上角重置键，
+ * 第二行是模型名（点它进模型列表，列表头部可返回），第三行是思考深度滑杆——拖动或点刻度即生效、浮层不关。
  *
  * 三个输入面的模型选择语义不同（对话页与欢迎页会话钉住 / preflow 本地暂存），
  * 通过 onSelectModel 回调注入；思考状态统一走会话配置（thinkingEnabled/thinkingLevel）。
@@ -17,6 +17,53 @@ export type ThinkingLevel = 'low' | 'medium' | 'high' | 'max'
 
 /** 认不出模型时的保守档位（与旧行为一致）；真实档位由主进程下发 */
 const DEFAULT_LEVELS: ThinkingLevel[] = ['low', 'medium', 'high']
+
+/** 滑杆上的一格：关得掉思考的模型最左多一格 off；调不了深度的模型只有 on 一格 */
+type ThinkingStop = 'off' | 'on' | ThinkingLevel
+
+/**
+ * 分档滑杆。真正接鼠标和键盘的是一个透明的原生 range（拖、点、方向键都白得），上面盖的轨道 / 填充 / 刻度 / 滑块只管画。
+ * 原生滑块宽度在 openpipal-ds.css 的 .sw-range 里钉成和这里同一个 THUMB——两边几何对不上，点哪儿和停哪儿就会差半格。
+ */
+const THUMB = 28
+function StepSlider({ count, index, label, valueText, onChange }: {
+  count: number
+  index: number
+  label: string
+  valueText: string
+  onChange: (index: number) => void
+}) {
+  const at = (i: number): string => `calc(${THUMB / 2}px + (100% - ${THUMB}px) * ${i / (count - 1)})`
+  return (
+    <div className="relative h-7 mt-2.5">
+      <input
+        type="range" min={0} max={count - 1} step={1} value={index}
+        onChange={e => onChange(Number(e.target.value))}
+        aria-label={label}
+        aria-valuetext={valueText}
+        data-testid="thinking-slider"
+        className="sw-range peer"
+      />
+      <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-6 rounded-full bg-surface-100 dark:bg-surface-200" />
+      <div
+        className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 h-6 rounded-full bg-brand-500 transition-[width] duration-150 motion-reduce:transition-none"
+        style={{ width: `calc(${THUMB}px + (100% - ${THUMB}px) * ${index / (count - 1)})` }}
+      />
+      {Array.from({ length: count }, (_, i) => i !== index && (
+        <span
+          key={i}
+          className={`pointer-events-none absolute top-1/2 w-1 h-1 -translate-x-1/2 -translate-y-1/2 rounded-full ${i < index ? 'bg-ink-on-accent opacity-50' : 'bg-surface-300'}`}
+          style={{ left: at(i) }}
+        />
+      ))}
+      {/* 滑块与填充永远反色（on-accent 压 accent）：暗色下填充近白，白滑块会化在里面 */}
+      <span
+        className="pointer-events-none absolute top-1/2 w-7 h-7 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink-on-accent shadow-md ring-1 ring-black/10 dark:ring-white/20 transition-[left] duration-150 motion-reduce:transition-none peer-focus-visible:ring-2 peer-focus-visible:ring-brand-400"
+        style={{ left: at(index) }}
+      />
+    </div>
+  )
+}
 
 export interface ModelControlItem {
   id: string
@@ -72,7 +119,7 @@ export function ModelControl({
   const setConversationThinking = useChatStore(s => s.setConversationThinking)
   const setConversationThinkingLevel = useChatStore(s => s.setConversationThinkingLevel)
   const [open, setOpen] = useState(false)
-  const [panel, setPanel] = useState<'main' | 'model' | 'thinking'>('main')
+  const [panel, setPanel] = useState<'main' | 'model'>('main')
   const rootRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -99,6 +146,12 @@ export function ModelControl({
       : supportsDial
         ? t(`chat.modelControl.levels.${thinkingLevel}`)
         : t('chat.modelControl.states.on')
+  const stops: ThinkingStop[] = !supportsThinking ? [] : [...(alwaysOn ? [] : ['off' as const]), ...(supportsDial ? levels : ['on' as const])]
+  const currentStop: ThinkingStop = !thinkingOn ? 'off' : supportsDial ? thinkingLevel : 'on'
+  const applyStop = (stop: ThinkingStop): void => {
+    if (stop === 'off' || stop === 'on') setConversationThinking(stop === 'on')
+    else setConversationThinkingLevel(stop)
+  }
   const modelGroups = Array.from(new Set(models.map(model => model.providerName || '')))
 
   const itemCls = (selected: boolean) =>
@@ -113,20 +166,32 @@ export function ModelControl({
     </button>
   )
 
+  // 不支持思考的模型没有档位可显示，模型名就顶到第一行中间
+  const modelRow = (
+    <button
+      onClick={() => setPanel('model')}
+      data-testid="model-control-model-row"
+      className="mx-auto justify-self-center flex items-center gap-0.5 max-w-full min-w-0 px-2 py-0.5 rounded-md text-[12px] text-surface-500 hover:text-surface-700 hover:bg-surface-100 transition-colors"
+    >
+      <span className="truncate">{displayModel}</span>
+      <ChevronRight className="w-3 h-3 shrink-0 text-surface-300" />
+    </button>
+  )
+
   return (
     <div className={`relative min-w-0 ${className}`} ref={rootRef}>
+      {/* 平时不带底色，和左边的 + 一个待遇；高度与工具栏其余控件统一 h-8 */}
       <button
         onClick={() => setOpen(!open)}
         data-testid={triggerTestId}
         title={t('chat.modelControl.title')}
-        className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors min-w-0 max-w-full ${
-          supportsThinking && thinkingOn
-            ? 'text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/20 hover:bg-brand-100 dark:hover:bg-brand-900/30'
-            : 'text-surface-400 hover:text-surface-600'
+        className={`flex items-center gap-1 h-8 px-2 rounded-lg text-[12px] transition-colors min-w-0 max-w-full text-surface-500 hover:text-surface-700 hover:bg-surface-100 ${
+          open ? 'bg-surface-100 text-surface-700' : ''
         }`}
       >
         <span className="max-w-[140px] min-w-0 truncate">{displayModel}</span>
         {thinkingValue && thinkingOn && <span className="shrink-0">· {thinkingValue}</span>}
+        <ChevronDown className="w-3 h-3 shrink-0 text-surface-300" />
       </button>
 
       {open && (
@@ -136,29 +201,37 @@ export function ModelControl({
           )}
 
           {panel === 'main' && (
-            <>
-              <button onClick={() => setPanel('model')} className={itemCls(false)}>
-                <span className="shrink-0">{t('chat.modelControl.model')}</span>
-                <span className="flex-1 text-right text-surface-400 truncate">{displayModel}</span>
-                <ChevronRight className="w-3 h-3 shrink-0 text-surface-300" />
-              </button>
-              {supportsThinking && !(alwaysOn && !supportsDial) && (
-                <button onClick={() => setPanel('thinking')} className={itemCls(false)}>
-                  <span className="shrink-0">{t('chat.modelControl.thinkingDepth')}</span>
-                  <span className="flex-1 text-right text-surface-400">{thinkingValue}</span>
-                  <ChevronRight className="w-3 h-3 shrink-0 text-surface-300" />
-                </button>
+            <div className="px-3 pt-2 pb-2.5">
+              <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_1.5rem] items-center">
+                {supportsThinking
+                  ? <Zap className={`w-3.5 h-3.5 ${thinkingOn ? 'text-brand-600 dark:text-brand-400' : 'text-surface-300'}`} fill="currentColor" />
+                  : <span />}
+                {supportsThinking
+                  ? <span data-testid="model-control-level" className={`text-center text-[15px] font-medium ${thinkingOn ? 'text-brand-600 dark:text-brand-400' : 'text-surface-400'}`}>{thinkingValue}</span>
+                  : modelRow}
+                {resetRow ? (
+                  <button
+                    onClick={() => { onSelectModel(null); setOpen(false) }}
+                    data-testid="model-control-reset"
+                    title={resetRow.label}
+                    aria-label={resetRow.label}
+                    className="justify-self-end w-6 h-6 rounded-md flex items-center justify-center text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                ) : <span />}
+              </div>
+              {supportsThinking && modelRow}
+              {stops.length > 1 && (
+                <StepSlider
+                  count={stops.length}
+                  index={Math.max(0, stops.indexOf(currentStop))}
+                  label={t('chat.modelControl.thinkingDepth')}
+                  valueText={thinkingValue}
+                  onChange={i => applyStop(stops[i])}
+                />
               )}
-              {resetRow && (
-                <button
-                  onClick={() => { onSelectModel(null); setOpen(false) }}
-                  className="w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-2 text-surface-500 hover:bg-surface-50 border-t border-surface-100 mt-1 pt-2"
-                >
-                  <RotateCcw className="w-3 h-3 shrink-0" />
-                  <span className="flex-1 truncate">{resetRow.label}</span>
-                </button>
-              )}
-            </>
+            </div>
           )}
 
           {panel === 'model' && (
@@ -183,31 +256,6 @@ export function ModelControl({
                 )
               })}
             </div>
-          )}
-
-          {panel === 'thinking' && (
-            <>
-              {backRow(t('chat.modelControl.thinkingDepth'))}
-              {!alwaysOn && (
-                <button onClick={() => { setConversationThinking(false); setOpen(false) }} className={itemCls(!thinkingOn)}>
-                  <span className="flex-1">{t('chat.modelControl.noThinking')}</span>
-                  {!thinkingOn && <span className="text-brand-500 shrink-0">✓</span>}
-                </button>
-              )}
-              {supportsDial ? (
-                levels.map(level => (
-                  <button key={level} onClick={() => { setConversationThinkingLevel(level); setOpen(false) }} className={itemCls(thinkingOn && thinkingLevel === level)}>
-                    <span className="flex-1">{t(`chat.modelControl.levels.${level}`)}</span>
-                    {thinkingOn && thinkingLevel === level && <span className="text-brand-500 shrink-0">✓</span>}
-                  </button>
-                ))
-              ) : (
-                <button onClick={() => { setConversationThinking(true); setOpen(false) }} className={itemCls(thinkingOn)}>
-                  <span className="flex-1">{t('chat.modelControl.enableThinking')}</span>
-                  {thinkingOn && <span className="text-brand-500 shrink-0">✓</span>}
-                </button>
-              )}
-            </>
           )}
         </div>
       )}

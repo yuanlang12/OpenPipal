@@ -5,6 +5,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import { randomUUID } from 'crypto'
 import { resolveCacheRetentionForModel } from './prompt-cache-fifo'
 import {
   normalizeLocalePreference,
@@ -1736,7 +1737,34 @@ function patchStaleGlmThinkingLevels(model: Model<any>): Model<any> {
   } as Model<any>
 }
 
+/**
+ * OpenCode 网关（Zen / Go）硬性要求每个请求带 `x-opencode-session`，不带直接 400
+ * MissingSessionID（2026-09-20 实案；官方文档 opencode.ai/docs/go「Where can I use it」）。
+ * Pi 只在 pi-coding-agent 的 AgentSession 里补这个头，我们是裸 Agent + pi-ai，得自己带。
+ * 头挂在 model.headers 上是因为它是唯一覆盖所有出口的地方——主对话、子代理、标题、记忆抽取、
+ * 测试连接都从 buildModelFromConfig 拿模型，pi-ai 建客户端时会并入 model.headers。
+ * 这里放的是进程级兜底 id；有对话 id 的路径由 withSessionStreamOptions 按对话覆盖。
+ */
+const OPENCODE_SESSION_HEADER = 'x-opencode-session'
+const OPENCODE_FALLBACK_SESSION_ID = randomUUID()
+
+function isOpencodeGatewayModel(model: { provider?: string; baseUrl?: string }): boolean {
+  return model.provider === 'opencode' || model.provider === 'opencode-go' || hostnameOf(model.baseUrl || '') === 'opencode.ai'
+}
+
+function withOpencodeSessionHeader(model: Model<any>): Model<any> {
+  if (!isOpencodeGatewayModel(model)) return model
+  return {
+    ...model,
+    headers: { [OPENCODE_SESSION_HEADER]: OPENCODE_FALLBACK_SESSION_ID, ...(model as any).headers }
+  } as Model<any>
+}
+
 export function buildModelFromConfig(mc: ModelConfig): Model<any> {
+  return withOpencodeSessionHeader(resolveModelFromConfig(mc))
+}
+
+function resolveModelFromConfig(mc: ModelConfig): Model<any> {
   const nativeQwenModel = createNativeQwenModel(mc)
   if (nativeQwenModel) {
     console.log(`[Config] Pi 原生 Qwen 模型已映射: ${nativeQwenModel.provider}/${mc.model}`)
@@ -1900,11 +1928,16 @@ export function withSessionStreamOptions<T extends (...a: any[]) => any>(streamF
   const key = mc.apiKey || undefined
   return ((model: any, context: any, options?: any) => {
     const cacheRetention = resolveCacheRetentionForModel(model)
-    if (!key && !cacheRetention) return (streamFn as any)(model, context, options)
+    // OpenCode 网关按这个头做路由和前缀缓存亲和——有对话 id 就按对话给，盖掉 model.headers 里的进程级兜底
+    const sessionHeaders = options?.sessionId && isOpencodeGatewayModel(model)
+      ? { [OPENCODE_SESSION_HEADER]: String(options.sessionId) }
+      : undefined
+    if (!key && !cacheRetention && !sessionHeaders) return (streamFn as any)(model, context, options)
     return (streamFn as any)(model, context, {
       ...options,
       ...(key ? { apiKey: key } : {}),
-      ...(cacheRetention !== undefined && options?.cacheRetention === undefined ? { cacheRetention } : {})
+      ...(cacheRetention !== undefined && options?.cacheRetention === undefined ? { cacheRetention } : {}),
+      ...(sessionHeaders ? { headers: { ...sessionHeaders, ...options?.headers } } : {})
     })
   }) as unknown as T
 }

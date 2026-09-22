@@ -1620,8 +1620,6 @@ export const ZH_CN_MESSAGES = {
       builtinModel: '内置模型',
       builtinService: '内置服务',
       globalDefault: '全局默认',
-      noThinking: '不思考',
-      enableThinking: '开启思考',
       states: {
         off: '关',
         on: '开',
@@ -4084,8 +4082,6 @@ export const EN_MESSAGES = {
       builtinModel: 'Built-in model',
       builtinService: 'Built-in service',
       globalDefault: 'Global default',
-      noThinking: 'No thinking',
-      enableThinking: 'Enable thinking',
       states: {
         off: 'Off',
         on: 'On',

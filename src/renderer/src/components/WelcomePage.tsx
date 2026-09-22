@@ -475,7 +475,7 @@ export function WelcomePage({
                 data-testid="welcome-upload-btn"
                 title={t('chat.input.uploadFileOrImage')}
                 aria-label={t('chat.input.uploadFileOrImage')}
-                className="flex items-center px-2 py-1 rounded-md text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors shrink-0"
+                className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition-colors"
               >
                 <span className="text-[16px] leading-none font-light">+</span>
               </button>

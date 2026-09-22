@@ -269,7 +269,7 @@ test.describe('design preflow — Claude Design 风首页', () => {
     await bootToDesignPreflow(page, { designSystems: DS_ONE })
     // 打开合一控件，两级菜单：主面板"模型"行 → 子面板选非激活的 qwen（m2）
     await page.locator('[data-testid="preflow-model-select"]').click()
-    await page.locator('[data-testid="preflow-model-menu"] button', { hasText: '模型' }).first().click()
+    await page.locator('[data-testid="preflow-model-menu"] [data-testid="model-control-model-row"]').click()
     await page.locator('[data-testid="preflow-model-menu"] button', { hasText: 'qwen3.7-max' }).click()
     // 下拉显示切到所选模型名（纯本地选择，不经全局往返）
     await expect(page.locator('[data-testid="preflow-model-select"]')).toContainText('qwen3.7-max')
@@ -296,7 +296,7 @@ test.describe('design preflow — Claude Design 风首页', () => {
   test('T11 欢迎页选模型 = 当前空会话专属；首条请求不回退到出生模型', async ({ page }) => {
     await bootToGeneralWelcome(page)
     await page.locator('[data-testid="welcome-model-select"]').click()
-    await page.locator('[data-testid="welcome-model-menu"] button', { hasText: '模型' }).click()
+    await page.locator('[data-testid="welcome-model-menu"] [data-testid="model-control-model-row"]').click()
     await page.locator('[data-testid="welcome-model-menu"] button', { hasText: 'qwen3.7-max' }).click()
     await expect(page.locator('[data-testid="welcome-model-select"]')).toContainText('qwen3.7-max')
 

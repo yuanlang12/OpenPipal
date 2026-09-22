@@ -899,6 +899,18 @@
       "overrides": [
         "reviewed-baseline-default"
       ]
+    },
+    {
+      "id": "review-post-1.2.2-composer-and-opencode-session-delta",
+      "scope": "candidate",
+      "action": "conditional-keep",
+      "patterns": [
+        "tests/e2e/composer-look.spec.ts",
+        "tests/e2e/opencode-gateway-live.spec.ts"
+      ],
+      "overrides": [
+        "reviewed-baseline-default"
+      ]
     }
   ],
   "classificationOnly": true,

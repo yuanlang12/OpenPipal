@@ -251,6 +251,23 @@
 .sw-checkbox:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 .sw-checkbox:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ---------- Range（分档滑杆的输入层）----------
+ * 只负责接鼠标和键盘，自己不画任何东西；看得见的轨道 / 填充 / 滑块由组件盖在上面（ModelControl 的 StepSlider）。
+ * 滑块宽度必须和组件里的 THUMB 一致：原生 range 按「滑块中心在 [宽/2, 100% - 宽/2] 之间走」换算点击位置，
+ * 两边不一致，点到的刻度和停下的位置就会差半格。 */
+.sw-range {
+  appearance: none;
+  -webkit-appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.sw-range::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 28px; }
+
 /* ---------- Avatar (dock mark) — 仅用于品牌标识,不用于消息流 ---------- */
 .sw-avatar { width: 28px; height: 28px; border-radius: 999px; background: var(--sand-200); color: var(--sand-500); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
 .sw-avatar-sage { background: var(--sage-200); color: var(--sage-700); }

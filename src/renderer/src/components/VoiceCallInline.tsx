@@ -61,7 +61,7 @@ export function VoiceCallInline({
         data-testid="voice-inline-start"
         title={t('chat.voiceInline.start')}
         aria-label={t('chat.voiceInline.start')}
-        className="flex items-center justify-center w-7 h-7 rounded-md text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors"
+        className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors"
       >
         <Mic className="w-4 h-4" />
       </button>
@@ -75,7 +75,7 @@ export function VoiceCallInline({
   return (
     <div
       data-testid="voice-inline-active"
-      className={`flex items-center gap-1.5 h-7 pl-2 pr-1 rounded-full border ${
+      className={`flex items-center gap-1.5 h-8 pl-2 pr-1 rounded-full border ${
         isError
           ? 'border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40'
           : 'border-brand-200 dark:border-brand-800 bg-brand-50 dark:bg-brand-900/30'
